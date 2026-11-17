@@ -31,6 +31,7 @@ secrets:
   bao_api_role_id: { file: ./secrets/bao_api_role_id }
   bao_api_secret_id: { file: ./secrets/bao_api_secret_id }
   oidc_client_secret: { file: ./secrets/oidc_client_secret }
+  launcher_token: { file: ./secrets/launcher_token }
 
 services:
   nginx:
@@ -73,6 +74,7 @@ services:
       NO_PROXY: postgres,openbao,keycloak,ollama,localhost
       OLLAMA_URL: http://ollama:11434
       OLLAMA_KEEP_ALIVE: 10m
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     secrets: [bao_api_role_id, bao_api_secret_id, oidc_client_secret, platform_db_password]
     depends_on: { postgres: { condition: service_healthy }, openbao: { condition: service_started } }
     read_only: true
@@ -98,6 +100,7 @@ services:
       DATABASE_PASSWORD_FILE: /run/secrets/platform_db_password
       HTTPS_PROXY: http://egress-proxy:3128
       NO_PROXY: postgres,openbao,keycloak,ollama,localhost
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     secrets: [platform_db_password]
     depends_on: { postgres: { condition: service_healthy } }
     read_only: true
@@ -107,6 +110,36 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+
+  runner-launcher:
+    <<: *common
+    profiles: [runners]
+    build: { context: ../.., dockerfile: deploy/images/runner-launcher.Dockerfile }
+    networks: [app]
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3002"
+      LAUNCHER_TOKEN_FILE: /run/secrets/launcher_token
+      RUNNER_IMAGE_PREFIXES: ${RUNNER_IMAGE_PREFIXES:-}
+      RUNNER_NETWORK: qa-platform_automation
+      RUNNER_PROXY_URL: http://egress-proxy:3128
+      RUNNER_MAX_CONCURRENT: ${RUNNER_MAX_CONCURRENT:-4}
+    secrets: [launcher_token]
+    # The only service that touches the container engine. Whoever controls it controls the host:
+    # keep it off every user-facing network, keep the token secret, and prefer a rootless engine or a
+    # socket proxy that allows only the calls in packages/infrastructure/src/runner/docker-engine.ts.
+    group_add: ["${DOCKER_GID:-999}"]
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
+    read_only: true
+    tmpfs: [/tmp]
+
+  otel-collector:
+    <<: *common
+    profiles: [obs]
+    image: otel/opentelemetry-collector:0.110.0
+    command: ["--config=/etc/otel/collector.yaml"]
+    networks: [app]
+    volumes: ["./otel/collector.yaml:/etc/otel/collector.yaml:ro"]
 
   postgres:
     <<: *common

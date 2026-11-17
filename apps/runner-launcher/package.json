@@ -1,0 +1,24 @@
+{
+  "name": "@qa/runner-launcher",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@qa/domain": "workspace:*",
+    "@qa/infrastructure": "workspace:*",
+    "@qa/telemetry": "workspace:*",
+    "fastify": "^5.2.0",
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "@qa/testing": "workspace:*",
+    "@qa/connector-sdk": "workspace:*"
+  }
+}

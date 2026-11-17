@@ -10,11 +10,18 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@opentelemetry/api": "^1.10.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.301.2",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.301.2",
+    "@opentelemetry/resources": "^3.1.1",
+    "@opentelemetry/sdk-metrics": "^3.1.1",
+    "@opentelemetry/sdk-node": "^0.301.2",
     "@qa/connector-sdk": "workspace:*",
     "@qa/domain": "workspace:*",
     "@qa/llm": "workspace:*",
-    "zod": "^3.24.1",
     "jose": "^6.2.17",
-    "undici": "^7.2.0"
+    "undici": "^7.2.0",
+    "zod": "^3.24.1",
+    "@qa/telemetry": "workspace:*"
   }
 }

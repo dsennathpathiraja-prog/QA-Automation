@@ -5,6 +5,7 @@ import {
   DEFAULT_GROUP_MAPPINGS, PolicyEngine, authenticatedRoute, publicRoute, requires, type GroupMapping, type Principal, type RouteAccess,
 } from '@qa/security';
 import type { SessionResolver } from './session';
+import { registerRequestTelemetry } from './telemetry';
 import { registerAuthRoutes, type AuthConfig, type OidcSessionResolver } from './auth';
 
 declare module 'fastify' {
@@ -32,6 +33,7 @@ const err = (cls: string, message: string): ErrorResponse => ({ error: { class: 
 export function buildApp(deps: AppDeps): FastifyInstance {
   const app = Fastify({ logger: false });
   const policy = new PolicyEngine();
+  registerRequestTelemetry(app);
 
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string', bodyLimit: 64 * 1024 }, (_req, body, done) => {
     done(null, Object.fromEntries(new URLSearchParams(body as string)));

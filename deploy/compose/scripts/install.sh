@@ -12,7 +12,7 @@ umask 077
 mkdir -p secrets
 
 gen() { [ -s "secrets/$1" ] || head -c 36 /dev/urandom | base64 | tr -d '\n=+/' | head -c 40 > "secrets/$1"; }
-for s in postgres_password keycloak_db_password platform_db_password keycloak_admin_password oidc_client_secret; do gen "$s"; done
+for s in postgres_password keycloak_db_password platform_db_password keycloak_admin_password oidc_client_secret launcher_token; do gen "$s"; done
 : > secrets/bao_api_role_id; : > secrets/bao_api_secret_id
 
 compose() { docker compose "$@"; }

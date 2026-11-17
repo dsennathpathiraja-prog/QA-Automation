@@ -1,7 +1,7 @@
 import ts from 'typescript';
 
 export interface Finding {
-  kind: 'import' | 'fetch-call';
+  kind: 'import' | 'fetch-call' | 'secret-lease';
   specifier: string;
   line: number;
 }
@@ -21,6 +21,7 @@ export function analyzeSource(fileName: string, text: string): Finding[] {
         out.push({ kind: 'import', specifier: arg.text, line: line(n) });
       }
       if (ts.isIdentifier(callee) && callee.text === 'fetch') out.push({ kind: 'fetch-call', specifier: 'fetch', line: line(n) });
+      if (ts.isPropertyAccessExpression(callee) && callee.name.text === 'lease') out.push({ kind: 'secret-lease', specifier: 'lease', line: line(n) });
     }
     ts.forEachChild(n, visit);
   };
@@ -40,25 +41,30 @@ export const isGitWrite = (s: string) => GIT_WRITE_MODULES.includes(s) || s.star
 /** Allowed workspace dependencies per package (dependency rule: inward only). */
 export const ALLOWED_WORKSPACE_DEPS: Record<string, readonly string[]> = {
   domain: [],
+  telemetry: [],
   contracts: ['domain'],
-  'connector-sdk': ['domain', 'contracts'],
+  'connector-sdk': ['domain', 'contracts', 'telemetry'],
   security: ['domain'],
-  llm: ['domain'],
-  infrastructure: ['domain', 'connector-sdk', 'llm'],
-  testing: ['domain', 'connector-sdk', 'security', 'infrastructure'],
+  llm: ['domain', 'telemetry'],
+  infrastructure: ['domain', 'connector-sdk', 'llm', 'telemetry'],
+  testing: ['domain', 'connector-sdk', 'security', 'infrastructure', 'telemetry'],
   web: ['contracts'],
-  api: ['contracts', 'domain', 'security', 'infrastructure', 'persistence', 'llm'],
+  api: ['contracts', 'domain', 'security', 'infrastructure', 'persistence', 'llm', 'telemetry'],
   // Declared ahead of time so the rules exist before the packages do.
   agents: ['domain', 'contracts', 'connector-sdk', 'llm'],
   'workflow-definitions': ['domain', 'contracts', 'connector-sdk', 'agents'],
   'workflow-engine': ['domain', 'contracts', 'workflow-definitions', 'connector-sdk'],
   application: ['domain', 'contracts', 'connector-sdk', 'security', 'workflow-definitions'],
   persistence: ['domain', 'security', 'connector-sdk', 'llm', 'application'],
-  worker: ['domain', 'connector-sdk', 'security', 'infrastructure', 'persistence', 'llm'],
+  'runner-launcher': ['domain', 'infrastructure', 'telemetry', 'testing', 'connector-sdk'],
+  worker: ['domain', 'connector-sdk', 'security', 'infrastructure', 'persistence', 'llm', 'telemetry'],
 };
+
+/** Layers that must never read secret values. Only the worker side (Connector Execution Manager) and the runner launcher lease secrets. */
+export const NO_SECRET_READ_PACKAGES = new Set(['api', 'web', 'agents', 'application', 'workflow-engine', 'workflow-definitions', 'contracts', 'security', 'llm']);
 
 /** Packages that may use network, process and filesystem APIs. */
 export const IO_PACKAGES = new Set(['infrastructure', 'testing', 'persistence']);
 /** Browser code calls the platform API with fetch; Node network and process modules stay forbidden for it. */
 export const BROWSER_PACKAGES = new Set(['web']);
-export const NO_FS_PACKAGES = new Set(['llm', 'web', 'domain', 'contracts', 'connector-sdk', 'security', 'api', 'agents', 'workflow-engine', 'workflow-definitions', 'application', 'worker']);
+export const NO_FS_PACKAGES = new Set(['llm', 'web', 'domain', 'contracts', 'connector-sdk', 'security', 'api', 'agents', 'workflow-engine', 'workflow-definitions', 'application', 'worker', 'telemetry', 'runner-launcher']);

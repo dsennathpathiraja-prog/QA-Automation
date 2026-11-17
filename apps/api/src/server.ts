@@ -1,5 +1,5 @@
 import type { DeploymentProfile, PlatformEnv } from '@qa/domain';
-import { EgressPolicy, HardenedHttpClient, OidcProvider, OllamaAdapter, OpenAiCompatibleAdapter, readSecretFile, type EgressRule } from '@qa/infrastructure';
+import { EgressPolicy, HardenedHttpClient, OidcProvider, initTelemetry, OllamaAdapter, OpenAiCompatibleAdapter, readSecretFile, type EgressRule } from '@qa/infrastructure';
 import type { LlmPort } from '@qa/llm';
 import { PgAuditLog, PgSessionStore, PgUserRepository, connectPostgres, migrate, pingDb, seedDefaultGroupMappings, seedRoles, type Db } from '@qa/persistence';
 import { buildApp } from './app';
@@ -114,6 +114,13 @@ function dbHooks(db: Db): NonNullable<AuthConfig['hooks']> {
 const useOidc = platformEnv === 'production' || env.AUTH_MODE === 'oidc';
 if (platformEnv === 'production' && env.AUTH_MODE === 'dev') throw new Error('AUTH_MODE=dev is not allowed when PLATFORM_ENV=production');
 
+const telemetry = initTelemetry({
+  serviceName: 'qa-api',
+  profile,
+  egress: env.OTEL_EXPORTER_OTLP_ENDPOINT
+    ? new EgressPolicy({ rules: [{ hostPattern: new URL(env.OTEL_EXPORTER_OTLP_ENDPOINT).hostname, purpose: 'telemetry', internal: true, allowHttp: env.OTEL_EXPORTER_OTLP_ENDPOINT.startsWith('http://') }], profile, platformEnv })
+    : undefined,
+});
 const conn = connectDb();
 if (platformEnv === 'production' && !conn) throw new Error('A database is required in production (DATABASE_URL or DATABASE_HOST)');
 if (conn && env.MIGRATE_ON_START !== 'false') {
@@ -134,6 +141,7 @@ const app = buildApp({
 const shutdown = async () => {
   await app.close();
   await conn?.close();
+  await telemetry.shutdown();
   process.exit(0);
 };
 process.on('SIGTERM', shutdown);

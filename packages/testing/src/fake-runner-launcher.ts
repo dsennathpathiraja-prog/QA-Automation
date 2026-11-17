@@ -62,3 +62,14 @@ export class FakeRunnerLauncher implements RunnerLauncher {
     return { id: r.handle.id, runId: r.handle.runId, state: r.state, exitCode: r.exitCode, finishedAt: r.finishedAt, reason: r.reason };
   }
 }
+
+export const sampleRunnerSpec = (over: Partial<RunnerSpec> = {}): RunnerSpec => ({
+  runId: 'run-1',
+  executionId: 'ex-1',
+  image: `registry.local/qa/playwright@sha256:${'a'.repeat(64)}`,
+  bundleRef: 'bundles/ex-1.tar.sig',
+  environmentId: 'env-staging',
+  limits: { cpus: 2, memoryMb: 2048, timeoutSeconds: 1800, pids: 512 },
+  allowedHosts: ['shop.staging.example.com'],
+  ...over,
+});

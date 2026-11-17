@@ -1,0 +1,19 @@
+{
+  "name": "@qa/telemetry",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.10.0"
+  },
+  "devDependencies": {
+    "@opentelemetry/sdk-trace-base": "^2.0.0",
+    "@opentelemetry/context-async-hooks": "^2.0.0"
+  }
+}

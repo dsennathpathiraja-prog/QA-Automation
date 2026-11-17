@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validateRunnerSpec, type RunnerSpec } from '@qa/domain';
-import { FakeRunnerLauncher } from '../src';
+import { FakeRunnerLauncher, runnerLauncherContract } from '../src';
 
 const digest = 'a'.repeat(64);
 const spec = (over: Partial<RunnerSpec> = {}): RunnerSpec => ({
@@ -54,39 +54,7 @@ describe('runner spec validation', () => {
   });
 });
 
-describe('FakeRunnerLauncher (the contract real adapters must meet)', () => {
-  it('validates before launching and does not start anything for an invalid spec', async () => {
-    const l = new FakeRunnerLauncher();
-    await expect(l.launch(spec({ image: 'playwright:latest' }))).rejects.toMatchObject({ errorClass: 'validation' });
-    expect(l.launches).toBe(0);
-  });
-
-  it('is idempotent on runId', async () => {
-    const l = new FakeRunnerLauncher();
-    const a = await l.launch(spec());
-    const b = await l.launch(spec());
-    expect(b.id).toBe(a.id);
-    expect(l.launches).toBe(1);
-  });
-
-  it('reports status, stop with reason, and natural exit codes', async () => {
-    const l = new FakeRunnerLauncher();
-    const a = await l.launch(spec({ runId: 'r-a' }));
-    const b = await l.launch(spec({ runId: 'r-b' }));
-    expect((await l.status(a.id)).state).toBe('running');
-    await l.stop(a.id, 'user cancelled');
-    expect(await l.status(a.id)).toMatchObject({ state: 'stopped', reason: 'user cancelled' });
-    l.finish(b.id, 1);
-    expect(await l.status(b.id)).toMatchObject({ state: 'failed', exitCode: 1 });
-    await l.stop(b.id, 'late');
-    expect((await l.status(b.id)).state).toBe('failed');
-    await expect(l.status('nope')).rejects.toMatchObject({ errorClass: 'not-found' });
-  });
-
-  it('lists runners by label for the reaper', async () => {
-    const l = new FakeRunnerLauncher();
-    await l.launch(spec({ runId: 'r1', labels: { execution: 'ex-1' } }));
-    await l.launch(spec({ runId: 'r2', labels: { execution: 'ex-2' } }));
-    expect((await l.list({ execution: 'ex-2' })).map((r) => r.runId)).toEqual(['r2']);
-  });
+runnerLauncherContract('FakeRunnerLauncher', async () => {
+  const launcher = new FakeRunnerLauncher();
+  return { launcher, finish: (id, code) => launcher.finish(id, code) };
 });

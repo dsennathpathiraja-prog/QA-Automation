@@ -4,7 +4,7 @@ import { PlatformError, type DeploymentProfile, type PlatformEnv } from '@qa/dom
 export interface EgressRule {
   /** Exact host or `*.suffix`. */
   hostPattern: string;
-  purpose: 'connector' | 'application' | 'registry' | 'llm';
+  purpose: 'connector' | 'application' | 'registry' | 'llm' | 'telemetry';
   /** Internal hosts may resolve to private ranges. Required for on-prem Jira/Squash etc. */
   internal: boolean;
   allowHttp?: boolean;

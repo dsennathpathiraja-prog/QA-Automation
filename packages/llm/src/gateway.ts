@@ -1,3 +1,4 @@
+import { counter, histogram, setSpanAttributes, withSpan } from '@qa/telemetry';
 import { createHash } from 'node:crypto';
 import { PlatformError, type Clock, systemClock } from '@qa/domain';
 import { Semaphore } from './semaphore';
@@ -7,6 +8,9 @@ import {
   type LlmCallMeta, type ModelInfo, type ModelRequirements, type ModelTarget, type PromptInput, type ProviderEntry, type ProviderRegistry, type StructuredSchema,
   type TextRedactor, type ToolCall, type ToolDefinition, type Usage,
 } from './types';
+
+const LLM_TOKENS = counter('qa.llm.tokens', 'Tokens sent to and received from model providers');
+const LLM_MS = histogram('qa.llm.duration', 'Model call duration');
 
 export interface GatewayOptions {
   registry: ProviderRegistry;
@@ -231,9 +235,17 @@ export class LlmGateway {
     const onAbort = () => ctl.abort(signal?.reason);
     signal?.addEventListener('abort', onAbort, { once: true });
     try {
-      return await entry.port.chat({
-        model, messages, tools: shape.tools, jsonSchema: shape.jsonSchema, temperature: a.temperature ?? 0.1, maxOutputTokens: a.maxOutputTokens,
-        contextTokens: info.contextTokens, signal: ctl.signal,
+      return await withSpan('llm.chat', { 'llm.provider': entry.descriptor.id, 'llm.model': model, 'llm.structured': !!shape.jsonSchema, 'llm.tools': shape.tools?.length ?? 0 }, async (span) => {
+        const t0 = Date.now();
+        const res = await entry.port.chat({
+          model, messages, tools: shape.tools, jsonSchema: shape.jsonSchema, temperature: a.temperature ?? 0.1, maxOutputTokens: a.maxOutputTokens,
+          contextTokens: info.contextTokens, signal: ctl.signal,
+        });
+        setSpanAttributes(span, { 'llm.input_tokens': res.usage.inputTokens, 'llm.output_tokens': res.usage.outputTokens });
+        LLM_TOKENS.add(res.usage.inputTokens, { provider: entry.descriptor.id, direction: 'input' });
+        LLM_TOKENS.add(res.usage.outputTokens, { provider: entry.descriptor.id, direction: 'output' });
+        LLM_MS.record(Date.now() - t0, { provider: entry.descriptor.id });
+        return res;
       });
     } catch (e) {
       // Our own timeout or a caller cancel wins over whatever the transport reported about the abort.

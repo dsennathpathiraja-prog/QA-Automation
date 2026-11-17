@@ -14,3 +14,6 @@ export * from './llm/openai-compatible-adapter';
 export * from './connectors/squash/provider';
 export * from './connectors/squash/html';
 export * from './connectors/squash/token';
+export * from './telemetry/init';
+export * from './runner/docker-engine';
+export * from './runner/remote-runner-launcher';

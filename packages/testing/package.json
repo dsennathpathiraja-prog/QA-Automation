@@ -3,7 +3,23 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc -p tsconfig.json" },
-  "dependencies": {"@qa/domain": "workspace:*", "@qa/connector-sdk": "workspace:*", "@qa/security": "workspace:*", "@qa/infrastructure": "workspace:*", "zod": "^3.24.1"}
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@qa/domain": "workspace:*",
+    "@qa/connector-sdk": "workspace:*",
+    "@qa/security": "workspace:*",
+    "@qa/infrastructure": "workspace:*",
+    "zod": "^3.24.1",
+    "@qa/telemetry": "workspace:*"
+  },
+  "devDependencies": {
+    "@opentelemetry/sdk-trace-base": "^2.0.0",
+    "@opentelemetry/context-async-hooks": "^2.0.0",
+    "@opentelemetry/api": "^1.10.0"
+  }
 }

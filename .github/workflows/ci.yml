@@ -12,11 +12,19 @@ jobs:
           --health-cmd "pg_isready -U qa_test" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       TEST_DATABASE_URL: postgres://qa_test:qa_test@127.0.0.1:5432/postgres
+      TEST_OPENBAO_ADDR: http://127.0.0.1:8200
+      TEST_OPENBAO_ROOT_TOKEN: root-test
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
+      - name: Install squid for the egress proxy test
+        run: sudo apt-get update && sudo apt-get install -y squid && sudo systemctl stop squid || true
+      - name: Start OpenBao dev server for the policy test
+        run: |
+          docker run -d --name openbao -p 8200:8200 openbao/openbao:2.1.0 server -dev -dev-root-token-id=root-test -dev-listen-address=0.0.0.0:8200
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8200/v1/sys/health && break; sleep 1; done
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm test:integration

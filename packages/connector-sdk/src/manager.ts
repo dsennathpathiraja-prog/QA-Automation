@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { counter, histogram, setSpanAttributes, withSpan } from '@qa/telemetry';
 import { PlatformError, isPlatformError, type Clock, type SecretLease, type SecretStore, systemClock } from '@qa/domain';
 import type { CapabilityRegistry } from './catalog';
 import { defaultConstraintEvaluators, type ConstraintEvaluator } from './constraints';
@@ -19,6 +20,9 @@ import type {
   Redactor,
   ResolvedInstance,
 } from './types';
+
+const INVOKE_COUNT = counter('qa.connector.invocations', 'Connector capability calls by capability and outcome');
+const INVOKE_MS = histogram('qa.connector.duration', 'Connector capability call duration');
 
 export interface ConnectorExecutionManagerDeps {
   capabilities: CapabilityRegistry;
@@ -56,7 +60,25 @@ export class ConnectorExecutionManager implements CapabilityInvoker {
     this.evaluators = { ...defaultConstraintEvaluators, ...d.constraintEvaluators } as Record<ConstraintId, ConstraintEvaluator>;
   }
 
+  /** Traced and counted; spans carry capability and outcome, never inputs, outputs or credentials. */
   async invoke<O = unknown, I = unknown>(req: InvokeRequest<I>): Promise<O> {
+    const t0 = Date.now();
+    let outcome = 'ok';
+    return withSpan('connector.invoke', { capability: req.capability, 'actor.type': req.actor.type, 'connector.role': req.role }, async (span) => {
+      try {
+        return await this.invokeInner<O, I>(req);
+      } catch (e) {
+        outcome = isPlatformError(e) ? e.errorClass : 'internal';
+        throw e;
+      } finally {
+        setSpanAttributes(span, { outcome });
+        INVOKE_COUNT.add(1, { capability: req.capability, outcome });
+        INVOKE_MS.record(Date.now() - t0, { capability: req.capability, outcome });
+      }
+    });
+  }
+
+  private async invokeInner<O, I>(req: InvokeRequest<I>): Promise<O> {
     const started = this.clock.now().getTime();
     let descriptor: CapabilityDescriptor | undefined;
     let instance: ResolvedInstance | undefined;

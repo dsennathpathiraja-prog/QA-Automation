@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  ALLOWED_WORKSPACE_DEPS, BROWSER_PACKAGES, IO_PACKAGES, NO_FS_PACKAGES, analyzeSource, isFs, isGitWrite, isNetwork, type Finding,
+  ALLOWED_WORKSPACE_DEPS, BROWSER_PACKAGES, IO_PACKAGES, NO_FS_PACKAGES, NO_SECRET_READ_PACKAGES, analyzeSource, isFs, isGitWrite, isNetwork, type Finding,
 } from './analyzer';
 
 const root = resolve(__dirname, '../../..');
@@ -43,7 +43,7 @@ function workspacePackages(): Pkg[] {
 const pkgs = workspacePackages();
 
 /** The one file per deployable that wires concrete infrastructure into the application. */
-const COMPOSITION_ROOTS: Record<string, string> = { api: 'apps/api/src/server.ts', worker: 'apps/worker/src/main.ts' };
+const COMPOSITION_ROOTS: Record<string, string> = { api: 'apps/api/src/server.ts', worker: 'apps/worker/src/main.ts', 'runner-launcher': 'apps/runner-launcher/src/main.ts' };
 
 /** Rule evaluation shared by the real scan and the self-tests. */
 export function violationsFor(pkg: string, file: string, findings: Finding[]): string[] {
@@ -52,6 +52,7 @@ export function violationsFor(pkg: string, file: string, findings: Finding[]): s
   for (const f of findings) {
     const where = `${pkg}: ${file}:${f.line}`;
     if (f.kind === 'fetch-call' && !IO_PACKAGES.has(pkg) && !BROWSER_PACKAGES.has(pkg)) v.push(`${where} calls global fetch (network access is infrastructure-only)`);
+    if (f.kind === 'secret-lease' && NO_SECRET_READ_PACKAGES.has(pkg)) v.push(`${where} calls .lease() (only the worker side may read secret values; ${pkg} must not)`);
     if (f.kind !== 'import') continue;
     const s = f.specifier;
     if (isGitWrite(s)) v.push(`${where} imports ${s} (no git/hosting write libraries anywhere)`);
@@ -158,6 +159,13 @@ describe('architecture rules detect violations (self-test)', () => {
     expect(v('apps/worker/src/loop.ts', 'persistence')).toHaveLength(1);
     expect(v('apps/worker/src/app.ts', 'infrastructure')).toHaveLength(1);
     expect(v('apps/worker/src/loop.ts', 'domain')).toHaveLength(0);
+  });
+
+  it('keeps secret values out of the api, the web app and every layer above the worker', () => {
+    const lease = `await store.lease('connectors/c1/token')`;
+    for (const pkg of ['api', 'web', 'agents', 'application', 'llm']) expect(check(pkg, lease), pkg).toHaveLength(1);
+    for (const pkg of ['connector-sdk', 'infrastructure', 'testing', 'worker']) expect(check(pkg, lease), pkg).toHaveLength(0);
+    expect(NO_SECRET_READ_PACKAGES.has('api')).toBe(true);
   });
 
   it('flags filesystem use in domain and connector-sdk, and any git write library', () => {

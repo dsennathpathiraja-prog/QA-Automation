@@ -1,3 +1,7 @@
+import { counter } from '@qa/telemetry';
+
+const TICKS = counter('qa.worker.ticks', 'Worker scheduling ticks by result');
+
 export type TickResult = 'busy' | 'idle';
 export type LoopState = 'created' | 'running' | 'stopping' | 'stopped';
 
@@ -99,10 +103,12 @@ export class WorkerLoop {
       try {
         const r = await this.o.tick(this.hardAbort.signal);
         this.ticks += 1;
+        TICKS.add(1, { result: r });
         this.consecutiveErrors = 0;
         delay = r === 'busy' ? (this.o.busyDelayMs ?? 0) : (this.o.idleDelayMs ?? 1_000);
       } catch (e) {
         this.errors += 1;
+        TICKS.add(1, { result: 'error' });
         this.consecutiveErrors += 1;
         this.lastErrorAt = this.now();
         try {

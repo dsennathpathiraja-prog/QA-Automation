@@ -76,7 +76,7 @@ describe('SecretRedactor', () => {
   it('redacts registered values and token shapes in nested data', () => {
     const r = new SecretRedactor();
     r.register({ token: 'super-secret-value-123' });
-    const out = r.redact({ a: 'x super-secret-value-123 y', b: ['Bearer abcdefghijklmnopqrstuvwxyz', { c: 'ghp_abcdefghijklmnopqrstuvwxyz0123' }] });
+    const out = r.redact({ a: 'x super-secret-value-123 y', b: ['Bearer abcdefghijklmnopqrstuvwxyz', { c: 'ghp_' + 'abcdefghijklmnopqrstuvwxyz0123' }] });
     expect(JSON.stringify(out)).not.toMatch(/super-secret-value-123|abcdefghijklmnopqrstuvwxyz/);
     expect(JSON.stringify(out)).toContain('[REDACTED]');
   });
