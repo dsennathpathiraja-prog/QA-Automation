@@ -1,0 +1,139 @@
+{
+  "realm": "qa-platform",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 900,
+  "ssoSessionIdleTimeout": 3600,
+  "ssoSessionMaxLifespan": 28800,
+  "groups": [
+    {
+      "name": "QA-Platform-Admins"
+    },
+    {
+      "name": "QA-Platform-Leads"
+    },
+    {
+      "name": "QA-Platform-Engineers"
+    },
+    {
+      "name": "QA-Platform-Users"
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "qa-platform",
+      "name": "QA Platform",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:8080/api/v1/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:8080"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8080/*",
+        "backchannel.logout.url": "http://api:3000/api/v1/auth/backchannel-logout",
+        "backchannel.logout.session.required": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ],
+      "secret": "local-trial-client-secret"
+    }
+  ],
+  "users": [
+    {
+      "username": "trial-admin",
+      "enabled": true,
+      "email": "trial-admin@example.invalid",
+      "emailVerified": true,
+      "firstName": "Admin",
+      "lastName": "Trial",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Trial-Pass-1",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "QA-Platform-Admins"
+      ]
+    },
+    {
+      "username": "trial-lead",
+      "enabled": true,
+      "email": "trial-lead@example.invalid",
+      "emailVerified": true,
+      "firstName": "Lead",
+      "lastName": "Trial",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Trial-Pass-1",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "QA-Platform-Leads"
+      ]
+    },
+    {
+      "username": "trial-engineer",
+      "enabled": true,
+      "email": "trial-engineer@example.invalid",
+      "emailVerified": true,
+      "firstName": "Engineer",
+      "lastName": "Trial",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Trial-Pass-1",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "QA-Platform-Engineers"
+      ]
+    },
+    {
+      "username": "trial-user",
+      "enabled": true,
+      "email": "trial-user@example.invalid",
+      "emailVerified": true,
+      "firstName": "User",
+      "lastName": "Trial",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Trial-Pass-1",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "QA-Platform-Users"
+      ]
+    }
+  ]
+}

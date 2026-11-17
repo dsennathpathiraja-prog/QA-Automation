@@ -5,6 +5,8 @@ Single self-hosted Ubuntu host. See `docs/architecture/platform-decisions.md` in
 Status: **authored but not executed** (no Docker on the authoring host). Validate with `docker compose config`
 and the Phase 1 smoke test before use.
 
+For a quick trial on one machine, use `local/README.md` instead.
+
 ```
 cp .env.example .env            # non-secret settings only
 ./scripts/install.sh            # bootstrap secrets, init OpenBao (run twice: init, then configure)
