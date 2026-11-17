@@ -35,7 +35,8 @@ secrets:
 services:
   nginx:
     <<: *common
-    image: nginx:1.27-alpine
+    build: { context: ../.., dockerfile: deploy/images/web.Dockerfile }
+    image: qa-platform/web:local
     ports: ["443:443"]
     networks: [edge, app]
     volumes:

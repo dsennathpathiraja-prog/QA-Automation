@@ -45,6 +45,7 @@ export const ALLOWED_WORKSPACE_DEPS: Record<string, readonly string[]> = {
   security: ['domain'],
   infrastructure: ['domain', 'connector-sdk'],
   testing: ['domain', 'connector-sdk', 'security', 'infrastructure'],
+  web: ['contracts'],
   api: ['contracts', 'domain', 'security', 'infrastructure', 'persistence'],
   // Declared ahead of time so the rules exist before the packages do.
   agents: ['domain', 'contracts', 'connector-sdk'],
@@ -57,4 +58,6 @@ export const ALLOWED_WORKSPACE_DEPS: Record<string, readonly string[]> = {
 
 /** Packages that may use network, process and filesystem APIs. */
 export const IO_PACKAGES = new Set(['infrastructure', 'testing', 'persistence']);
-export const NO_FS_PACKAGES = new Set(['domain', 'contracts', 'connector-sdk', 'security', 'api', 'agents', 'workflow-engine', 'workflow-definitions', 'application']);
+/** Browser code calls the platform API with fetch; Node network and process modules stay forbidden for it. */
+export const BROWSER_PACKAGES = new Set(['web']);
+export const NO_FS_PACKAGES = new Set(['web', 'domain', 'contracts', 'connector-sdk', 'security', 'api', 'agents', 'workflow-engine', 'workflow-definitions', 'application']);

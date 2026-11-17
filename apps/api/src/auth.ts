@@ -131,7 +131,8 @@ export function registerAuthRoutes(app: FastifyInstance, resolver: OidcSessionRe
 
   const cookie = (name: string, value: string, maxAgeSec: number, path: string) =>
     `${name}=${encodeURIComponent(value)}; Path=${path}; Max-Age=${maxAgeSec}; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
-  const fail = (reply: FastifyReply, code: number, msg: string) => reply.code(code).send({ error: { class: code === 403 ? 'denied' : 'auth', message: msg } });
+  // The callback is a browser navigation, so failures land on a readable SPA page instead of a JSON body.
+  const bounce = (reply: FastifyReply, code: 'failed' | 'denied' | 'unavailable') => reply.redirect(`${base}/signin-error?code=${code}`, 302);
 
   app.get('/api/v1/auth/login', { config: { access: publicRoute } }, async (req, reply) => {
     for (const [k, v] of pending) if (v.expiresAt <= now()) pending.delete(k);
@@ -150,13 +151,13 @@ export function registerAuthRoutes(app: FastifyInstance, resolver: OidcSessionRe
     const clearLogin = cookie(LOGIN_COOKIE, '', 0, '/api/v1/auth');
     if (q.error || !q.code || !q.state || !bound || !safeEqual(q.state, bound)) {
       reply.header('set-cookie', clearLogin);
-      return fail(reply, 401, 'Login failed');
+      return bounce(reply, 'failed');
     }
     const p = pending.get(q.state);
     pending.delete(q.state);
     if (!p || p.expiresAt <= now()) {
       reply.header('set-cookie', clearLogin);
-      return fail(reply, 401, 'Login expired');
+      return bounce(reply, 'failed');
     }
     let rec: SessionRecord | undefined;
     let subject = 'unknown';
@@ -168,13 +169,13 @@ export function registerAuthRoutes(app: FastifyInstance, resolver: OidcSessionRe
       if (!blocked) rec = await resolver.createSession(identity);
     } catch (e) {
       reply.header('set-cookie', clearLogin);
-      if (e instanceof PlatformError && e.errorClass === 'transient') return fail(reply, 401, 'Identity provider unavailable');
-      return fail(reply, 401, 'Login failed');
+      if (e instanceof PlatformError && e.errorClass === 'transient') return bounce(reply, 'unavailable');
+      return bounce(reply, 'failed');
     }
     if (!rec) {
       await cfg.hooks?.onDenied?.({ subject, reason: blocked ? 'user-disabled' : 'no-mapped-role' }).catch(() => undefined);
       reply.header('set-cookie', clearLogin);
-      return fail(reply, 403, 'Your account is not assigned to any platform role');
+      return bounce(reply, 'denied');
     }
     await cfg.hooks?.onLogin?.(rec).catch(() => undefined);
     reply.header('set-cookie', [clearLogin, cookie(SESSION_COOKIE, rec.id, Math.floor((rec.expiresAt - now()) / 1000), '/')]);

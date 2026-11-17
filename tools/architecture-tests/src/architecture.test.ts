@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  ALLOWED_WORKSPACE_DEPS, IO_PACKAGES, NO_FS_PACKAGES, analyzeSource, isFs, isGitWrite, isNetwork, type Finding,
+  ALLOWED_WORKSPACE_DEPS, BROWSER_PACKAGES, IO_PACKAGES, NO_FS_PACKAGES, analyzeSource, isFs, isGitWrite, isNetwork, type Finding,
 } from './analyzer';
 
 const root = resolve(__dirname, '../../..');
@@ -48,7 +48,7 @@ export function violationsFor(pkg: string, file: string, findings: Finding[]): s
   const allowed = ALLOWED_WORKSPACE_DEPS[pkg] ?? [];
   for (const f of findings) {
     const where = `${pkg}: ${file}:${f.line}`;
-    if (f.kind === 'fetch-call' && !IO_PACKAGES.has(pkg)) v.push(`${where} calls global fetch (network access is infrastructure-only)`);
+    if (f.kind === 'fetch-call' && !IO_PACKAGES.has(pkg) && !BROWSER_PACKAGES.has(pkg)) v.push(`${where} calls global fetch (network access is infrastructure-only)`);
     if (f.kind !== 'import') continue;
     const s = f.specifier;
     if (isGitWrite(s)) v.push(`${where} imports ${s} (no git/hosting write libraries anywhere)`);
@@ -118,6 +118,16 @@ describe('architecture rules detect violations (self-test)', () => {
     expect(check('agents', `import { x } from '@qa/infrastructure'`)).toHaveLength(1);
     expect(check('agents', `import { x } from '@qa/connector-github'`)).toHaveLength(1);
     expect(check('agents', `import { x } from '@qa/connector-sdk'`)).toHaveLength(0);
+  });
+
+  it('keeps the SPA on contracts only: it may call fetch but never import domain, security, persistence or Node modules', () => {
+    expect(check('web', `await fetch('/api/v1/me')`)).toHaveLength(0);
+    expect(check('web', `import { ROLE_PERMISSIONS } from '@qa/domain'`)).toHaveLength(1);
+    expect(check('web', `import { x } from '@qa/security'`)).toHaveLength(1);
+    expect(check('web', `import { x } from '@qa/persistence'`)).toHaveLength(1);
+    expect(check('web', `import fs from 'node:fs'`)).toHaveLength(1);
+    expect(check('web', `import http from 'node:http'`)).toHaveLength(1);
+    expect(check('web', `import { z } from '@qa/contracts'`)).toHaveLength(0);
   });
 
   it('lets only the api composition root import infrastructure', () => {

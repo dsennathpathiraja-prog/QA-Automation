@@ -16,11 +16,12 @@ Implemented and tested:
 | Postgres schema (Drizzle) + SQL migrations with tamper detection, append-only triggers, seeded roles and the four default IdP group mappings, session store (token hashed), hash-chained audit log, operation-log sink, user provisioning | `packages/persistence` |
 | Fake providers, test harness, provider contract kit | `packages/testing` |
 | API shell: health, `/api/v1/me`, route guard that refuses undeclared routes; **OIDC login** (auth code + PKCE, nonce/state, server-side sessions with idle/absolute timeout, CSRF header, back-channel logout, group-to-role mapping) | `apps/api`, `packages/infrastructure/src/identity` |
+| Web shell (React 18, Vite, TanStack Router/Query, Tailwind): session gate with login redirect, role-aware navigation from the caller's permissions, route guard with explanations, sign-in error pages, CSRF-aware API client, accessible layout (skip link, landmarks, mobile menu). Pages: Dashboard, Connectors (empty state), Identity mapping (read-only); other screens are labelled placeholders naming their phase | `apps/web` |
 | Architecture tests (import graph, IO rules, no git-write libraries) | `tools/architecture-tests` |
 | Compose stack, nginx, Squid egress proxy, OpenBao policies and installer, Keycloak realm (authored, not run) | `deploy/compose` |
 
 Not yet implemented in Phase 1: OIDC has only been tested against a fake IdP (never against a real Keycloak), role changes apply at next login (user is re-provisioned and audited at every login), the baseline schema covers identity, connectors, environments, audit and sessions only (workflow, execution, QA-asset, agent and LLM tables arrive with their phases),
-web app shell, Ollama adapter (`LlmPort`/`LlmGateway`), runner launcher,
+Ollama adapter (`LlmPort`/`LlmGateway`), runner launcher,
 object-store S3 adapter, OpenTelemetry, ADRs.
 
 ## Commands
@@ -29,5 +30,6 @@ object-store S3 adapter, OpenTelemetry, ADRs.
 pnpm install
 pnpm check              # typecheck + all tests (in-process Postgres via PGlite; architecture rules)
 pnpm test:integration   # same invariants against a real Postgres 16 (TEST_DATABASE_URL; defaults to local qa_test)
+pnpm --filter @qa/web dev   # SPA on :5173, proxies /api to :3000 and signs you in via dev headers (DEV_USER, DEV_GROUPS); API in dev mode: pnpm --filter @qa/api start
 pnpm db:generate        # drizzle-kit: new migration from schema.ts (never edit a released migration)
 ```

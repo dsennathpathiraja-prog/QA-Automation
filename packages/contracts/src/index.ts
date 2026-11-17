@@ -19,3 +19,21 @@ export const ErrorResponse = z.object({
   error: z.object({ class: z.string(), message: z.string(), requestId: z.string().optional() }),
 });
 export type ErrorResponse = z.infer<typeof ErrorResponse>;
+
+export type Permission = z.infer<typeof PermissionSchema>;
+export type Role = z.infer<typeof RoleSchema>;
+
+export const SessionResponse = z.object({ csrfToken: z.string(), expiresAt: z.string() });
+export type SessionResponse = z.infer<typeof SessionResponse>;
+
+export const IdentityMappingsResponse = z.object({
+  items: z.array(z.object({ idpGroup: z.string(), role: RoleSchema, enabled: z.boolean() })),
+});
+export type IdentityMappingsResponse = z.infer<typeof IdentityMappingsResponse>;
+
+export const ConnectorListResponse = z.object({ items: z.array(z.object({ id: z.string(), name: z.string(), providerKey: z.string(), status: z.string() })) });
+export type ConnectorListResponse = z.infer<typeof ConnectorListResponse>;
+export type { ZodType } from 'zod';
+
+export const LogoutResponse = z.object({ loggedOut: z.boolean(), logoutUrl: z.string().nullable() });
+export type LogoutResponse = z.infer<typeof LogoutResponse>;

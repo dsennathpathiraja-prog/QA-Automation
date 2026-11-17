@@ -64,9 +64,14 @@ describe('OIDC login flow', () => {
   it('rejects a callback without the login cookie, with a mismatching state, or with an IdP error', async () => {
     const ctx = setup();
     await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/login' });
-    expect((await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/callback?code=c&state=st-1' })).statusCode).toBe(401);
-    expect((await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/callback?code=c&state=st-1', headers: { cookie: 'qa_login=other' } })).statusCode).toBe(401);
-    expect((await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/callback?error=access_denied&state=st-1', headers: { cookie: 'qa_login=st-1' } })).statusCode).toBe(401);
+    const failed = 'https://qa.example.local/signin-error?code=failed';
+    const bounce = async (url: string, cookie?: string) => {
+      const r = await ctx.app.inject({ method: 'GET', url, headers: cookie ? { cookie } : {} });
+      return [r.statusCode, r.headers.location, cookieOf(r.headers['set-cookie'], 'qa_session')];
+    };
+    expect(await bounce('/api/v1/auth/callback?code=c&state=st-1')).toEqual([302, failed, undefined]);
+    expect(await bounce('/api/v1/auth/callback?code=c&state=st-1', 'qa_login=other')).toEqual([302, failed, undefined]);
+    expect(await bounce('/api/v1/auth/callback?error=access_denied&state=st-1', 'qa_login=st-1')).toEqual([302, failed, undefined]);
   });
 
   it('does not allow a state to be replayed', async () => {
@@ -75,14 +80,14 @@ describe('OIDC login flow', () => {
     const ok = await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/callback?code=c&state=st-1', headers: { cookie: 'qa_login=st-1' } });
     expect(ok.statusCode).toBe(302);
     const replay = await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/callback?code=c&state=st-1', headers: { cookie: 'qa_login=st-1' } });
-    expect(replay.statusCode).toBe(401);
+    expect(replay.headers.location).toBe('https://qa.example.local/signin-error?code=failed');
   });
 
-  it('denies login (403, no session) when no group maps to a role', async () => {
+  it('denies login (no session, readable error page) when no group maps to a role', async () => {
     const ctx = setup();
     ctx.provider.groups = ['Some-Other-Group'];
     const { cb, session } = await login(ctx);
-    expect(cb.statusCode).toBe(403);
+    expect(cb.headers.location).toBe('https://qa.example.local/signin-error?code=denied');
     expect(session).toBeUndefined();
   });
 
@@ -105,7 +110,7 @@ describe('OIDC login flow', () => {
     expect(out.statusCode).toBe(200);
     events.push('block');
     const blocked = await login(ctx);
-    expect(blocked.cb.statusCode).toBe(403);
+    expect(blocked.cb.headers.location).toBe('https://qa.example.local/signin-error?code=denied');
     expect(blocked.session).toBeUndefined();
     expect(events).toEqual(['login:u-1', 'block', 'denied:u-1:user-disabled']);
   });
@@ -114,7 +119,7 @@ describe('OIDC login flow', () => {
     const ctx = setup();
     ctx.provider.fail = true;
     const { cb } = await login(ctx);
-    expect(cb.statusCode).toBe(401);
+    expect(cb.headers.location).toBe('https://qa.example.local/signin-error?code=failed');
   });
 
   it('expires sessions after the idle timeout and the absolute timeout', async () => {
