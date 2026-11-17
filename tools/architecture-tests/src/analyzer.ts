@@ -45,16 +45,16 @@ export const ALLOWED_WORKSPACE_DEPS: Record<string, readonly string[]> = {
   security: ['domain'],
   infrastructure: ['domain', 'connector-sdk'],
   testing: ['domain', 'connector-sdk', 'security', 'infrastructure'],
-  api: ['contracts', 'domain', 'security', 'infrastructure'],
+  api: ['contracts', 'domain', 'security', 'infrastructure', 'persistence'],
   // Declared ahead of time so the rules exist before the packages do.
   agents: ['domain', 'contracts', 'connector-sdk'],
   'workflow-definitions': ['domain', 'contracts', 'connector-sdk', 'agents'],
   'workflow-engine': ['domain', 'contracts', 'workflow-definitions', 'connector-sdk'],
   application: ['domain', 'contracts', 'connector-sdk', 'security', 'workflow-definitions'],
-  persistence: ['domain', 'application'],
+  persistence: ['domain', 'security', 'connector-sdk', 'application'],
   worker: ['*'],
 };
 
 /** Packages that may use network, process and filesystem APIs. */
-export const IO_PACKAGES = new Set(['infrastructure', 'testing']);
+export const IO_PACKAGES = new Set(['infrastructure', 'testing', 'persistence']);
 export const NO_FS_PACKAGES = new Set(['domain', 'contracts', 'connector-sdk', 'security', 'api', 'agents', 'workflow-engine', 'workflow-definitions', 'application']);

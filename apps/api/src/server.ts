@@ -1,5 +1,6 @@
 import type { DeploymentProfile, PlatformEnv } from '@qa/domain';
 import { EgressPolicy, HardenedHttpClient, OidcProvider, readSecretFile, type EgressRule } from '@qa/infrastructure';
+import { PgAuditLog, PgSessionStore, PgUserRepository, connectPostgres, migrate, pingDb, seedDefaultGroupMappings, seedRoles, type Db } from '@qa/persistence';
 import { buildApp } from './app';
 import { OidcSessionResolver, type AuthConfig } from './auth';
 import { DevHeaderSessionResolver } from './session';
@@ -15,7 +16,20 @@ function required(name: string): string {
   return v;
 }
 
-function buildOidc() {
+function connectDb() {
+  const password = env.DATABASE_PASSWORD_FILE ? readSecretFile(env.DATABASE_PASSWORD_FILE) : env.DATABASE_PASSWORD;
+  if (!env.DATABASE_URL && !env.DATABASE_HOST) return undefined;
+  return connectPostgres({
+    url: env.DATABASE_URL,
+    host: env.DATABASE_HOST,
+    port: env.DATABASE_PORT ? Number(env.DATABASE_PORT) : undefined,
+    database: env.DATABASE_NAME,
+    user: env.DATABASE_USER,
+    password,
+  });
+}
+
+function buildOidc(db: Db | undefined) {
   const issuer = required('OIDC_ISSUER');
   const internalBaseUrl = env.OIDC_INTERNAL_URL;
   const clientSecret = env.OIDC_CLIENT_SECRET_FILE ? readSecretFile(env.OIDC_CLIENT_SECRET_FILE) : required('OIDC_CLIENT_SECRET');
@@ -36,7 +50,8 @@ function buildOidc() {
   );
   const config: AuthConfig = {
     provider,
-    store: new InMemorySessionStore(),
+    store: db ? new PgSessionStore(db) : new InMemorySessionStore(),
+    hooks: db ? dbHooks(db) : undefined,
     publicBaseUrl: required('PUBLIC_BASE_URL'),
     secureCookies: required('PUBLIC_BASE_URL').startsWith('https://'),
     groupFormat: (env.OIDC_GROUP_FORMAT as 'name' | 'path' | 'object-id' | undefined) ?? 'name',
@@ -44,13 +59,49 @@ function buildOidc() {
   return { config, resolver: new OidcSessionResolver(config) };
 }
 
+function dbHooks(db: Db): NonNullable<AuthConfig['hooks']> {
+  const users = new PgUserRepository(db);
+  const audit = new PgAuditLog(db);
+  const at = () => new Date().toISOString();
+  return {
+    isBlocked: (subject) => users.isDisabled(subject),
+    onLogin: async (rec) => {
+      await users.recordLogin({ subject: rec.userId, displayName: rec.displayName, email: rec.email, roles: rec.roles });
+      await audit.append({ at: at(), actorId: rec.userId, action: 'auth.login', subjectType: 'user', subjectId: rec.userId, detail: { roles: rec.roles } });
+    },
+    onDenied: async ({ subject, reason }) => {
+      await audit.append({ at: at(), actorId: subject, action: 'auth.login_denied', subjectType: 'user', subjectId: subject, detail: { reason } });
+    },
+    onLogout: async (rec) => {
+      await audit.append({ at: at(), actorId: rec.userId, action: 'auth.logout', subjectType: 'user', subjectId: rec.userId });
+    },
+  };
+}
+
 const useOidc = platformEnv === 'production' || env.AUTH_MODE === 'oidc';
 if (platformEnv === 'production' && env.AUTH_MODE === 'dev') throw new Error('AUTH_MODE=dev is not allowed when PLATFORM_ENV=production');
 
-const auth = useOidc ? buildOidc() : undefined;
+const conn = connectDb();
+if (platformEnv === 'production' && !conn) throw new Error('A database is required in production (DATABASE_URL or DATABASE_HOST)');
+if (conn && env.MIGRATE_ON_START !== 'false') {
+  const r = await migrate(conn.db);
+  await seedRoles(conn.db);
+  await seedDefaultGroupMappings(conn.db);
+  console.log(JSON.stringify({ msg: 'database ready', migrationsApplied: r.applied }));
+}
+
+const auth = useOidc ? buildOidc(conn?.db) : undefined;
 const app = buildApp({
   sessions: auth ? auth.resolver : new DevHeaderSessionResolver(platformEnv),
   profile,
   auth,
+  readiness: conn ? { database: () => pingDb(conn.db) } : undefined,
 });
+const shutdown = async () => {
+  await app.close();
+  await conn?.close();
+  process.exit(0);
+};
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 await app.listen({ host: env.HOST ?? '127.0.0.1', port: Number(env.PORT ?? 3000) });

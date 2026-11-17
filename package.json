@@ -3,12 +3,16 @@
   "private": true,
   "version": "0.0.0",
   "packageManager": "pnpm@9.15.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
     "lint:arch": "vitest run tools/architecture-tests",
-    "check": "pnpm typecheck && pnpm test"
+    "check": "pnpm typecheck && pnpm test",
+    "test:integration": "TEST_DATABASE_URL=${TEST_DATABASE_URL:-postgres://qa_test:qa_test@127.0.0.1:5432/postgres} vitest run packages/persistence/test/postgres",
+    "db:generate": "pnpm --filter @qa/persistence db:generate"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

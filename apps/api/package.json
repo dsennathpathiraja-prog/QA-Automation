@@ -9,6 +9,7 @@
     "@qa/contracts": "workspace:*",
     "@qa/domain": "workspace:*",
     "@qa/infrastructure": "workspace:*",
+    "@qa/persistence": "workspace:*",
     "@qa/security": "workspace:*",
     "fastify": "^5.2.0",
     "tsx": "^4.19.2"

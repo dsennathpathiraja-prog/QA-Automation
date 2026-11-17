@@ -86,6 +86,30 @@ describe('OIDC login flow', () => {
     expect(session).toBeUndefined();
   });
 
+  it('refuses disabled users, and reports login, denial and logout through hooks without breaking the flow', async () => {
+    const events: string[] = [];
+    const ctx = setup({
+      hooks: {
+        isBlocked: async (s) => s === 'u-1' && events.includes('block'),
+        onLogin: async (r) => void events.push(`login:${r.userId}`),
+        onDenied: async (i) => void events.push(`denied:${i.subject}:${i.reason}`),
+        onLogout: async () => {
+          throw new Error('hook failure must not surface');
+        },
+      },
+    });
+    const ok = await login(ctx);
+    expect(ok.cb.statusCode).toBe(302);
+    const { csrfToken } = (await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/session', headers: { cookie: ok.session! } })).json();
+    const out = await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/logout', headers: { cookie: ok.session!, 'x-csrf-token': csrfToken } });
+    expect(out.statusCode).toBe(200);
+    events.push('block');
+    const blocked = await login(ctx);
+    expect(blocked.cb.statusCode).toBe(403);
+    expect(blocked.session).toBeUndefined();
+    expect(events).toEqual(['login:u-1', 'block', 'denied:u-1:user-disabled']);
+  });
+
   it('fails closed when the IdP rejects the exchange', async () => {
     const ctx = setup();
     ctx.provider.fail = true;

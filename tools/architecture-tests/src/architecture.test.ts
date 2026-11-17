@@ -56,8 +56,8 @@ export function violationsFor(pkg: string, file: string, findings: Finding[]): s
     if (isFs(s) && NO_FS_PACKAGES.has(pkg)) v.push(`${where} imports ${s} (filesystem access not allowed in this layer)`);
     if (s.startsWith('@qa/')) {
       const target = s.slice(4).split('/')[0]!;
-      if (pkg === 'api' && target === 'infrastructure' && !file.endsWith('apps/api/src/server.ts')) {
-        v.push(`${where} imports @qa/infrastructure outside the composition root (only apps/api/src/server.ts may)`);
+      if (pkg === 'api' && (target === 'infrastructure' || target === 'persistence') && !file.endsWith('apps/api/src/server.ts')) {
+        v.push(`${where} imports @qa/${target} outside the composition root (only apps/api/src/server.ts may)`);
       }
       if (target !== pkg && !allowed.includes('*') && !allowed.includes(target)) v.push(`${where} imports @qa/${target} which ${pkg} may not depend on`);
     }

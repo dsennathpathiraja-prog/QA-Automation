@@ -18,6 +18,13 @@ export interface AuthConfig {
   /** False only for local http development. */
   secureCookies?: boolean;
   now?: () => number;
+  /** Side effects after authentication decisions (user provisioning, audit). Failures never block or leak into the response. */
+  hooks?: {
+    onLogin?(rec: SessionRecord): Promise<void>;
+    isBlocked?(subject: string): Promise<boolean>;
+    onDenied?(info: { subject: string; reason: string }): Promise<void>;
+    onLogout?(rec: SessionRecord): Promise<void>;
+  };
 }
 
 const SESSION_COOKIE = 'qa_session';
@@ -152,18 +159,24 @@ export function registerAuthRoutes(app: FastifyInstance, resolver: OidcSessionRe
       return fail(reply, 401, 'Login expired');
     }
     let rec: SessionRecord | undefined;
+    let subject = 'unknown';
+    let blocked = false;
     try {
       const identity = await cfg.provider.completeLogin({ code: q.code, redirectUri, codeVerifier: p.codeVerifier, nonce: p.nonce });
-      rec = await resolver.createSession(identity);
+      subject = identity.subject;
+      blocked = (await cfg.hooks?.isBlocked?.(identity.subject)) ?? false;
+      if (!blocked) rec = await resolver.createSession(identity);
     } catch (e) {
       reply.header('set-cookie', clearLogin);
       if (e instanceof PlatformError && e.errorClass === 'transient') return fail(reply, 401, 'Identity provider unavailable');
       return fail(reply, 401, 'Login failed');
     }
     if (!rec) {
+      await cfg.hooks?.onDenied?.({ subject, reason: blocked ? 'user-disabled' : 'no-mapped-role' }).catch(() => undefined);
       reply.header('set-cookie', clearLogin);
       return fail(reply, 403, 'Your account is not assigned to any platform role');
     }
+    await cfg.hooks?.onLogin?.(rec).catch(() => undefined);
     reply.header('set-cookie', [clearLogin, cookie(SESSION_COOKIE, rec.id, Math.floor((rec.expiresAt - now()) / 1000), '/')]);
     return reply.redirect(`${base}${p.returnTo}`, 302);
   });
@@ -189,6 +202,7 @@ export function registerAuthRoutes(app: FastifyInstance, resolver: OidcSessionRe
   app.post('/api/v1/auth/logout', { config: { access: authenticatedRoute } }, async (req, reply) => {
     const rec = req.sessionRecord!;
     await cfg.store.delete(rec.id);
+    await cfg.hooks?.onLogout?.(rec).catch(() => undefined);
     reply.header('set-cookie', cookie(SESSION_COOKIE, '', 0, '/'));
     const logoutUrl = await cfg.provider.endSessionUrl(rec.idToken, base).catch(() => undefined);
     return { loggedOut: true, logoutUrl: logoutUrl ?? null };
