@@ -25,6 +25,16 @@ Implemented and tested:
 Not yet implemented in Phase 1: OIDC has only been tested against a fake IdP (never against a real Keycloak), role changes apply at next login (user is re-provisioned and audited at every login), the baseline schema covers identity, connectors, environments, audit and sessions only (workflow, execution, QA-asset and agent tables arrive with their phases; only `llm_call_log` exists for LLM), worker app skeleton, runner launcher,
 object-store S3 adapter, OpenTelemetry, ADRs.
 
+## Squash discovery probe (read-only)
+
+The platform host cannot resolve `squash.trafforge.local` (it is behind your VPN), so the probe is a single dependency-free script you run on a machine that can reach Squash. It sends GET requests only and prints status codes, authentication headers and field names, never data values.
+
+```
+SQUASH_BASE_URL=http://squash.trafforge.local/squash node tools/squash-probe/probe.mjs > squash-report.json
+# with a read-only API token kept in a file (never on the command line):
+SQUASH_BASE_URL=... SQUASH_TOKEN_FILE=./squash-token.txt node tools/squash-probe/probe.mjs > squash-report.json
+```
+
 ## Commands
 
 ```
