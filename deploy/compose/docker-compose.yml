@@ -1,0 +1,146 @@
+# Initial deployment target: single self-hosted Ubuntu host.
+# Profiles: core (default services), llm (Ollama), vllm, s3 (S3-compatible object store), obs, airgapped.
+# Add `-f docker-compose.gpu.yml` to give Ollama a GPU. UNTESTED on the authoring host (no Docker available):
+# validate with `docker compose config` and the Phase 1 smoke test before relying on it.
+name: qa-platform
+
+x-common: &common
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+
+networks:
+  edge: {}                         # published to users
+  app: { internal: true }          # api, keycloak, nginx upstreams
+  data: { internal: true }         # postgres, openbao, object store
+  llm: { internal: true }          # model servers
+  automation: { internal: true }   # runners and browser MCP (later phases)
+  egress: {}                       # only the egress proxy attaches here
+
+volumes:
+  pgdata: {}
+  baodata: {}
+  ollama: {}
+  objects: {}
+  squid-cache: {}
+
+secrets:
+  postgres_password: { file: ./secrets/postgres_password }
+  keycloak_db_password: { file: ./secrets/keycloak_db_password }
+  platform_db_password: { file: ./secrets/platform_db_password }
+  keycloak_admin_password: { file: ./secrets/keycloak_admin_password }
+  bao_api_role_id: { file: ./secrets/bao_api_role_id }
+  bao_api_secret_id: { file: ./secrets/bao_api_secret_id }
+
+services:
+  nginx:
+    <<: *common
+    image: nginx:1.27-alpine
+    ports: ["443:443"]
+    networks: [edge, app]
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on: [api, keycloak]
+    read_only: true
+    tmpfs: [/var/cache/nginx, /var/run, /tmp]
+
+  api:
+    <<: *common
+    build: { context: ../.., dockerfile: deploy/images/api.Dockerfile }
+    networks: [app, data]
+    environment:
+      PLATFORM_ENV: ${PLATFORM_ENV:-production}
+      PLATFORM_PROFILE: ${PLATFORM_PROFILE:-standard}
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DATABASE_HOST: postgres
+      DATABASE_NAME: qa_platform
+      DATABASE_USER: qa_platform
+      BAO_ADDR: http://openbao:8200
+      BAO_ROLE_ID_FILE: /run/secrets/bao_api_role_id
+      BAO_SECRET_ID_FILE: /run/secrets/bao_api_secret_id
+      OIDC_ISSUER: https://${PUBLIC_HOSTNAME:-qa.example.local}/auth/realms/qa-platform
+      HTTPS_PROXY: http://egress-proxy:3128
+      NO_PROXY: postgres,openbao,keycloak,localhost
+    secrets: [bao_api_role_id, bao_api_secret_id]
+    depends_on: { postgres: { condition: service_healthy }, openbao: { condition: service_started } }
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    <<: *common
+    image: postgres:16-alpine
+    networks: [data]
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      PLATFORM_DB_PASSWORD_FILE: /run/secrets/platform_db_password
+      KEYCLOAK_DB_PASSWORD_FILE: /run/secrets/keycloak_db_password
+    secrets: [postgres_password, platform_db_password, keycloak_db_password]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sh:/docker-entrypoint-initdb.d/10-init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  keycloak:
+    <<: *common
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start", "--import-realm"]
+    networks: [app, data]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD_FILE: /run/secrets/keycloak_db_password
+      KC_BOOTSTRAP_ADMIN_USERNAME: bootstrap-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/keycloak_admin_password
+      KC_HOSTNAME: https://${PUBLIC_HOSTNAME:-qa.example.local}/auth
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_RELATIVE_PATH: /auth
+    secrets: [keycloak_db_password, keycloak_admin_password]
+    volumes:
+      - ./keycloak/realm-qa-platform.json:/opt/keycloak/data/import/realm-qa-platform.json:ro
+    depends_on: { postgres: { condition: service_healthy } }
+
+  openbao:
+    <<: *common
+    image: openbao/openbao:2
+    command: ["server", "-config=/openbao/config/config.hcl"]
+    networks: [data]
+    cap_add: [IPC_LOCK]
+    volumes:
+      - baodata:/openbao/data
+      - ./openbao/config.hcl:/openbao/config/config.hcl:ro
+      - ./openbao/audit:/openbao/audit
+
+  egress-proxy:
+    <<: *common
+    image: ubuntu/squid:latest
+    networks: [app, egress]
+    volumes:
+      - ./squid/squid.conf:/etc/squid/squid.conf:ro
+      - ./squid/allowed-hosts.txt:/etc/squid/allowed-hosts.txt:ro
+      - squid-cache:/var/spool/squid
+
+  ollama:
+    <<: *common
+    image: ollama/ollama:latest
+    profiles: [llm]
+    networks: [llm]
+    volumes: [ollama:/root/.ollama]
+
+  object-store:
+    <<: *common
+    image: dxflrs/garage:v1.0.1
+    profiles: [s3]
+    networks: [data]
+    volumes: [objects:/var/lib/garage]

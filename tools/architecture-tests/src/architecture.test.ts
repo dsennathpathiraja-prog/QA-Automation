@@ -1,0 +1,131 @@
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import {
+  ALLOWED_WORKSPACE_DEPS, IO_PACKAGES, NO_FS_PACKAGES, analyzeSource, isFs, isGitWrite, isNetwork, type Finding,
+} from './analyzer';
+
+const root = resolve(__dirname, '../../..');
+
+function listTs(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).flatMap((n) => {
+    const p = join(dir, n);
+    return statSync(p).isDirectory() ? listTs(p) : p.endsWith('.ts') ? [p] : [];
+  });
+}
+
+interface Pkg {
+  name: string;
+  dir: string;
+  deps: string[];
+}
+
+function workspacePackages(): Pkg[] {
+  const out: Pkg[] = [];
+  for (const group of ['packages', 'apps']) {
+    const g = join(root, group);
+    if (!existsSync(g)) continue;
+    for (const n of readdirSync(g)) {
+      const pj = join(g, n, 'package.json');
+      if (!existsSync(pj)) continue;
+      const j = JSON.parse(readFileSync(pj, 'utf8')) as { dependencies?: Record<string, string> };
+      out.push({
+        name: n,
+        dir: join(g, n),
+        deps: Object.keys(j.dependencies ?? {}).filter((d) => d.startsWith('@qa/')).map((d) => d.slice(4)),
+      });
+    }
+  }
+  return out;
+}
+
+const pkgs = workspacePackages();
+
+/** Rule evaluation shared by the real scan and the self-tests. */
+export function violationsFor(pkg: string, file: string, findings: Finding[]): string[] {
+  const v: string[] = [];
+  const allowed = ALLOWED_WORKSPACE_DEPS[pkg] ?? [];
+  for (const f of findings) {
+    const where = `${pkg}: ${file}:${f.line}`;
+    if (f.kind === 'fetch-call' && !IO_PACKAGES.has(pkg)) v.push(`${where} calls global fetch (network access is infrastructure-only)`);
+    if (f.kind !== 'import') continue;
+    const s = f.specifier;
+    if (isGitWrite(s)) v.push(`${where} imports ${s} (no git/hosting write libraries anywhere)`);
+    if (isNetwork(s) && !IO_PACKAGES.has(pkg)) v.push(`${where} imports ${s} (network/process access is infrastructure-only)`);
+    if (isFs(s) && NO_FS_PACKAGES.has(pkg)) v.push(`${where} imports ${s} (filesystem access not allowed in this layer)`);
+    if (s.startsWith('@qa/')) {
+      const target = s.slice(4).split('/')[0]!;
+      if (target !== pkg && !allowed.includes('*') && !allowed.includes(target)) v.push(`${where} imports @qa/${target} which ${pkg} may not depend on`);
+    }
+  }
+  return v;
+}
+
+describe('architecture rules (layer boundaries)', () => {
+  it('every workspace package declares its allowed dependencies', () => {
+    for (const p of pkgs) expect(Object.keys(ALLOWED_WORKSPACE_DEPS), `unknown package ${p.name}`).toContain(p.name);
+  });
+
+  it('package.json dependencies respect the allowlist', () => {
+    const bad: string[] = [];
+    for (const p of pkgs) {
+      const allowed = ALLOWED_WORKSPACE_DEPS[p.name] ?? [];
+      for (const d of p.deps) if (!allowed.includes('*') && !allowed.includes(d)) bad.push(`${p.name} -> ${d}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('source files respect import and IO rules', () => {
+    const all: string[] = [];
+    for (const p of pkgs) {
+      for (const f of listTs(join(p.dir, 'src'))) {
+        all.push(...violationsFor(p.name, relative(root, f), analyzeSource(f, readFileSync(f, 'utf8'))));
+      }
+    }
+    expect(all).toEqual([]);
+  });
+
+  it('no package anywhere depends on a git or hosting write library', () => {
+    const bad: string[] = [];
+    for (const dir of ['packages', 'apps']) {
+      for (const n of existsSync(join(root, dir)) ? readdirSync(join(root, dir)) : []) {
+        const pj = join(root, dir, n, 'package.json');
+        if (!existsSync(pj)) continue;
+        const j = JSON.parse(readFileSync(pj, 'utf8')) as Record<string, Record<string, string> | undefined>;
+        for (const d of Object.keys({ ...j.dependencies, ...j.devDependencies })) if (isGitWrite(d)) bad.push(`${n}: ${d}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+});
+
+describe('architecture rules detect violations (self-test)', () => {
+  const check = (pkg: string, src: string) => violationsFor(pkg, 'x.ts', analyzeSource('x.ts', src));
+
+  it('flags network and fetch in agents and workflow-engine', () => {
+    expect(check('agents', `import http from 'node:http';`)).toHaveLength(1);
+    expect(check('agents', `await fetch('https://api.github.com')`)).toHaveLength(1);
+    expect(check('workflow-engine', `import axios from 'axios'`)).toHaveLength(1);
+    expect(check('agents', `const m = await import('undici')`)).toHaveLength(1);
+    expect(check('agents', `const c = require('child_process')`)).toHaveLength(1);
+  });
+
+  it('flags agents importing connectors or infrastructure', () => {
+    expect(check('agents', `import { x } from '@qa/infrastructure'`)).toHaveLength(1);
+    expect(check('agents', `import { x } from '@qa/connector-github'`)).toHaveLength(1);
+    expect(check('agents', `import { x } from '@qa/connector-sdk'`)).toHaveLength(0);
+  });
+
+  it('flags filesystem use in domain and connector-sdk, and any git write library', () => {
+    expect(check('domain', `import fs from 'node:fs'`)).toHaveLength(1);
+    expect(check('connector-sdk', `import { readFile } from 'fs/promises'`)).toHaveLength(1);
+    expect(check('infrastructure', `import git from 'simple-git'`)).toHaveLength(1);
+    expect(check('infrastructure', `import { Octokit } from '@octokit/rest'`)).toHaveLength(1);
+  });
+
+  it('allows infrastructure to do IO and the SPA-facing layers to stay clean', () => {
+    expect(check('infrastructure', `import { lookup } from 'node:dns/promises'; import { Agent } from 'undici'; fetch('x')`)).toHaveLength(0);
+    expect(check('domain', `import { x } from '@qa/security'`)).toHaveLength(1);
+  });
+});
