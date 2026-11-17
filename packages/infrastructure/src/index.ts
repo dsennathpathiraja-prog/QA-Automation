@@ -11,3 +11,6 @@ export * from './config/read-secret-file';
 export * from './llm/errors';
 export * from './llm/ollama-adapter';
 export * from './llm/openai-compatible-adapter';
+export * from './connectors/squash/provider';
+export * from './connectors/squash/html';
+export * from './connectors/squash/token';

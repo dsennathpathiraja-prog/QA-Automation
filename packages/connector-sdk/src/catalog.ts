@@ -64,6 +64,37 @@ const TestCase = z.object({
   tags: opt(z.array(str)),
   automated: opt(z.boolean()),
   lastResult: opt(str),
+  kind: opt(z.enum(['classic', 'scripted', 'keyword', 'exploratory'])),
+  description: opt(str),
+  prerequisite: opt(str),
+  importance: opt(str),
+  status: opt(str),
+  script: opt(str),
+  steps: opt(z.array(z.object({ action: str, expected: opt(str) }))),
+  customFields: opt(z.record(str)),
+  lastModifiedOn: opt(str),
+});
+const Requirement = z.object({
+  id: str,
+  name: str,
+  reference: opt(str),
+  versionNumber: opt(z.number()),
+  status: opt(str),
+  criticality: opt(str),
+  category: opt(str),
+  description: opt(str),
+  tags: opt(z.array(str)),
+  verifyingTestCaseIds: opt(z.array(str)),
+  customFields: opt(z.record(str)),
+  lastModifiedOn: opt(str),
+});
+const ExecutionRecord = z.object({
+  id: str,
+  status: str,
+  executedOn: opt(str),
+  executedBy: opt(str),
+  path: opt(str),
+  issueCount: opt(z.number()),
 });
 
 type Def = Omit<CapabilityDescriptor, 'version'> & { version?: number };
@@ -102,6 +133,9 @@ export function defineCapabilities(): CapabilityDescriptor[] {
     c({ id: 'tm.testcase.list', category: 'test-management', access: 'read', risk: 'low', constraints: ['scope'], input: z.object({ project: opt(str), suite: opt(str), ...page }), output: list(TestCase) }),
     c({ id: 'tm.testcase.read', category: 'test-management', access: 'read', risk: 'low', constraints: ['scope'], input: z.object({ project: opt(str), id: str }), output: TestCase }),
     c({ id: 'tm.testcase.search', category: 'test-management', access: 'read', risk: 'low', constraints: ['scope'], input: z.object({ project: opt(str), reference: opt(str), query: opt(str), ...page }), output: list(TestCase) }),
+    c({ id: 'tm.requirement.list', category: 'test-management', access: 'read', risk: 'low', constraints: ['scope'], input: z.object({ project: opt(str), ...page }), output: list(Requirement.pick({ id: true, name: true, reference: true })) }),
+    c({ id: 'tm.requirement.read', category: 'test-management', access: 'read', risk: 'low', constraints: ['scope'], input: z.object({ project: opt(str), id: str }), output: Requirement }),
+    c({ id: 'tm.execution.history', category: 'test-management', access: 'read', risk: 'low', constraints: ['scope'], input: z.object({ project: opt(str), testCaseId: str, ...page }), output: list(ExecutionRecord) }),
     c({ id: 'tm.suite.list', category: 'test-management', access: 'read', risk: 'low', constraints: ['scope'], input: z.object({ project: opt(str), ...page }), output: list(Named) }),
     c({ id: 'tm.campaign.list', category: 'test-management', access: 'read', risk: 'low', constraints: ['scope'], input: z.object({ project: opt(str), ...page }), output: list(Named) }),
     c({ id: 'tm.iteration.list', category: 'test-management', access: 'read', risk: 'low', constraints: ['scope'], input: z.object({ project: opt(str), campaign: opt(str), ...page }), output: list(Named) }),

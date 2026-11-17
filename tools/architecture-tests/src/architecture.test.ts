@@ -42,6 +42,9 @@ function workspacePackages(): Pkg[] {
 
 const pkgs = workspacePackages();
 
+/** The one file per deployable that wires concrete infrastructure into the application. */
+const COMPOSITION_ROOTS: Record<string, string> = { api: 'apps/api/src/server.ts', worker: 'apps/worker/src/main.ts' };
+
 /** Rule evaluation shared by the real scan and the self-tests. */
 export function violationsFor(pkg: string, file: string, findings: Finding[]): string[] {
   const v: string[] = [];
@@ -56,8 +59,9 @@ export function violationsFor(pkg: string, file: string, findings: Finding[]): s
     if (isFs(s) && NO_FS_PACKAGES.has(pkg)) v.push(`${where} imports ${s} (filesystem access not allowed in this layer)`);
     if (s.startsWith('@qa/')) {
       const target = s.slice(4).split('/')[0]!;
-      if (pkg === 'api' && (target === 'infrastructure' || target === 'persistence') && !file.endsWith('apps/api/src/server.ts')) {
-        v.push(`${where} imports @qa/${target} outside the composition root (only apps/api/src/server.ts may)`);
+      const root = COMPOSITION_ROOTS[pkg];
+      if (root && (target === 'infrastructure' || target === 'persistence') && !file.endsWith(root)) {
+        v.push(`${where} imports @qa/${target} outside the composition root (only ${root} may)`);
       }
       if (target !== pkg && !allowed.includes('*') && !allowed.includes(target)) v.push(`${where} imports @qa/${target} which ${pkg} may not depend on`);
     }
@@ -145,6 +149,15 @@ describe('architecture rules detect violations (self-test)', () => {
     const v = (file: string) => violationsFor('api', file, analyzeSource(file, `import { x } from '@qa/infrastructure'`));
     expect(v('apps/api/src/server.ts')).toHaveLength(0);
     expect(v('apps/api/src/app.ts')).toHaveLength(1);
+  });
+
+  it('lets only the worker composition root import infrastructure and persistence', () => {
+    const v = (file: string, target: string) => violationsFor('worker', file, analyzeSource(file, `import { x } from '@qa/${target}'`));
+    expect(v('apps/worker/src/main.ts', 'infrastructure')).toHaveLength(0);
+    expect(v('apps/worker/src/main.ts', 'persistence')).toHaveLength(0);
+    expect(v('apps/worker/src/loop.ts', 'persistence')).toHaveLength(1);
+    expect(v('apps/worker/src/app.ts', 'infrastructure')).toHaveLength(1);
+    expect(v('apps/worker/src/loop.ts', 'domain')).toHaveLength(0);
   });
 
   it('flags filesystem use in domain and connector-sdk, and any git write library', () => {

@@ -83,6 +83,31 @@ services:
       timeout: 5s
       retries: 5
 
+  worker:
+    <<: *common
+    build: { context: ../.., dockerfile: deploy/images/worker.Dockerfile }
+    networks: [app, data, llm]
+    environment:
+      PLATFORM_ENV: ${PLATFORM_ENV:-production}
+      PLATFORM_PROFILE: ${PLATFORM_PROFILE:-standard}
+      HOST: 0.0.0.0
+      PORT: "3001"
+      DATABASE_HOST: postgres
+      DATABASE_NAME: qa_platform
+      DATABASE_USER: qa_platform
+      DATABASE_PASSWORD_FILE: /run/secrets/platform_db_password
+      HTTPS_PROXY: http://egress-proxy:3128
+      NO_PROXY: postgres,openbao,keycloak,ollama,localhost
+    secrets: [platform_db_password]
+    depends_on: { postgres: { condition: service_healthy } }
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
   postgres:
     <<: *common
     image: postgres:16-alpine

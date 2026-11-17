@@ -178,6 +178,7 @@ export function createHarness(opts: {
   instances: ResolvedInstance[];
   policies?: Record<string, ExecutionPolicy>;
   defaults?: ConstructorParameters<typeof ConnectorExecutionManager>[0]['defaults'];
+  adapterDeps?: AdapterDeps;
 }): Harness {
   const capabilities = createDefaultCapabilityRegistry();
   const providers = new ProviderRegistry(capabilities);
@@ -194,7 +195,7 @@ export function createHarness(opts: {
     secrets,
     log,
     redactor,
-    adapterDeps: emptyDeps,
+    adapterDeps: opts.adapterDeps ?? emptyDeps,
     clock,
     defaults: opts.defaults,
   });
