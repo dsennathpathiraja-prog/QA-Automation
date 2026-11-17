@@ -87,6 +87,43 @@ describe('data pages', () => {
   });
 });
 
+describe('AI Models page', () => {
+  it('shows provider health and what each model supports, in plain language', async () => {
+    renderApp('/models', {
+      me: { status: 200, body: meFor('qa_lead') },
+      routes: {
+        '/api/v1/llm/providers': {
+          status: 200,
+          body: { items: [{ id: 'ollama', kind: 'local', adapter: 'ollama', enabled: true, health: { ok: true, latencyMs: 42 }, models: [{ name: 'qwen2.5:7b', contextTokens: 32768, supportsToolCalling: true, supportsStructuredOutput: true, supportsVision: false }] }] },
+        },
+      },
+    });
+    expect(await screen.findByText('Reachable (42 ms)')).toBeTruthy();
+    expect(screen.getByText(/runs in your network/)).toBeTruthy();
+    const row = within(screen.getByRole('table')).getByText('qwen2.5:7b').closest('tr')!;
+    expect(within(row).getByText('32,768 tokens')).toBeTruthy();
+    expect(within(row).getAllByText('Yes')).toHaveLength(2);
+    expect(within(row).getByText('No')).toBeTruthy();
+  });
+
+  it('explains an unreachable provider and an empty configuration', async () => {
+    const down = renderApp('/models', {
+      me: { status: 200, body: meFor('administrator') },
+      routes: { '/api/v1/llm/providers': { status: 200, body: { items: [{ id: 'ollama', kind: 'local', adapter: 'ollama', enabled: true, health: { ok: false, latencyMs: 4000, detail: 'unreachable' }, models: [] }] } } },
+    });
+    expect(await screen.findByText('Unreachable: unreachable')).toBeTruthy();
+    expect(screen.getByText(/cannot be listed while the provider is unreachable/)).toBeTruthy();
+    down.unmount();
+    renderApp('/models', { me: { status: 200, body: meFor('administrator') }, routes: { '/api/v1/llm/providers': { status: 200, body: { items: [] } } } });
+    expect(await screen.findByText('No model provider is configured yet.')).toBeTruthy();
+  });
+
+  it('is hidden from QA Engineers and explains why on a direct visit', async () => {
+    renderApp('/models', { me: { status: 200, body: meFor('qa_engineer') } });
+    expect(await screen.findByRole('heading', { name: 'You do not have access to this page' })).toBeTruthy();
+  });
+});
+
 describe('authentication', () => {
   it('sends an unauthenticated visitor to the API login with a return path', async () => {
     const view = renderApp('/executions?tab=history', { me: { status: 401, body: { error: { class: 'auth', message: 'Authentication required' } } } });

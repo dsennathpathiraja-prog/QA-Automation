@@ -6,3 +6,4 @@ export * from './session-store';
 export * from './audit-log';
 export * from './operation-log';
 export * from './user-repository';
+export * from './llm-audit';

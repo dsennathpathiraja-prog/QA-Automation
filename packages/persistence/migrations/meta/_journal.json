@@ -15,6 +15,20 @@
       "when": 1794919516524,
       "tag": "0001_append_only_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794921763421,
+      "tag": "0002_llm_call_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794921764022,
+      "tag": "0003_llm_call_log_append_only",
+      "breakpoints": true
     }
   ]
 }

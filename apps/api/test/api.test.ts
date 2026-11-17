@@ -64,3 +64,21 @@ describe('api guard', () => {
     expect(res.json().failing).toEqual(['db']);
   });
 });
+
+describe('llm providers route', () => {
+  const status = [{ id: 'ollama', kind: 'local' as const, adapter: 'ollama', enabled: true, health: { ok: true, latencyMs: 5 }, models: [{ name: 'qwen2.5:7b', contextTokens: 32768, supportsToolCalling: true }] }];
+  const withLlm = () => buildApp({ sessions: new DevHeaderSessionResolver('test'), profile: 'standard', llm: { providers: async () => status } });
+
+  it('requires llm.view: Lead and Administrator may read it, Engineer and Business User may not', async () => {
+    const a = withLlm();
+    expect((await a.inject({ method: 'GET', url: '/api/v1/llm/providers', headers: as('u', 'QA-Platform-Leads') })).json()).toEqual({ items: status });
+    expect((await a.inject({ method: 'GET', url: '/api/v1/llm/providers', headers: as('u', 'QA-Platform-Admins') })).statusCode).toBe(200);
+    expect((await a.inject({ method: 'GET', url: '/api/v1/llm/providers', headers: as('u', 'QA-Platform-Engineers') })).statusCode).toBe(403);
+    expect((await a.inject({ method: 'GET', url: '/api/v1/llm/providers' })).statusCode).toBe(401);
+  });
+
+  it('returns an empty list when no provider is configured', async () => {
+    const r = await app().inject({ method: 'GET', url: '/api/v1/llm/providers', headers: as('u', 'QA-Platform-Leads') });
+    expect(r.json()).toEqual({ items: [] });
+  });
+});

@@ -43,16 +43,17 @@ export const ALLOWED_WORKSPACE_DEPS: Record<string, readonly string[]> = {
   contracts: ['domain'],
   'connector-sdk': ['domain', 'contracts'],
   security: ['domain'],
-  infrastructure: ['domain', 'connector-sdk'],
+  llm: ['domain'],
+  infrastructure: ['domain', 'connector-sdk', 'llm'],
   testing: ['domain', 'connector-sdk', 'security', 'infrastructure'],
   web: ['contracts'],
-  api: ['contracts', 'domain', 'security', 'infrastructure', 'persistence'],
+  api: ['contracts', 'domain', 'security', 'infrastructure', 'persistence', 'llm'],
   // Declared ahead of time so the rules exist before the packages do.
-  agents: ['domain', 'contracts', 'connector-sdk'],
+  agents: ['domain', 'contracts', 'connector-sdk', 'llm'],
   'workflow-definitions': ['domain', 'contracts', 'connector-sdk', 'agents'],
   'workflow-engine': ['domain', 'contracts', 'workflow-definitions', 'connector-sdk'],
   application: ['domain', 'contracts', 'connector-sdk', 'security', 'workflow-definitions'],
-  persistence: ['domain', 'security', 'connector-sdk', 'application'],
+  persistence: ['domain', 'security', 'connector-sdk', 'llm', 'application'],
   worker: ['*'],
 };
 
@@ -60,4 +61,4 @@ export const ALLOWED_WORKSPACE_DEPS: Record<string, readonly string[]> = {
 export const IO_PACKAGES = new Set(['infrastructure', 'testing', 'persistence']);
 /** Browser code calls the platform API with fetch; Node network and process modules stay forbidden for it. */
 export const BROWSER_PACKAGES = new Set(['web']);
-export const NO_FS_PACKAGES = new Set(['web', 'domain', 'contracts', 'connector-sdk', 'security', 'api', 'agents', 'workflow-engine', 'workflow-definitions', 'application']);
+export const NO_FS_PACKAGES = new Set(['llm', 'web', 'domain', 'contracts', 'connector-sdk', 'security', 'api', 'agents', 'workflow-engine', 'workflow-definitions', 'application']);

@@ -1,5 +1,6 @@
 import type { DeploymentProfile, PlatformEnv } from '@qa/domain';
-import { EgressPolicy, HardenedHttpClient, OidcProvider, readSecretFile, type EgressRule } from '@qa/infrastructure';
+import { EgressPolicy, HardenedHttpClient, OidcProvider, OllamaAdapter, OpenAiCompatibleAdapter, readSecretFile, type EgressRule } from '@qa/infrastructure';
+import type { LlmPort } from '@qa/llm';
 import { PgAuditLog, PgSessionStore, PgUserRepository, connectPostgres, migrate, pingDb, seedDefaultGroupMappings, seedRoles, type Db } from '@qa/persistence';
 import { buildApp } from './app';
 import { OidcSessionResolver, type AuthConfig } from './auth';
@@ -27,6 +28,38 @@ function connectDb() {
     user: env.DATABASE_USER,
     password,
   });
+}
+
+function buildLlmStatus() {
+  const configured: { id: string; port: LlmPort }[] = [];
+  const rules: EgressRule[] = [];
+  const addRule = (u: string) => {
+    const url = new URL(u);
+    rules.push({ hostPattern: url.hostname, purpose: 'llm', internal: true, allowHttp: url.protocol === 'http:', allowLoopback: true });
+  };
+  const ollamaUrl = env.OLLAMA_URL;
+  const vllmUrl = env.VLLM_URL;
+  if (ollamaUrl) addRule(ollamaUrl);
+  if (vllmUrl) addRule(vllmUrl);
+  if (rules.length === 0) return undefined;
+  const http = new HardenedHttpClient({ egress: new EgressPolicy({ rules, profile, platformEnv }), allowedMethods: ['GET', 'POST'], timeoutMs: 300_000, maxBodyBytes: 16 * 1024 * 1024 });
+  if (ollamaUrl) configured.push({ id: 'ollama', port: new OllamaAdapter({ baseUrl: ollamaUrl, http, keepAlive: env.OLLAMA_KEEP_ALIVE }) });
+  if (vllmUrl) {
+    const apiKey = env.VLLM_API_KEY_FILE ? readSecretFile(env.VLLM_API_KEY_FILE) : undefined;
+    configured.push({ id: 'vllm', port: new OpenAiCompatibleAdapter({ baseUrl: vllmUrl, http, apiKey, adapterName: 'vllm' }) });
+  }
+  return {
+    async providers() {
+      return Promise.all(
+        configured.map(async ({ id, port }) => {
+          const signal = AbortSignal.timeout(4_000);
+          const health = await port.health(signal);
+          const models = health.ok ? await port.listModels(signal).catch(() => []) : [];
+          return { id, kind: 'local' as const, adapter: port.adapter, enabled: true, health, models };
+        }),
+      );
+    },
+  };
 }
 
 function buildOidc(db: Db | undefined) {
@@ -95,6 +128,7 @@ const app = buildApp({
   sessions: auth ? auth.resolver : new DevHeaderSessionResolver(platformEnv),
   profile,
   auth,
+  llm: buildLlmStatus(),
   readiness: conn ? { database: () => pingDb(conn.db) } : undefined,
 });
 const shutdown = async () => {

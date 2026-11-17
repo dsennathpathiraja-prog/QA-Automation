@@ -49,7 +49,7 @@ services:
   api:
     <<: *common
     build: { context: ../.., dockerfile: deploy/images/api.Dockerfile }
-    networks: [app, data]
+    networks: [app, data, llm]
     environment:
       PLATFORM_ENV: ${PLATFORM_ENV:-production}
       PLATFORM_PROFILE: ${PLATFORM_PROFILE:-standard}
@@ -70,7 +70,9 @@ services:
       OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_client_secret
       OIDC_GROUP_FORMAT: name
       HTTPS_PROXY: http://egress-proxy:3128
-      NO_PROXY: postgres,openbao,keycloak,localhost
+      NO_PROXY: postgres,openbao,keycloak,ollama,localhost
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_KEEP_ALIVE: 10m
     secrets: [bao_api_role_id, bao_api_secret_id, oidc_client_secret, platform_db_password]
     depends_on: { postgres: { condition: service_healthy }, openbao: { condition: service_started } }
     read_only: true

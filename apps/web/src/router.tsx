@@ -4,6 +4,7 @@ import { SessionGate, useSession, type Navigator } from './auth/session';
 import { AppShell } from './layout/AppShell';
 import { NAV_ITEMS, type NavItem } from './nav';
 import { AccessDenied, ComingSoon, PageHeader } from './pages/common';
+import { AiModels } from './pages/AiModels';
 import { Connectors } from './pages/Connectors';
 import { Dashboard } from './pages/Dashboard';
 import { IdentityMapping } from './pages/IdentityMapping';
@@ -24,7 +25,7 @@ const NotFound = () => (
   </>
 );
 
-const real: Record<string, () => ReactNode> = { dashboard: () => <Dashboard />, connectors: () => <Connectors />, identity: () => <IdentityMapping /> };
+const real: Record<string, () => ReactNode> = { dashboard: () => <Dashboard />, connectors: () => <Connectors />, identity: () => <IdentityMapping />, models: () => <AiModels /> };
 
 export interface RouterOptions {
   history?: Parameters<typeof createRouter>[0]['history'];

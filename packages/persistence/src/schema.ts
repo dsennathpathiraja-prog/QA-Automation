@@ -212,6 +212,36 @@ export const connectorOperationLog = pgTable(
   (t) => [index('connector_oplog_exec_idx').on(t.executionId), index('connector_oplog_at_idx').on(t.at)],
 );
 
+/** Append-only (trigger-enforced). One row per model call; stores a digest of the prompt, never its content. */
+export const llmCallLog = pgTable(
+  'llm_call_log',
+  {
+    seq: bigserial('seq', { mode: 'number' }).primaryKey(),
+    at: ts('at').notNull(),
+    agentKey: text('agent_key').notNull(),
+    executionId: text('execution_id'),
+    stepId: text('step_id'),
+    providerId: text('provider_id'),
+    providerKind: text('provider_kind'),
+    model: text('model'),
+    dataClasses: jsonb('data_classes').$type<string[]>().notNull(),
+    contextItems: integer('context_items').notNull(),
+    droppedImages: integer('dropped_images'),
+    outcome: text('outcome').notNull(),
+    refusalReason: text('refusal_reason'),
+    errorClass: text('error_class'),
+    inputTokens: integer('input_tokens'),
+    outputTokens: integer('output_tokens'),
+    durationMs: integer('duration_ms').notNull(),
+    promptDigest: text('prompt_digest'),
+  },
+  (t) => [
+    index('llm_call_log_exec_idx').on(t.executionId),
+    index('llm_call_log_at_idx').on(t.at),
+    check('llm_call_outcome_ck', sql`${t.outcome} in ('success','refused','failed','fallback')`),
+  ],
+);
+
 /* ---------- environments ---------- */
 
 export const environment = pgTable(

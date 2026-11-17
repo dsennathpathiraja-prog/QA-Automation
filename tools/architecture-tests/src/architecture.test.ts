@@ -130,6 +130,17 @@ describe('architecture rules detect violations (self-test)', () => {
     expect(check('web', `import { z } from '@qa/contracts'`)).toHaveLength(0);
   });
 
+  it('keeps the model layer provider-neutral: agents may use the llm port, llm may not touch IO, infrastructure or connectors', () => {
+    expect(check('agents', `import type { LlmPort } from '@qa/llm'`)).toHaveLength(0);
+    expect(check('llm', `import { OllamaAdapter } from '@qa/infrastructure'`)).toHaveLength(1);
+    expect(check('llm', `import { x } from '@qa/connector-sdk'`)).toHaveLength(1);
+    expect(check('llm', `await fetch('http://ollama:11434')`)).toHaveLength(1);
+    expect(check('llm', `import { request } from 'undici'`)).toHaveLength(1);
+    expect(check('llm', `import { readFileSync } from 'node:fs'`)).toHaveLength(1);
+    expect(check('llm', `import { createHash } from 'node:crypto'`)).toHaveLength(0);
+    expect(check('web', `import { x } from '@qa/llm'`)).toHaveLength(1);
+  });
+
   it('lets only the api composition root import infrastructure', () => {
     const v = (file: string) => violationsFor('api', file, analyzeSource(file, `import { x } from '@qa/infrastructure'`));
     expect(v('apps/api/src/server.ts')).toHaveLength(0);

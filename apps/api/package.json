@@ -3,8 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc -p tsconfig.json", "start": "tsx src/server.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "start": "tsx src/server.ts"
+  },
   "dependencies": {
     "@qa/contracts": "workspace:*",
     "@qa/domain": "workspace:*",
@@ -12,6 +17,7 @@
     "@qa/persistence": "workspace:*",
     "@qa/security": "workspace:*",
     "fastify": "^5.2.0",
-    "tsx": "^4.19.2"
+    "tsx": "^4.19.2",
+    "@qa/llm": "workspace:*"
   }
 }

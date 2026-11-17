@@ -8,7 +8,7 @@ import { drizzle } from 'drizzle-orm/pglite';
 import { describe, expect, it } from 'vitest';
 import { ROLES, ROLE_PERMISSIONS, uuidv7, type SessionRecord } from '@qa/domain';
 import {
-  DEFAULT_MIGRATIONS_DIR, PgAuditLog, PgOperationLogSink, PgSessionStore, PgUserRepository, migrate, schema, seedDefaultGroupMappings, seedRoles, type Db,
+  DEFAULT_MIGRATIONS_DIR, PgAuditLog, PgLlmAuditSink, PgOperationLogSink, PgSessionStore, PgUserRepository, migrate, schema, seedDefaultGroupMappings, seedRoles, type Db,
 } from '../src';
 import { freshDb } from './helpers';
 
@@ -28,10 +28,10 @@ describe('migrations', () => {
     const client = new PGlite();
     const db = drizzle(client, { schema }) as unknown as Db;
     const first = await migrate(db);
-    expect(first.applied).toEqual(['0000_baseline', '0001_append_only_guards']);
+    expect(first.applied).toEqual(['0000_baseline', '0001_append_only_guards', '0002_llm_call_log', '0003_llm_call_log_append_only']);
     const second = await migrate(db);
     expect(second.applied).toEqual([]);
-    expect(second.alreadyApplied).toHaveLength(2);
+    expect(second.alreadyApplied).toHaveLength(4);
 
     const tmp = mkdtempSync(join(tmpdir(), 'mig-'));
     cpSync(DEFAULT_MIGRATIONS_DIR, tmp, { recursive: true });
@@ -124,6 +124,20 @@ describe('append-only tables', () => {
       expect(await failure(db.execute(sql.raw(`delete from ${t}`)))).toMatch(/append-only/);
       expect(await failure(db.execute(sql.raw(`truncate ${t}`)))).toMatch(/append-only/);
     }
+  });
+});
+
+describe('PgLlmAuditSink', () => {
+  it('stores call metadata and digest, and is append-only', async () => {
+    const { db } = await freshDb();
+    await new PgLlmAuditSink(db).append({
+      at: new Date('2026-01-01'), agentKey: 'planner', providerId: 'ollama', providerKind: 'local', model: 'qwen', dataClasses: ['story', 'code'], contextItems: 2,
+      outcome: 'success', usage: { inputTokens: 10, outputTokens: 4 }, durationMs: 800, promptDigest: 'abc',
+    });
+    const r = await rows(db, sql`select agent_key, data_classes, input_tokens, prompt_digest from llm_call_log`);
+    expect(r[0]).toEqual({ agent_key: 'planner', data_classes: ['story', 'code'], input_tokens: 10, prompt_digest: 'abc' });
+    expect(await failure(db.execute(sql`delete from llm_call_log`))).toMatch(/append-only/);
+    expect(await failure(db.execute(sql`truncate llm_call_log`))).toMatch(/append-only/);
   });
 });
 

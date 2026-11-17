@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { isPlatformError, type DeploymentProfile } from '@qa/domain';
-import { HealthResponse, MePermissionsResponse, type ErrorResponse } from '@qa/contracts';
+import { HealthResponse, LlmProvidersResponse, MePermissionsResponse, type ErrorResponse } from '@qa/contracts';
 import {
   DEFAULT_GROUP_MAPPINGS, PolicyEngine, authenticatedRoute, publicRoute, requires, type GroupMapping, type Principal, type RouteAccess,
 } from '@qa/security';
@@ -22,6 +22,8 @@ export interface AppDeps {
   mappings?: readonly GroupMapping[];
   readiness?: Record<string, () => Promise<boolean>>;
   /** When present, the OIDC login routes are registered; `sessions` must be the matching resolver. */
+  /** Read-only view of configured model providers for the AI Models screen. */
+  llm?: { providers(): Promise<LlmProvidersResponse['items']> };
   auth?: { config: AuthConfig; resolver: OidcSessionResolver };
 }
 
@@ -87,6 +89,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   }));
 
   app.get('/api/v1/connectors', { config: { access: requires('connector.view_status') } }, async () => ({ items: [] }));
+
+  app.get('/api/v1/llm/providers', { config: { access: requires('llm.view') } }, async () =>
+    LlmProvidersResponse.parse({ items: deps.llm ? await deps.llm.providers() : [] }),
+  );
 
   return app;
 }

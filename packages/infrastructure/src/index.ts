@@ -8,3 +8,6 @@ export * from './secrets/db-envelope-secret-store';
 export * from './storage/local-fs-object-store';
 export * from './identity/oidc-provider';
 export * from './config/read-secret-file';
+export * from './llm/errors';
+export * from './llm/ollama-adapter';
+export * from './llm/openai-compatible-adapter';
