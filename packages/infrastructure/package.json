@@ -3,7 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc -p tsconfig.json" },
-  "dependencies": {"@qa/domain": "workspace:*", "@qa/connector-sdk": "workspace:*", "undici": "^7.2.0"}
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@qa/connector-sdk": "workspace:*",
+    "@qa/domain": "workspace:*",
+    "jose": "^6.2.17",
+    "undici": "^7.2.0"
+  }
 }

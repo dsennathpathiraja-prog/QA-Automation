@@ -12,7 +12,7 @@ umask 077
 mkdir -p secrets
 
 gen() { [ -s "secrets/$1" ] || head -c 36 /dev/urandom | base64 | tr -d '\n=+/' | head -c 40 > "secrets/$1"; }
-for s in postgres_password keycloak_db_password platform_db_password keycloak_admin_password; do gen "$s"; done
+for s in postgres_password keycloak_db_password platform_db_password keycloak_admin_password oidc_client_secret; do gen "$s"; done
 : > secrets/bao_api_role_id; : > secrets/bao_api_secret_id
 
 compose() { docker compose "$@"; }
@@ -52,3 +52,10 @@ bao kv put qa-platform/platform/database username=qa_platform password="$(cat se
 
 echo "Revoke the root token now:  bao token revoke -self"
 echo "Then: docker compose up -d"
+
+# Keycloak: the imported realm has no client secret; set the one the API reads from its Docker secret file.
+# Run after `docker compose up -d keycloak` is healthy. Skip if you manage the client in an existing Keycloak.
+#   docker compose exec keycloak /opt/keycloak/bin/kcadm.sh config credentials --server http://localhost:8080/auth \
+#       --realm master --user bootstrap-admin --password "$(cat secrets/keycloak_admin_password)"
+#   CID=$(docker compose exec -T keycloak /opt/keycloak/bin/kcadm.sh get clients -r qa-platform -q clientId=qa-platform --fields id --format csv --noquotes)
+#   docker compose exec keycloak /opt/keycloak/bin/kcadm.sh update clients/$CID -r qa-platform -s secret="$(cat secrets/oidc_client_secret)"

@@ -30,6 +30,7 @@ secrets:
   keycloak_admin_password: { file: ./secrets/keycloak_admin_password }
   bao_api_role_id: { file: ./secrets/bao_api_role_id }
   bao_api_secret_id: { file: ./secrets/bao_api_secret_id }
+  oidc_client_secret: { file: ./secrets/oidc_client_secret }
 
 services:
   nginx:
@@ -59,10 +60,16 @@ services:
       BAO_ADDR: http://openbao:8200
       BAO_ROLE_ID_FILE: /run/secrets/bao_api_role_id
       BAO_SECRET_ID_FILE: /run/secrets/bao_api_secret_id
+      AUTH_MODE: oidc
+      PUBLIC_BASE_URL: https://${PUBLIC_HOSTNAME:-qa.example.local}
       OIDC_ISSUER: https://${PUBLIC_HOSTNAME:-qa.example.local}/auth/realms/qa-platform
+      OIDC_INTERNAL_URL: http://keycloak:8080
+      OIDC_CLIENT_ID: qa-platform
+      OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_client_secret
+      OIDC_GROUP_FORMAT: name
       HTTPS_PROXY: http://egress-proxy:3128
       NO_PROXY: postgres,openbao,keycloak,localhost
-    secrets: [bao_api_role_id, bao_api_secret_id]
+    secrets: [bao_api_role_id, bao_api_secret_id, oidc_client_secret]
     depends_on: { postgres: { condition: service_healthy }, openbao: { condition: service_started } }
     read_only: true
     tmpfs: [/tmp]

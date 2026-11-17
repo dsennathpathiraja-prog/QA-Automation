@@ -26,6 +26,9 @@ importers:
       '@qa/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@qa/infrastructure':
+        specifier: workspace:*
+        version: link:../../packages/infrastructure
       '@qa/security':
         specifier: workspace:*
         version: link:../../packages/security
@@ -67,6 +70,9 @@ importers:
       '@qa/domain':
         specifier: workspace:*
         version: link:../domain
+      jose:
+        specifier: ^6.2.17
+        version: 6.2.17
       undici:
         specifier: ^7.2.0
         version: 7.30.2
@@ -703,6 +709,9 @@ packages:
   ipaddr.js@2.5.0:
     resolution: {integrity: sha512-aq+t5NAc+cS6rZQQVWC2x98CPqGtKKTMDd4Gaodv0wShnItdKg/51djkGJ1hqH+Oy0ivDftCbSLCQob8zso01w==}
     engines: {node: '>= 10'}
+
+  jose@6.2.17:
+    resolution: {integrity: sha512-wOuK9V1yujQFH5S0ZWmLcDZN7+IKh9bUCC2ZPCf2HDlol3WWHy+PPyNjEI75FXRLMp3vDKQcupP59xhVU95hcg==}
 
   json-schema-ref-resolver@3.0.1:
     resolution: {integrity: sha512-w+HwgljXpVwZ3IidoUR1qPZxSOQ+NRQWuVe6a5pe8XbHsNZE4UAwVPUvzZagn7yBKbJtt6UJnRFYbNTRPZI45Q==}
@@ -1397,6 +1406,8 @@ snapshots:
     optional: true
 
   ipaddr.js@2.5.0: {}
+
+  jose@6.2.17: {}
 
   json-schema-ref-resolver@3.0.1:
     dependencies:

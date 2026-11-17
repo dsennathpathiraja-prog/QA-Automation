@@ -6,3 +6,5 @@ export * from './secrets/in-memory-secret-store';
 export * from './secrets/openbao-secret-store';
 export * from './secrets/db-envelope-secret-store';
 export * from './storage/local-fs-object-store';
+export * from './identity/oidc-provider';
+export * from './config/read-secret-file';

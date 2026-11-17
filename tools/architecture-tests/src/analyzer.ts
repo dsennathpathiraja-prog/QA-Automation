@@ -45,7 +45,7 @@ export const ALLOWED_WORKSPACE_DEPS: Record<string, readonly string[]> = {
   security: ['domain'],
   infrastructure: ['domain', 'connector-sdk'],
   testing: ['domain', 'connector-sdk', 'security', 'infrastructure'],
-  api: ['contracts', 'domain', 'security'],
+  api: ['contracts', 'domain', 'security', 'infrastructure'],
   // Declared ahead of time so the rules exist before the packages do.
   agents: ['domain', 'contracts', 'connector-sdk'],
   'workflow-definitions': ['domain', 'contracts', 'connector-sdk', 'agents'],

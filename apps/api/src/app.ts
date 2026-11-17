@@ -1,10 +1,11 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
-import { type DeploymentProfile } from '@qa/domain';
+import { isPlatformError, type DeploymentProfile } from '@qa/domain';
 import { HealthResponse, MePermissionsResponse, type ErrorResponse } from '@qa/contracts';
 import {
   DEFAULT_GROUP_MAPPINGS, PolicyEngine, authenticatedRoute, publicRoute, requires, type GroupMapping, type Principal, type RouteAccess,
 } from '@qa/security';
 import type { SessionResolver } from './session';
+import { registerAuthRoutes, type AuthConfig, type OidcSessionResolver } from './auth';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -20,6 +21,8 @@ export interface AppDeps {
   profile: DeploymentProfile;
   mappings?: readonly GroupMapping[];
   readiness?: Record<string, () => Promise<boolean>>;
+  /** When present, the OIDC login routes are registered; `sessions` must be the matching resolver. */
+  auth?: { config: AuthConfig; resolver: OidcSessionResolver };
 }
 
 const err = (cls: string, message: string): ErrorResponse => ({ error: { class: cls, message } });
@@ -27,6 +30,17 @@ const err = (cls: string, message: string): ErrorResponse => ({ error: { class: 
 export function buildApp(deps: AppDeps): FastifyInstance {
   const app = Fastify({ logger: false });
   const policy = new PolicyEngine();
+
+  app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string', bodyLimit: 64 * 1024 }, (_req, body, done) => {
+    done(null, Object.fromEntries(new URLSearchParams(body as string)));
+  });
+
+  app.setErrorHandler((e, _req, reply) => {
+    const status = (e as { statusCode?: number }).statusCode;
+    if (status && status >= 400 && status < 500) return reply.code(status).send(err('validation', 'Bad request'));
+    if (isPlatformError(e) && e.errorClass === 'transient') return reply.code(503).send(err('transient', 'Dependency unavailable'));
+    return reply.code(500).send(err('internal', 'Internal error'));
+  });
 
   // Fail at startup, not at review time, if any route forgets to declare its access rule.
   app.addHook('onRoute', (route) => {
@@ -46,6 +60,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       if (!d.allow) return reply.code(403).send(err('denied', 'Forbidden'));
     }
   });
+
+  if (deps.auth) registerAuthRoutes(app, deps.auth.resolver, deps.auth.config);
 
   app.get('/healthz', { config: { access: publicRoute } }, async () => HealthResponse.parse({ status: 'ok', profile: deps.profile }));
 
