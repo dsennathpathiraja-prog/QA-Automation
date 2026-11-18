@@ -3,7 +3,9 @@
 Connector-first, local-first agentic QA automation platform. Design: see the architecture documents
 (`architecture-and-roadmap.md`, `architecture/platform-decisions.md`).
 
-## Status: Phase 2 code complete
+## Status: Phase 2 signed off, Phase 3 started
+
+Phase 2 (connectors) is signed off. Phase 3 is the workflow engine. The slice order is in [`docs/phase3-plan.md`](docs/phase3-plan.md).
 
 Connectors can be added from the UI (GitHub, Azure DevOps Repos, Jira, Azure Boards, Squash, the managed Playwright server, and an offline demo). GitHub and Azure Boards can be pointed at a real system; Azure DevOps Repos, Jira and Squash are labelled "not verified against a live instance" until someone runs them against a reachable server. What is in each slice is in [`docs/phase2-plan.md`](docs/phase2-plan.md). Phase 1 sign-off notes remain in [`docs/phase1-status.md`](docs/phase1-status.md).
 

@@ -9,7 +9,7 @@ Started Nov 18, 2026. Scope and acceptance come from the roadmap (Phase 2). This
 Connector Execution Manager with the full policy pipeline, capability registry, secret store ports, hardened HTTP client, a Squash read provider, a stub work-item provider, the provider contract-test kit, the `connector_instance` and operation-log tables, role-aware web shell with a Connectors page (empty state).
 
 ## Status (Nov 18, 2026)
-Phase 2 is code-complete. CI covers it with recorded responses. Nothing here has been run against a live GitHub organisation or Azure Boards project, because no sandbox token has been supplied.
+Phase 2 is signed off by the user. GitHub, Azure Boards, approved hosts, and the current Squash instance (read-only, D20) were exercised live. Azure DevOps Repos and Jira remain labelled "not verified against a live instance". The managed browser was not started. CI covered the code with recorded responses.
 
 - Slices 1 and 2: connector instances, wizard, Test Connection on the worker, capability table, operation log, approved hosts. Providers include SquashTM (the current instance is connected live and kept read-only) and the offline "Sample work items (demo)" provider.
 - Slice 3: GitHub (live-capable) and Azure DevOps Repos (recorded responses, labelled in the UI). A token that can push is refused and the connector cannot be switched on. The six read-only checks are on the connector page: read-only record, no write capability, GET only, token scope, approved host, no git write path.
