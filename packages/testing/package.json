@@ -15,7 +15,8 @@
     "@qa/security": "workspace:*",
     "@qa/infrastructure": "workspace:*",
     "zod": "^3.24.1",
-    "@qa/telemetry": "workspace:*"
+    "@qa/telemetry": "workspace:*",
+    "@qa/application": "workspace:*"
   },
   "devDependencies": {
     "@opentelemetry/sdk-trace-base": "^2.0.0",

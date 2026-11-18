@@ -1,5 +1,5 @@
 import { BlockList, isIP } from 'node:net';
-import { PlatformError, type DeploymentProfile, type PlatformEnv } from '@qa/domain';
+import { PlatformError, matchHost, type DeploymentProfile, type PlatformEnv } from '@qa/domain';
 
 export interface EgressRule {
   /** Exact host or `*.suffix`. */
@@ -32,12 +32,7 @@ loopback.addAddress('::1', 'ipv6');
 
 const family = (ip: string) => (isIP(ip) === 6 ? 'ipv6' : 'ipv4');
 
-export function matchHost(pattern: string, host: string): boolean {
-  const p = pattern.toLowerCase();
-  const h = host.toLowerCase();
-  if (p.startsWith('*.')) return h.endsWith(p.slice(1)) && h.length > p.length - 1;
-  return p === h;
-}
+export { matchHost };
 
 export interface EgressPolicyOptions {
   rules: readonly EgressRule[];

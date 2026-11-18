@@ -175,7 +175,9 @@ export interface Harness {
 
 export function createHarness(opts: {
   providers: ConnectorProvider[];
-  instances: ResolvedInstance[];
+  instances?: ResolvedInstance[];
+  /** Replaces the static instance list, e.g. with the Postgres-backed resolver. */
+  resolver?: InstanceResolver;
   policies?: Record<string, ExecutionPolicy>;
   defaults?: ConstructorParameters<typeof ConnectorExecutionManager>[0]['defaults'];
   adapterDeps?: AdapterDeps;
@@ -190,7 +192,7 @@ export function createHarness(opts: {
   const manager = new ConnectorExecutionManager({
     capabilities,
     providers,
-    instances: new StaticInstanceResolver(new Map(opts.instances.map((i) => [i.id, i]))),
+    instances: opts.resolver ?? new StaticInstanceResolver(new Map((opts.instances ?? []).map((i) => [i.id, i]))),
     policies: new StaticPolicyStore(new Map(Object.entries(opts.policies ?? {}))),
     secrets,
     log,

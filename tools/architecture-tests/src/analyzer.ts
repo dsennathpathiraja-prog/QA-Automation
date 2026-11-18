@@ -47,24 +47,25 @@ export const ALLOWED_WORKSPACE_DEPS: Record<string, readonly string[]> = {
   security: ['domain'],
   llm: ['domain', 'telemetry'],
   infrastructure: ['domain', 'connector-sdk', 'llm', 'telemetry'],
-  testing: ['domain', 'connector-sdk', 'security', 'infrastructure', 'telemetry'],
+  testing: ['domain', 'connector-sdk', 'security', 'infrastructure', 'telemetry', 'application'],
   web: ['contracts'],
-  api: ['contracts', 'domain', 'security', 'infrastructure', 'persistence', 'llm', 'telemetry'],
+  api: ['contracts', 'domain', 'security', 'infrastructure', 'persistence', 'llm', 'telemetry', 'application', 'connector-sdk', 'bootstrap'],
   // Declared ahead of time so the rules exist before the packages do.
   agents: ['domain', 'contracts', 'connector-sdk', 'llm'],
   'workflow-definitions': ['domain', 'contracts', 'connector-sdk', 'agents'],
   'workflow-engine': ['domain', 'contracts', 'workflow-definitions', 'connector-sdk'],
   application: ['domain', 'contracts', 'connector-sdk', 'security', 'workflow-definitions'],
   persistence: ['domain', 'security', 'connector-sdk', 'llm', 'application'],
+  bootstrap: ['domain', 'connector-sdk', 'security', 'infrastructure', 'persistence', 'llm', 'telemetry', 'application'],
   'runner-launcher': ['domain', 'infrastructure', 'telemetry', 'testing', 'connector-sdk'],
-  worker: ['domain', 'connector-sdk', 'security', 'infrastructure', 'persistence', 'llm', 'telemetry'],
+  worker: ['domain', 'connector-sdk', 'security', 'infrastructure', 'persistence', 'llm', 'telemetry', 'application', 'bootstrap'],
 };
 
 /** Layers that must never read secret values. Only the worker side (Connector Execution Manager) and the runner launcher lease secrets. */
-export const NO_SECRET_READ_PACKAGES = new Set(['api', 'web', 'agents', 'application', 'workflow-engine', 'workflow-definitions', 'contracts', 'security', 'llm']);
+export const NO_SECRET_READ_PACKAGES = new Set(['api', 'web', 'agents', 'application', 'workflow-engine', 'workflow-definitions', 'contracts', 'security', 'llm', 'bootstrap']);
 
 /** Packages that may use network, process and filesystem APIs. */
 export const IO_PACKAGES = new Set(['infrastructure', 'testing', 'persistence']);
 /** Browser code calls the platform API with fetch; Node network and process modules stay forbidden for it. */
 export const BROWSER_PACKAGES = new Set(['web']);
-export const NO_FS_PACKAGES = new Set(['llm', 'web', 'domain', 'contracts', 'connector-sdk', 'security', 'api', 'agents', 'workflow-engine', 'workflow-definitions', 'application', 'worker', 'telemetry', 'runner-launcher']);
+export const NO_FS_PACKAGES = new Set(['llm', 'web', 'domain', 'contracts', 'connector-sdk', 'security', 'api', 'agents', 'workflow-engine', 'workflow-definitions', 'application', 'worker', 'telemetry', 'runner-launcher', 'bootstrap']);

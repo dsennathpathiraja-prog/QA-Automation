@@ -16,11 +16,14 @@
     "@qa/security": "workspace:*",
     "drizzle-orm": "^0.45.4",
     "pg": "^8.23.1",
-    "@qa/llm": "workspace:*"
+    "@qa/llm": "workspace:*",
+    "@qa/application": "workspace:*"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.16",
     "@types/pg": "^8.23.1",
-    "drizzle-kit": "^0.31.11"
+    "drizzle-kit": "^0.31.11",
+    "@qa/testing": "workspace:*",
+    "@qa/infrastructure": "workspace:*"
   }
 }

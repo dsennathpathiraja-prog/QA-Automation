@@ -17,3 +17,4 @@ export * from './connectors/squash/token';
 export * from './telemetry/init';
 export * from './runner/docker-engine';
 export * from './runner/remote-runner-launcher';
+export * from './connectors/sample/provider';

@@ -131,6 +131,15 @@ importers:
 
   apps/worker:
     dependencies:
+      '@qa/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@qa/bootstrap':
+        specifier: workspace:*
+        version: link:../../packages/bootstrap
+      '@qa/connector-sdk':
+        specifier: workspace:*
+        version: link:../../packages/connector-sdk
       '@qa/domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -140,6 +149,9 @@ importers:
       '@qa/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence
+      '@qa/security':
+        specifier: workspace:*
+        version: link:../../packages/security
       '@qa/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
@@ -149,6 +161,40 @@ importers:
       tsx:
         specifier: ^4.19.2
         version: 4.23.15
+    devDependencies:
+      '@qa/testing':
+        specifier: workspace:*
+        version: link:../../packages/testing
+
+  packages/application:
+    dependencies:
+      '@qa/connector-sdk':
+        specifier: workspace:*
+        version: link:../connector-sdk
+      '@qa/domain':
+        specifier: workspace:*
+        version: link:../domain
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+
+  packages/bootstrap:
+    dependencies:
+      '@qa/application':
+        specifier: workspace:*
+        version: link:../application
+      '@qa/connector-sdk':
+        specifier: workspace:*
+        version: link:../connector-sdk
+      '@qa/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@qa/infrastructure':
+        specifier: workspace:*
+        version: link:../infrastructure
+      '@qa/persistence':
+        specifier: workspace:*
+        version: link:../persistence
 
   packages/connector-sdk:
     dependencies:
@@ -235,6 +281,9 @@ importers:
 
   packages/persistence:
     dependencies:
+      '@qa/application':
+        specifier: workspace:*
+        version: link:../application
       '@qa/connector-sdk':
         specifier: workspace:*
         version: link:../connector-sdk
@@ -257,6 +306,12 @@ importers:
       '@electric-sql/pglite':
         specifier: ^0.5.16
         version: 0.5.16
+      '@qa/infrastructure':
+        specifier: workspace:*
+        version: link:../infrastructure
+      '@qa/testing':
+        specifier: workspace:*
+        version: link:../testing
       '@types/pg':
         specifier: ^8.23.1
         version: 8.23.1
@@ -285,6 +340,9 @@ importers:
 
   packages/testing:
     dependencies:
+      '@qa/application':
+        specifier: workspace:*
+        version: link:../application
       '@qa/connector-sdk':
         specifier: workspace:*
         version: link:../connector-sdk

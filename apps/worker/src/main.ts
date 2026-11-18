@@ -1,7 +1,9 @@
-import type { DeploymentProfile } from '@qa/domain';
-import { EgressPolicy, initTelemetry, readSecretFile } from '@qa/infrastructure';
-import { connectPostgres, pingDb } from '@qa/persistence';
+import { buildProviders, buildSecretStore, connectDatabase } from '@qa/bootstrap';
+import type { DeploymentProfile, PlatformEnv } from '@qa/domain';
+import { EgressPolicy, HardenedHttpClient, initTelemetry, type EgressRule } from '@qa/infrastructure';
+import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
 import { buildWorkerApp } from './app';
+import { ConnectorTester } from './connector-tester';
 import { WorkerLoop } from './loop';
 
 const env = process.env;
@@ -16,16 +18,32 @@ const telemetry = initTelemetry({
     : undefined,
 });
 
-const password = env.DATABASE_PASSWORD_FILE ? readSecretFile(env.DATABASE_PASSWORD_FILE) : env.DATABASE_PASSWORD;
-const conn =
-  env.DATABASE_URL || env.DATABASE_HOST
-    ? connectPostgres({ url: env.DATABASE_URL, host: env.DATABASE_HOST, port: env.DATABASE_PORT ? Number(env.DATABASE_PORT) : undefined, database: env.DATABASE_NAME, user: env.DATABASE_USER, password })
-    : undefined;
+const platformEnv = (env.PLATFORM_ENV ?? 'development') as PlatformEnv;
+const conn = connectDatabase(env);
+const secrets = buildSecretStore(env, platformEnv, conn?.db);
 
-// The workflow engine (Phase 3) replaces this tick. Until then the worker proves it can run,
-// report health and stop cleanly, and it claims no work.
+let tester: ConnectorTester | undefined;
+if (conn && secrets) {
+  const { providers, capabilities } = buildProviders(env, platformEnv);
+  const hosts = new PgApprovedHostRepository(conn.db);
+  tester = new ConnectorTester({
+    connectors: new PgConnectorRepository(conn.db),
+    tests: new PgTestRequestQueue(conn.db),
+    secrets: secrets.store,
+    providers,
+    capabilities,
+    audit: new PgAuditSink(new PgAuditLog(conn.db)),
+    http: async () => {
+      const rules: EgressRule[] = (await hosts.list('connector')).map((h) => ({ hostPattern: h.hostPattern, purpose: 'connector', internal: h.internal, allowHttp: h.allowHttp }));
+      return new HardenedHttpClient({ egress: new EgressPolicy({ rules, profile, platformEnv }), allowedMethods: ['GET', 'HEAD'], timeoutMs: 20_000, maxBodyBytes: 8 * 1024 * 1024 });
+    },
+  });
+}
+
+// The workflow engine (Phase 3) extends this tick. Until then the worker runs Test Connection requests
+// for connectors, reports health and stops cleanly.
 const loop = new WorkerLoop({
-  tick: async () => 'idle',
+  tick: async () => (tester ? tester.runOnce() : 'idle'),
   idleDelayMs: Number(env.WORKER_IDLE_MS ?? 1_000),
   graceMs: Number(env.WORKER_GRACE_MS ?? 30_000),
   onError: (e) => log('tick failed', { error: e instanceof Error ? e.message : 'unknown' }),
@@ -48,4 +66,4 @@ process.on('SIGINT', shutdown);
 
 loop.start();
 await app.listen({ host: env.HOST ?? '127.0.0.1', port: Number(env.PORT ?? 3001) });
-log('worker started', { profile, database: conn ? 'configured' : 'none' });
+log('worker started', { profile, database: conn ? 'configured' : 'none', secretStore: secrets?.kind ?? 'none', connectorTests: tester ? 'enabled' : 'disabled' });

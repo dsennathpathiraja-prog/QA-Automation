@@ -7,3 +7,8 @@ export * from './audit-log';
 export * from './operation-log';
 export * from './user-repository';
 export * from './llm-audit';
+export * from './connector-repository';
+export * from './test-request-queue';
+export * from './approved-hosts';
+export * from './envelope-rows';
+export * from './connector-support';

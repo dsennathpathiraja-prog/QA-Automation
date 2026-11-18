@@ -16,6 +16,13 @@
     "@qa/persistence": "workspace:*",
     "fastify": "^5.2.0",
     "tsx": "^4.19.2",
-    "@qa/telemetry": "workspace:*"
+    "@qa/telemetry": "workspace:*",
+    "@qa/application": "workspace:*",
+    "@qa/bootstrap": "workspace:*",
+    "@qa/connector-sdk": "workspace:*",
+    "@qa/security": "workspace:*"
+  },
+  "devDependencies": {
+    "@qa/testing": "workspace:*"
   }
 }

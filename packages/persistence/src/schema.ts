@@ -189,6 +189,40 @@ export const connectorCapabilityState = pgTable(
   (t) => [primaryKey({ columns: [t.connectorInstanceId, t.capabilityId] }), check('connector_cap_support_ck', sql`${t.support} in ('supported','partial','unsupported')`)],
 );
 
+/** Test Connection requests. The API enqueues; the worker, the only reader of connector secrets, runs them. */
+export const connectorTestRequest = pgTable(
+  'connector_test_request',
+  {
+    id: id(),
+    connectorInstanceId: uuid('connector_instance_id').notNull().references(() => connectorInstance.id),
+    configVersion: integer('config_version').notNull(),
+    status: text('status').notNull().default('pending'),
+    requestedBy: text('requested_by').notNull(),
+    requestedAt: ts('requested_at').notNull().defaultNow(),
+    startedAt: ts('started_at'),
+    finishedAt: ts('finished_at'),
+    result: jsonb('result').$type<Record<string, unknown>>(),
+  },
+  (t) => [
+    index('connector_test_request_status_idx').on(t.status, t.requestedAt),
+    index('connector_test_request_instance_idx').on(t.connectorInstanceId, t.requestedAt),
+    check('connector_test_request_status_ck', sql`${t.status} in ('pending','running','succeeded','failed')`),
+  ],
+);
+
+/** Ciphertext of the dev/CI `db-envelope` secret store. Never used when OpenBao is configured. */
+export const secretEnvelope = pgTable('secret_envelope', {
+  locator: text('locator').primaryKey(),
+  version: integer('version').notNull(),
+  wrappedDek: text('wrapped_dek').notNull(),
+  dekIv: text('dek_iv').notNull(),
+  dekTag: text('dek_tag').notNull(),
+  iv: text('iv').notNull(),
+  tag: text('tag').notNull(),
+  ciphertext: text('ciphertext').notNull(),
+  updatedAt: ts('updated_at').notNull().defaultNow(),
+});
+
 /** Append-only (trigger-enforced). One row per connector call, written by the Connector Execution Manager. */
 export const connectorOperationLog = pgTable(
   'connector_operation_log',

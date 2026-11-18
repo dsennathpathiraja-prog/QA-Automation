@@ -61,7 +61,7 @@ export function violationsFor(pkg: string, file: string, findings: Finding[]): s
     if (s.startsWith('@qa/')) {
       const target = s.slice(4).split('/')[0]!;
       const root = COMPOSITION_ROOTS[pkg];
-      if (root && (target === 'infrastructure' || target === 'persistence') && !file.endsWith(root)) {
+      if (root && (target === 'infrastructure' || target === 'persistence' || target === 'bootstrap') && !file.endsWith(root)) {
         v.push(`${where} imports @qa/${target} outside the composition root (only ${root} may)`);
       }
       if (target !== pkg && !allowed.includes('*') && !allowed.includes(target)) v.push(`${where} imports @qa/${target} which ${pkg} may not depend on`);
