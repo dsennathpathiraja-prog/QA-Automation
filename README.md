@@ -5,11 +5,11 @@ Connector-first, local-first agentic QA automation platform. Design: see the arc
 
 ## Status: Phase 4 done
 
-Phase 2, Phase 3, and Phase 4 are done. Phase 4 covers workflow drafts, the step validator, publish and approval, the worker engine, and the builder. On 18 Nov 2026 the user approved a workflow and run 1436518e succeeded through all 10 steps. The run records the steps. Reading the story, driving the browser, and creating test cases in Squash are later. The plan is in [`docs/phase4-plan.md`](docs/phase4-plan.md). The environment reachability check still waits for a runner.
+Phases 1, 2, 3, and 4 are done. Phase 4 covers workflow drafts, the step validator, publish and approval, the worker engine, and the builder. On 18 Nov 2026 the user approved a workflow and run 1436518e succeeded through all 10 steps. The run records the steps. Reading the story, driving the browser, and creating test cases in Squash are later. The plan is in [`docs/phase4-plan.md`](docs/phase4-plan.md). The environment reachability check still waits for a runner.
 
-Connectors can be added from the UI (GitHub, Azure DevOps Repos, Jira, Azure Boards, Squash, the managed Playwright server, and an offline demo). GitHub and Azure Boards can be pointed at a real system; Azure DevOps Repos, Jira and Squash are labelled "not verified against a live instance" until someone runs them against a reachable server. What is in each slice is in [`docs/phase2-plan.md`](docs/phase2-plan.md). Phase 1 sign-off notes remain in [`docs/phase1-status.md`](docs/phase1-status.md).
+Connectors can be added from the UI (GitHub, Azure DevOps Repos, Jira, Azure Boards, Squash, the managed Playwright server, and an offline demo). GitHub, Azure Boards, and the current Squash instance have been used live. Azure DevOps Repos and Jira remain labelled "not verified against a live instance" until someone runs them against a reachable server. What is in each slice is in [`docs/phase2-plan.md`](docs/phase2-plan.md). Phase 1 sign-off notes remain in [`docs/phase1-status.md`](docs/phase1-status.md).
 
-What is done and what is still needed for sign-off is in [`docs/phase1-status.md`](docs/phase1-status.md). Decisions are in [`docs/adr/`](docs/adr/README.md). How to build, test and run: [`docs/development.md`](docs/development.md).
+Phase 1 sign-off is in [`docs/phase1-status.md`](docs/phase1-status.md). Decisions are in [`docs/adr/`](docs/adr/README.md). How to build, test and run: [`docs/development.md`](docs/development.md).
 
 Implemented and tested:
 

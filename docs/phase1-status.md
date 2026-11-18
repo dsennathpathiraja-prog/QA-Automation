@@ -3,7 +3,7 @@
 Last updated: Nov 18, 2026 (Asia/Colombo). Branch `cursor/phase1-foundation-2990`.
 This file is the hand-off: read it first when work resumes, and update it as items close.
 
-## Status: Phase 1 code complete, awaiting sign-off checks
+## Status: Phase 1 done
 
 All code, tests, ADRs and docs that can be produced without a Docker host, a real Keycloak, or the VPN-only Squash are done and green
 (`pnpm check`: 275 tests pass, including 5 against a real OpenBao and 3 against a real Squid; the 3 Postgres integration
@@ -27,16 +27,16 @@ tests run in CI and ran green earlier on a real Postgres).
 - `docs/development.md` (developer guide), README status refreshed, `tmp/` ignored.
 - Checked without Docker: all Compose files parse and every referenced Dockerfile and mounted file exists (the full stack also expects `./certs`, created on the target host); `api`, `worker` and `runner-launcher` start from the same `pnpm deploy --prod` layout the Dockerfiles use (the runner launcher answers `/healthz` and rejects a missing token).
 
-## What is left for Phase 1 sign-off (only item 3 is open)
+## Phase 1 sign-off
 
 | # | Item | Who | Done when |
 |---|------|-----|-----------|
 | 1 | Run the local Docker trial stack (checklist below) | user | **DONE Nov 18, 2026:** user confirmed sign-in works on http://localhost:8088 with real Keycloak (needed two fixes: port clash with another local app, then Keycloak redirect wildcard). Per-role menus and `ps` health were not reported separately |
 | 2 | GitHub CI check | user | **DONE Nov 18, 2026:** CI run #12 (commit `44f33e6`) is green, including the real OpenBao and Squid tests. An earlier run failed on the Squid test; fixed by refusing IP-address URLs in `squid.conf` |
-| 3 | Rotate the GitHub token that was pasted in chat | user | Old token revoked; a new one is given to the agent only when a push is needed, never stored |
-| 4 | SquashTM READ-only token plus VPN probe | user | **POSTPONED Nov 18, 2026** by the user (no access to Squash). The Squash adapter stays proven against the documentation-based mock only; its live run moves to whenever access exists (`tools/squash-probe`). Phase 2 proceeds without it |
+| 3 | Rotate the GitHub token that was pasted in chat | user | **DONE Nov 18, 2026:** the pasted token stays revoked. A token is given to the agent only when a push is needed, and it is not stored |
+| 4 | SquashTM READ-only token plus VPN probe | user | **DONE Nov 18, 2026:** the current Squash instance was connected live during Phase 2 with a READ token. It stays read-only (ADR 0013) |
 
-Once 3 is done (4 is postponed by decision), the agent: fixes anything the Docker run exposes, ticks this table, and reports Phase 1 closed.
+Phase 1 is closed. The user confirmed that on Nov 18, 2026, after Phases 2, 3, and 4 were already done.
 
 Not blocking sign-off, tracked for the target Ubuntu host: run the full `deploy/compose/docker-compose.yml` core profile with `scripts/install.sh` (OpenBao init and unseal, Keycloak client secret, TLS certificates), build the `runner-launcher` image and launch a trivial digest-pinned image through it, then check the hardening with `docker inspect`. The local trial stack covers login, sessions and role mapping on real Keycloak; OpenBao policies and the egress proxy are already proven against the real programs.
 
@@ -77,4 +77,4 @@ Common first-run snags: another program on the port (use `WEB_PORT`, see step 4)
 ## How to resume
 1. `git checkout cursor/phase1-foundation-2990 && git pull`
 2. `pnpm install && pnpm check` (see `docs/development.md` for the optional OpenBao, Squid and Postgres tests).
-3. Ask the user for the results of table item 3, then fix what they show.
+3. Phase 1 is closed. Later work starts from the phase plan for the next phase.
