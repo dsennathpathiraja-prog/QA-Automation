@@ -1,4 +1,4 @@
-import { ExecutionEventList, ExecutionListResponse, ExecutionSchema, ValidationReportSchema, WorkflowDefinitionResponse, WorkflowSchema } from '@qa/contracts';
+import { ConnectorListResponse, ExecutionEventList, ExecutionListResponse, ExecutionSchema, ValidationReportSchema, WorkflowDefinitionResponse, WorkflowSchema } from '@qa/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
@@ -13,6 +13,13 @@ interface Param { name: string; type: string; required: boolean; pinned?: unknow
 interface Def { spec?: { steps?: Step[]; connectors?: ConnectorRow[]; parameters?: Param[]; approvals?: { id: string; when: string }[]; execution?: { maxParallelism?: number; timeoutMinutes?: number } } }
 
 const keyOf = (id: string) => ['workflow', id] as const;
+const ROLE_LABEL: Record<string, string> = {
+  workItemSource: 'Work items',
+  browserAutomation: 'Browser',
+  sourceRepo: 'Source repository',
+  testManagement: 'Squash',
+  testRunner: 'Test runner',
+};
 
 export function WorkflowPage() {
   const { id } = useParams({ strict: false }) as { id: string };
@@ -25,6 +32,7 @@ export function WorkflowPage() {
   const [tab, setTab] = useState<'steps' | 'flow' | 'connectors' | 'check' | 'run'>('steps');
   const [params, setParams] = useState<Record<string, string>>({});
   const [runId, setRunId] = useState<string | null>(null);
+  const savedConnectors = useQuery({ queryKey: ['connectors'], queryFn: () => api.get('/api/v1/connectors', ConnectorListResponse), enabled: session.can('connector.view_status') });
   const def = edited ?? (definition.data?.definition as Def | undefined);
   const draft = workflow.data?.status === 'draft';
   const canEdit = draft && session.can('workflow.edit');
@@ -88,12 +96,24 @@ export function WorkflowPage() {
           )}
           {tab === 'connectors' && (
             <Card label="Connectors">
-              {(def.spec?.connectors ?? []).map((c) => (
-                <Field key={c.role} id={`role-${c.role}`} label={`${c.role} (${c.category})`}>
-                  <input id={`role-${c.role}`} className={fieldClass} disabled={!canEdit || c.category === 'test-runner'} value={c.binding?.connectorInstanceId ?? ''} onChange={(e) => patch({ ...def, spec: { ...def.spec, connectors: (def.spec?.connectors ?? []).map((x) => x.role === c.role ? { ...x, binding: { connectorInstanceId: e.target.value || null } } : x) } })} />
-                </Field>
-              ))}
-              <p className="mt-2">The test runner stays managed by the platform. Other roles need the connector id from Connectors. Leave a role blank when its step is off.</p>
+              <p>Choose a connector you already set up. The list shows its name. Leave a role on None when that step is turned off. Then use Save draft.</p>
+              {(def.spec?.connectors ?? []).map((c) => {
+                const current = c.binding?.connectorInstanceId ?? '';
+                if (c.category === 'test-runner') {
+                  return <Field key={c.role} id={`role-${c.role}`} label={ROLE_LABEL[c.role] ?? c.role}><input id={`role-${c.role}`} className={fieldClass} disabled value="Platform runner" /></Field>;
+                }
+                const options = (savedConnectors.data?.items ?? []).filter((item) => item.category === c.category);
+                const known = options.some((item) => item.id === current);
+                return (
+                  <Field key={c.role} id={`role-${c.role}`} label={ROLE_LABEL[c.role] ?? c.role}>
+                    <select id={`role-${c.role}`} className={fieldClass} disabled={!canEdit} value={current === 'managed' ? '' : current} onChange={(e) => patch({ ...def, spec: { ...def.spec, connectors: (def.spec?.connectors ?? []).map((x) => x.role === c.role ? { ...x, binding: { connectorInstanceId: e.target.value || null } } : x) } })}>
+                      <option value="">None</option>
+                      {current && !known && <option value={current}>Saved connector</option>}
+                      {options.map((item) => <option key={item.id} value={item.id}>{item.name}{item.enabled ? '' : ' (disabled)'}</option>)}
+                    </select>
+                  </Field>
+                );
+              })}
             </Card>
           )}
           {tab === 'check' && (
