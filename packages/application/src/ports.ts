@@ -135,3 +135,69 @@ export interface OperationLogReader {
 }
 
 export const connectorSecretLocator = (connectorId: string) => `connectors/${connectorId}/credentials`;
+
+export const ENVIRONMENT_KINDS = ['development', 'qa', 'staging', 'uat', 'production'] as const;
+export type EnvironmentKind = (typeof ENVIRONMENT_KINDS)[number];
+
+export interface EnvironmentBrowser {
+  browser: 'chromium' | 'firefox' | 'webkit';
+  viewport?: { width: number; height: number };
+  headless: boolean;
+  locale?: string;
+}
+
+export interface EnvironmentRestrictions {
+  workflowTypes?: ('requirement-validation' | 'regression-testing')[];
+  maxParallelism: number;
+  prodSafeOnly: boolean;
+}
+
+export interface EnvironmentRecord {
+  id: string;
+  name: string;
+  kind: EnvironmentKind;
+  applicationUrl: string;
+  browser: EnvironmentBrowser;
+  restrictions: EnvironmentRestrictions;
+  enabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface NewEnvironment {
+  id: string;
+  name: string;
+  kind: EnvironmentKind;
+  applicationUrl: string;
+  browser: EnvironmentBrowser;
+  restrictions: EnvironmentRestrictions;
+  enabled: boolean;
+  createdBy?: string;
+}
+
+export interface EnvironmentPatch {
+  name?: string;
+  kind?: EnvironmentKind;
+  applicationUrl?: string;
+  browser?: EnvironmentBrowser;
+  restrictions?: EnvironmentRestrictions;
+  enabled?: boolean;
+}
+
+export interface EnvironmentAuthorizationRecord {
+  id: string;
+  environmentId: string;
+  status: 'active' | 'revoked' | 'expired';
+  validFrom: Date;
+  validUntil: Date;
+}
+
+export interface EnvironmentRepository {
+  list(): Promise<EnvironmentRecord[]>;
+  get(id: string): Promise<EnvironmentRecord | undefined>;
+  /** Throws PlatformError('conflict') when the name is taken. */
+  insert(rec: NewEnvironment): Promise<EnvironmentRecord>;
+  update(id: string, patch: EnvironmentPatch): Promise<EnvironmentRecord>;
+  softDelete(id: string): Promise<void>;
+  activeAuthorization(environmentId: string, at: Date): Promise<EnvironmentAuthorizationRecord | undefined>;
+}

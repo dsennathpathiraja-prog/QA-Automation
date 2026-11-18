@@ -160,3 +160,43 @@ export const LlmProvidersResponse = z.object({
   ),
 });
 export type LlmProvidersResponse = z.infer<typeof LlmProvidersResponse>;
+
+const EnvironmentKindSchema = z.enum(['development', 'qa', 'staging', 'uat', 'production']);
+const EnvironmentBrowserSchema = z.object({
+  browser: z.enum(['chromium', 'firefox', 'webkit']),
+  viewport: z.object({ width: z.number(), height: z.number() }).optional(),
+  headless: z.boolean(),
+  locale: z.string().optional(),
+});
+const EnvironmentRestrictionsSchema = z.object({
+  workflowTypes: z.array(z.enum(['requirement-validation', 'regression-testing'])).optional(),
+  maxParallelism: z.number(),
+  prodSafeOnly: z.boolean(),
+});
+
+export const EnvironmentSummarySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: EnvironmentKindSchema,
+  applicationUrl: z.string(),
+  enabled: z.boolean(),
+  selectable: z.boolean(),
+  authorizationUntil: z.string().optional(),
+});
+export const EnvironmentDetailSchema = EnvironmentSummarySchema.extend({
+  browser: EnvironmentBrowserSchema,
+  restrictions: EnvironmentRestrictionsSchema,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export const EnvironmentListResponse = z.object({ items: z.array(EnvironmentSummarySchema) });
+export const CreateEnvironmentRequest = z.object({
+  name: z.string(),
+  kind: EnvironmentKindSchema,
+  applicationUrl: z.string(),
+  browser: EnvironmentBrowserSchema.partial().optional(),
+  restrictions: EnvironmentRestrictionsSchema.partial().optional(),
+  enabled: z.boolean().optional(),
+});
+export const UpdateEnvironmentRequest = CreateEnvironmentRequest.partial();
+export type EnvironmentDetail = z.infer<typeof EnvironmentDetailSchema>;

@@ -65,7 +65,7 @@ Common first-run snags: another program on the port (use `WEB_PORT`, see step 4)
 - **S3 object store adapter:** the roadmap says "S3 adapter in Phase 2+ if chosen"; `local-fs` is the Phase 1 adapter. Decide with the Q16 host sizing answer.
 - **Kubernetes runner adapter** (Job + NetworkPolicy, Helm): Phase 11.
 - **Worker wiring of `RemoteRunnerLauncher`** and a real runner image: Phase 5.
-- **Workflow engine tables and engine:** Phase 3.
+- **Workflow engine:** Phase 4. Environment management is Phase 3.
 
 ## Known limits to remember
 - Per-run host allowlists are passed to the runner (`QA_ALLOWED_HOSTS`) and enforced by it; the Squid list is global.

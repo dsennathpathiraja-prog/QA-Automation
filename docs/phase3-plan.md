@@ -1,26 +1,25 @@
-# Phase 3 plan: durable workflow engine
+# Phase 3 plan: environment management
 
-Started Nov 18, 2026, after the Phase 2 sign-off. Scope comes from ADR 0004 and ADR 0001. The roadmap file named in the README is not in this checkout, so this plan does not invent the QA step catalog. The engine comes first. The steps that publish test cases, call connectors, or launch runners are later slices, and they call this engine rather than the other way around.
+Started Nov 18, 2026, after the Phase 2 sign-off. Scope is the roadmap Phase 3 (Environment management), not the workflow engine. The engine is Phase 4 and is noted in [`phase4-plan.md`](phase4-plan.md).
 
-## What we already have
-- A worker process with a tick loop, health, and a clean stop. The tick currently runs connector tests only. ADR 0004 says the engine extends that tick.
-- Postgres, reviewed migrations, and append-only audit tables.
-- Role permissions for creating, editing, publishing, and viewing workflows. No workflow tables yet.
+Slice 1 (environment records) is in this branch: create, list, read, update, disable, and remove through the API. The Environments page is slice 6.
 
-## Decisions already taken
-- The engine is ours, on Postgres, behind an `ExecutionRuntime` port. Not Temporal.
-- The API does not run workflows. The worker does.
-- A step runs at least once. Every side effect carries an idempotency key so a retry does not do the work twice.
-- Claiming work uses `SELECT ... FOR UPDATE SKIP LOCKED` and a lease. An append-only event log is the history the UI will read.
-- A test must kill a worker in the middle of a step and show the step recovers. That chaos suite is mandatory.
-- Source repositories stay read-only. The current Squash stays read-only. A workflow that would write there stays in preview until a separate writable connector is enabled.
+## What the roadmap asks for
+Environments a person can configure: kind, application URL, browser settings, test data, authentication, connector references, and execution restrictions. Credentials are write-only. A production environment cannot be selected until an Administrator has an active authorization for it. Validation errors name what to fix. A resolver later turns a saved environment into a `ResolvedEnvironment` for a run.
+
+The tables already exist from the Phase 1 baseline: `environment`, `environment_connector_ref`, `auth_profile`, `test_data_profile`, `environment_authorization`.
+
+## Acceptance
+A person can configure an environment from the UI (acceptance criterion 3). A secret value is never returned. Production is unselectable without an active authorization. Each validation error says what is wrong and what to change.
 
 ## Slices
-1. **Tables and the event log.** Workflow definition, immutable published version, execution, step attempt with a lease, and an append-only execution event table. Migrations and database checks only. Nothing runs yet.
-2. **Runtime port.** Start an execution of a published version, claim the next step, heartbeat the lease, complete, and fail. A second worker does not claim a live lease. Tests use PGlite, plus the real Postgres suite when `TEST_DATABASE_URL` is set.
-3. **Worker tick.** The existing connector tick stays. The engine claims one step per tick. Stopping the process releases nothing that another worker cannot recover after the lease expires.
-4. **Chaos suite.** Kill the worker after the side effect is recorded and before the step is marked complete: the retry does not repeat the side effect. Kill it before the side effect: the retry runs it once.
-5. **One visible workflow.** A fixed sample definition, an API to start it and read its events, and a page that shows the run. This is the first thing a person can click. Real QA steps are not in this slice.
+1. **Environment records.** Create, list, read, update, disable, and remove. Kind, application URL, browser settings, and execution restrictions. The application host must already be on the approved-host list for purpose `application`. A production environment is stored but not selectable. No authentication secrets in this slice.
+2. **Authentication and test data.** Auth profiles (none, basic, form login, bearer, saved browser session) and test data profiles. Secret values are stored and never read back by the API.
+3. **Connector references.** Attach enabled connectors to an environment by role.
+4. **Production authorization.** An Administrator records a justification and a validity window. One active authorization per production environment. Expired or revoked authorizations make production unselectable again.
+5. **Resolver and validation.** `ResolvedEnvironment` for a later run, and a validation call the workflow builder will use. Errors stay specific.
+6. **Environments UI.** List, create, and the edit tabs (General, Browser, Test data, Authentication, Connectors, Restrictions), including the production authorization dialog.
+7. **Connectivity check.** Reachability of the application URL, reported on the environment. This waits until a runner can place the check; until then the record says the check has not been run.
 
 ## Not in Phase 3
-Runner images, the Kubernetes runner, and the workflow editor for arbitrary steps. Those stay on their own phases (runner wiring is Phase 5, Kubernetes is Phase 11).
+The workflow engine, the visual builder, and starting a run. Those are Phase 4.

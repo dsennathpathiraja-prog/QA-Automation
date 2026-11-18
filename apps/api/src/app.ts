@@ -8,6 +8,8 @@ import type { SessionResolver } from './session';
 import { registerRequestTelemetry } from './telemetry';
 import { registerAuthRoutes, type AuthConfig, type OidcSessionResolver } from './auth';
 import { registerConnectorRoutes, type ConnectorRouteDeps } from './connector-routes';
+import { registerEnvironmentRoutes } from './environment-routes';
+import type { EnvironmentService } from '@qa/application';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -29,6 +31,8 @@ export interface AppDeps {
   auth?: { config: AuthConfig; resolver: OidcSessionResolver };
   /** Connector management. Without it the connector list stays empty. */
   connectors?: ConnectorRouteDeps;
+  /** Environment management. Without it the environment list stays empty. */
+  environments?: EnvironmentService;
 }
 
 const CLIENT_ERRORS: Partial<Record<string, number>> = { validation: 400, 'not-found': 404, conflict: 409, unsupported: 400 };
@@ -100,6 +104,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   if (deps.connectors) registerConnectorRoutes(app, deps.connectors, policy);
   else app.get('/api/v1/connectors', { config: { access: requires('connector.view_status') } }, async () => ({ items: [] }));
+
+  if (deps.environments) registerEnvironmentRoutes(app, deps.environments);
+  else app.get('/api/v1/environments', { config: { access: requires('environment.view') } }, async () => ({ items: [] }));
 
   app.get('/api/v1/llm/providers', { config: { access: requires('llm.view') } }, async () =>
     LlmProvidersResponse.parse({ items: deps.llm ? await deps.llm.providers() : [] }),

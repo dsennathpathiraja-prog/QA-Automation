@@ -12,3 +12,4 @@ export * from './test-request-queue';
 export * from './approved-hosts';
 export * from './envelope-rows';
 export * from './connector-support';
+export * from './environment-repository';
