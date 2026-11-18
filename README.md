@@ -3,9 +3,9 @@
 Connector-first, local-first agentic QA automation platform. Design: see the architecture documents
 (`architecture-and-roadmap.md`, `architecture/platform-decisions.md`).
 
-## Status: Phase 4 in place
+## Status: Phase 4 done
 
-Phase 2, Phase 3, and Phase 4 are signed off. Phase 4 covers workflow drafts, the step validator, publish and approval, the worker engine, and the builder. The user reviewed that builder on 18 Nov 2026. Send for approval accepts the read-only Squash connector in preview, and a work-item connector can read attachments with the same read token. Creating test cases in the current Squash waits for a separate writable instance. Real requirement and regression steps are later. The plan is in [`docs/phase4-plan.md`](docs/phase4-plan.md). The environment reachability check still waits for a runner.
+Phase 2, Phase 3, and Phase 4 are done. Phase 4 covers workflow drafts, the step validator, publish and approval, the worker engine, and the builder. On 18 Nov 2026 the user approved a workflow and run 1436518e succeeded through all 10 steps. The run records the steps. Reading the story, driving the browser, and creating test cases in Squash are later. The plan is in [`docs/phase4-plan.md`](docs/phase4-plan.md). The environment reachability check still waits for a runner.
 
 Connectors can be added from the UI (GitHub, Azure DevOps Repos, Jira, Azure Boards, Squash, the managed Playwright server, and an offline demo). GitHub and Azure Boards can be pointed at a real system; Azure DevOps Repos, Jira and Squash are labelled "not verified against a live instance" until someone runs them against a reachable server. What is in each slice is in [`docs/phase2-plan.md`](docs/phase2-plan.md). Phase 1 sign-off notes remain in [`docs/phase1-status.md`](docs/phase1-status.md).
 

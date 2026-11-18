@@ -3,7 +3,7 @@
 Started after the Phase 3 sign-off. This is the roadmap Phase 4, not a new reading of Phase 3.
 
 ## Status (18 Nov 2026)
-Phase 4 is signed off by the user. They created drafts from the templates, used the step list, the read-only flow, and the connector dropdowns, and confirmed who can see a draft. Check this workflow reports a preview where Squash cannot create test cases or write results. That no longer blocks Send for approval. Work-item attachments are read with the same token after the connector is checked again. Creating test cases in the current Squash waits for a separate writable instance. A real requirement or regression run stays in a later phase.
+Phase 4 is done. The user created drafts, used the step list, the read-only flow, and the connector dropdowns, then approved a workflow. Run 1436518e succeeded through all 10 steps. That run records the steps. Reading the story, driving the browser, and creating test cases in the current Squash stay in a later phase.
 
 Slices 1–6 are in place. Handlers are no-ops, so a published workflow can run without doing real testing. The chaos proof is an automated test: the side effect is stored, the worker dies before the step is marked complete, and the next worker continues without storing it again.
 
