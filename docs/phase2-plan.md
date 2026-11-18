@@ -3,8 +3,7 @@
 Started Nov 18, 2026. Scope and acceptance come from the roadmap (Phase 2). This file says how we slice it and what is blocked on what.
 
 ## Decisions taken
-- The Squash live check is **postponed** (no access). The Squash connector is built and tested against the documentation-based mock; `docs/architecture/squash-rest-api-15.0.4-catalog.md` serves as the capability matrix until a live run exists. Every Squash screen says "not verified against a live instance" until then.
-- The Squash instance stays strictly read-only (ADR 0013).
+- The current Squash instance was connected live on Nov 18, 2026. It stays read-only (D20, ADR 0013): use a READ token. Publishing test cases and pushing results is for a separate writable connector (READ_WRITE token, dedicated service user, explicit enablement) and stays in preview against this instance. The capability matrix remains `docs/architecture/squash-rest-api-15.0.4-catalog.md`.
 
 ## What we already have for Phase 2
 Connector Execution Manager with the full policy pipeline, capability registry, secret store ports, hardened HTTP client, a Squash read provider, a stub work-item provider, the provider contract-test kit, the `connector_instance` and operation-log tables, role-aware web shell with a Connectors page (empty state).

@@ -16,6 +16,6 @@ Each record states the decision as built in the repository, with the evidence (t
 | 0010 | [Runner isolation: RunnerLauncher port and a separate launcher service](0010-runner-isolation-runnerlauncher-port-and-a-separate-launcher.md) | accepted |
 | 0011 | [Deny-by-default egress with an approved-host list](0011-deny-by-default-egress-with-an-approved-host-list.md) | accepted |
 | 0012 | [Source repositories are read-only; no git writes; no automatic test healing](0012-source-repositories-are-read-only-no-git-writes-no-automatic.md) | accepted |
-| 0013 | [The target SquashTM is read-only for the platform](0013-the-target-squashtm-is-read-only-for-the-platform.md) | accepted |
+| 0013 | [The current SquashTM instance is read-only (D20)](0013-the-target-squashtm-is-read-only-for-the-platform.md) | accepted |
 | 0014 | [Persistence: Drizzle with reviewed SQL migrations, append-only audit](0014-persistence-drizzle-with-reviewed-sql-migrations-append-only.md) | accepted |
 | 0015 | [Observability: OpenTelemetry, with no payload data](0015-observability-opentelemetry-with-no-payload-data.md) | accepted |
