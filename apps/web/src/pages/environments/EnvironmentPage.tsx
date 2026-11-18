@@ -3,9 +3,6 @@ import {
   AuthProfileSchema,
   AuthorizationListResponse,
   AuthorizationSchema,
-  ConnectorListResponse,
-  ConnectorRefListResponse,
-  ConnectorRefSchema,
   EnvironmentDetailSchema,
   EnvironmentValidationSchema,
   TestDataListResponse,
@@ -21,13 +18,12 @@ import { Card, ErrorNotice, PageHeader } from '../common';
 import { Field, buttonClass, errorText, fieldClass, primaryButtonClass } from '../connectors/shared';
 import { environmentsKey, kindLabel } from '../Environments';
 
-type Tab = 'general' | 'browser' | 'data' | 'auth' | 'connectors' | 'restrictions';
+type Tab = 'general' | 'browser' | 'data' | 'auth' | 'restrictions';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'browser', label: 'Browser' },
   { id: 'data', label: 'Test data' },
   { id: 'auth', label: 'Authentication' },
-  { id: 'connectors', label: 'Connectors' },
   { id: 'restrictions', label: 'Restrictions' },
 ];
 
@@ -51,7 +47,7 @@ function Detail({ env }: { env: EnvironmentDetail }) {
   return (
     <>
       <PageHeader title={env.name} description={`${kindLabel(env.kind)} · ${env.selectable ? 'Selectable for a run' : env.kind === 'production' ? 'Not selectable until an authorization is active' : 'Not selectable'}`} />
-      <p className="mb-4 text-sm">Reachability has not been checked yet. That check waits until a runner can place it.</p>
+      <p className="mb-4 text-sm">Reachability has not been checked yet. That check waits until a runner can place it. Connectors are chosen on the workflow.</p>
       <div role="tablist" aria-label="Environment settings" className="mb-4 flex flex-wrap gap-2">
         {TABS.map((t) => (
           <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} className={tab === t.id ? primaryButtonClass : buttonClass} onClick={() => setTab(t.id)}>{t.label}</button>
@@ -61,7 +57,6 @@ function Detail({ env }: { env: EnvironmentDetail }) {
       {tab === 'browser' && <Browser env={env} />}
       {tab === 'data' && <TestData envId={env.id} />}
       {tab === 'auth' && <Authentication envId={env.id} />}
-      {tab === 'connectors' && <Connectors envId={env.id} />}
       {tab === 'restrictions' && <Restrictions env={env} />}
     </>
   );
@@ -225,52 +220,6 @@ function Authentication({ envId }: { envId: string }) {
 
 function ProfileRow({ profile }: { profile: { id: string; name: string; type: string; config: Record<string, string>; hasSecret: boolean } }) {
   return <p className="text-sm">{profile.name} · {profile.type}{profile.config.username ? ` · ${profile.config.username}` : ''}{profile.hasSecret ? ' · •••••••• saved' : ''}</p>;
-}
-
-function Connectors({ envId }: { envId: string }) {
-  const api = useApi();
-  const manage = useSession().can('environment.manage');
-  const refs = useQuery({ queryKey: ['environment', envId, 'connectors'], queryFn: () => api.get(`/api/v1/environments/${envId}/connectors`, ConnectorRefListResponse) });
-  const all = useQuery({ queryKey: ['connectors'], queryFn: () => api.get('/api/v1/connectors', ConnectorListResponse), enabled: manage });
-  const qc = useQueryClient();
-  const roles = ['work-item', 'source-repo', 'test-management', 'browser-automation'] as const;
-  const [choice, setChoice] = useState<Record<string, string>>({});
-  const save = useMutation({
-    mutationFn: async (role: (typeof roles)[number]) => {
-      const connectorId = choice[role] ?? '';
-      if (!connectorId) {
-        await api.delete(`/api/v1/environments/${envId}/connectors/${role}`);
-        return;
-      }
-      await api.put(`/api/v1/environments/${envId}/connectors`, { role, connectorId }, ConnectorRefSchema);
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['environment', envId, 'connectors'] }),
-  });
-  return (
-    <Card label="Connectors">
-      {refs.isError && <ErrorNotice message="Connector references could not be loaded." onRetry={() => void refs.refetch()} />}
-      {roles.map((role) => {
-        const current = refs.data?.items.find((r) => r.role === role);
-        const options = (all.data?.items ?? []).filter((c) => c.category === role && c.enabled);
-        return (
-          <div key={role} className="mt-3">
-            <p className="text-sm font-medium">{role}</p>
-            <p className="text-sm">{current ? current.connectorName : 'None attached'}</p>
-            {manage && (
-              <div className="mt-1 flex gap-2">
-                <select aria-label={role} className={fieldClass} value={choice[role] ?? current?.connectorInstanceId ?? ''} onChange={(e) => setChoice({ ...choice, [role]: e.target.value })}>
-                  <option value="">None</option>
-                  {options.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-                <button type="button" className={buttonClass} onClick={() => save.mutate(role)}>Save</button>
-              </div>
-            )}
-          </div>
-        );
-      })}
-      {save.isError && <div className="mt-3"><ErrorNotice message={errorText(save.error, 'The connector could not be attached.')} /></div>}
-    </Card>
-  );
 }
 
 function Restrictions({ env }: { env: EnvironmentDetail }) {
