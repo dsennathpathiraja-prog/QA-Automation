@@ -63,13 +63,14 @@ describe('workflow validator', () => {
     const tm = def.spec.connectors.find((c) => c.role === 'testManagement')!;
     tm.requiredCapabilities = ['tm.testcase.upsert', 'tm.testcase.read', 'tm.execution.upsert', 'tm.execution.status.update'];
     const instances = bind(def).map((i) => {
-      if (i.role === 'workItemSource') return { ...i, capabilities: ['workitem.read', 'workitem.attachment.read'] };
+      if (i.role === 'workItemSource') return { ...i, capabilities: ['workitem.read'] };
       if (i.role === 'testManagement') return { ...i, capabilities: ['tm.testcase.read'] };
       return i;
     });
     const report = validateWorkflow(def, { instances });
     expect(errorsOf(report)).toEqual([]);
     expect(report.some((i) => i.severity === 'warning' && i.message.includes('tm.testcase.upsert'))).toBe(true);
+    expect(report.some((i) => i.severity === 'warning' && i.message.includes('same token'))).toBe(true);
 
     const regression = templateDefinition('tpl-rg-full')!;
     const rg = bind(regression).map((i) => i.role === 'testManagement' ? { ...i, capabilities: ['tm.project.list', 'tm.campaign.list', 'tm.testcase.list', 'tm.testcase.read'] } : i);

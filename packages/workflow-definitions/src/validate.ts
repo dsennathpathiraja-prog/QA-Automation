@@ -159,7 +159,9 @@ export function validateWorkflow(input: unknown, ctx: ValidateCtx = { instances:
       if (!inst.enabled || (inst.health !== 'healthy' && inst.health !== 'degraded')) issues.push(err('V4', path, `The connector for ${role.role} is not usable.`, 'Enable it and wait until its last check is healthy or degraded.'));
       for (const cap of new Set([...role.required, ...declared.requiredCapabilities])) {
         if (inst.capabilities.includes(cap)) continue;
+        const attachmentUsesStoryRead = cap === 'workitem.attachment.read' && inst.capabilities.includes('workitem.read');
         if (PREVIEW.has(cap)) issues.push(issue('V4b', 'warning', path, `${role.role} does not offer ${cap}. That part of the run stays a preview and is not written back.`, 'Use a connector that offers it, or accept the preview.'));
+        else if (attachmentUsesStoryRead) issues.push(issue('V4b', 'warning', path, `${role.role} can read the story. Attachments use that same token, so publish does not wait for a separate attachment check.`, 'Run the connector check again when you want attachment read listed on its own.'));
         else issues.push(err('V4', path, `The connector for ${role.role} cannot ${cap}.`, 'Pick a connector whose last check includes that capability, or turn the step off if it is optional.'));
       }
       for (const cap of declared.optionalCapabilities ?? []) {
