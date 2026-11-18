@@ -77,6 +77,13 @@ describe('source and work-item providers', () => {
     const bad = githubProvider.create({ baseUrl: writable.baseUrl, org: 'acme', repo: 'shop' }, lease, { http: writable.http });
     expect((await bad.testConnection()).message).toMatch(/read-only token/);
     expect((await bad.inspectPermissions()).writePermissionsDetected).toEqual(expect.arrayContaining(['repo', 'repository.push']));
+    await bad.dispose();
+
+    const owner = await mock(() => ({ body: { login: 'ada', permissions: { admin: true, push: true, pull: true } } }));
+    const readOnlyOwner = githubProvider.create({ baseUrl: owner.baseUrl, org: 'acme', repo: 'shop' }, lease, { http: owner.http });
+    expect((await readOnlyOwner.inspectPermissions()).writePermissionsDetected).toEqual([]);
+    expect((await readOnlyOwner.testConnection()).message).toBe('Connected to GitHub.');
+    await readOnlyOwner.dispose();
   });
 
   it('reads Azure DevOps from recorded responses and reports an unscoped token plainly', async () => {

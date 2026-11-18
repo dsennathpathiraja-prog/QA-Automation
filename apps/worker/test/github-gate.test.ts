@@ -8,11 +8,13 @@ import { ConnectorTester } from '../src';
 
 const TOKEN = 'readonly-token-value-0001';
 
-async function withGitHub(scopes: string) {
+async function withGitHub(scopes: string | null) {
   const server = createServer((req, res) => {
     const path = req.url ?? '';
-    const body = path.startsWith('/user') ? { login: 'ada' } : { permissions: { pull: true, push: scopes.includes('repo') } };
-    res.writeHead(200, { 'content-type': 'application/json', 'x-oauth-scopes': scopes });
+    const body = path.startsWith('/user') ? { login: 'ada' } : { permissions: { pull: true, push: true, admin: true } };
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (scopes !== null) headers['x-oauth-scopes'] = scopes;
+    res.writeHead(200, headers);
     res.end(JSON.stringify(body));
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -45,6 +47,13 @@ describe('GitHub read-only gate', () => {
     const layers = Object.fromEntries((detail.readOnlyLayers ?? []).map((l) => [l.id, l.state]));
     expect(layers).toMatchObject({ 'access-mode': 'holds', catalog: 'holds', http: 'holds', credential: 'blocked', host: 'holds', git: 'holds' });
     expect(JSON.stringify(detail)).not.toContain(TOKEN);
+  });
+
+  it('accepts a fine-grained read token when the account itself can push', async () => {
+    const detail = await withGitHub(null);
+    expect(detail.status).toBe('connected');
+    expect(detail.canEnable).toBe(true);
+    expect(detail.permissionReport?.writePermissionsDetected).toEqual([]);
   });
 
   it('lets a read-only token become connected', async () => {

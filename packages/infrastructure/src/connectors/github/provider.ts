@@ -24,6 +24,20 @@ export function githubWriteScopes(header: string | undefined): string[] {
     .filter((s) => s.length > 0 && !s.startsWith('read:') && WRITE_SCOPE.test(s));
 }
 
+/**
+ * Write access of the token itself. A classic token is judged by its OAuth scopes.
+ * The repository `permissions` object is the account's role, so a repository owner is
+ * reported as able to push even when a fine-grained token has Contents set to Read-only.
+ * That role is recorded only after a classic write scope is already present.
+ */
+export function githubDetectedWrites(scopeHeader: string | undefined, repoPermissions?: Record<string, boolean>): string[] {
+  const writes = githubWriteScopes(scopeHeader);
+  if (writes.length > 0 && repoPermissions) {
+    for (const key of ['push', 'admin', 'maintain']) if (repoPermissions[key] === true) writes.push(`repository.${key}`);
+  }
+  return [...new Set(writes)];
+}
+
 export const githubProvider: ConnectorProvider = {
   manifest: {
     providerKey: GITHUB_PROVIDER_KEY,
@@ -73,14 +87,12 @@ class GitHubClient implements ConnectorClient {
     const started = Date.now();
     try {
       const user = await this.get('/user');
-      const writes = githubWriteScopes(user.headers['x-oauth-scopes']);
-      let repoWrites: string[] = [];
+      let repoPermissions: Record<string, boolean> | undefined;
       if (this.cfg.repo) {
         const repo = await this.get(`/repos/${encodeURIComponent(this.cfg.org)}/${encodeURIComponent(this.cfg.repo)}`);
-        const p = (repo.body?.permissions ?? {}) as Record<string, boolean>;
-        repoWrites = ['push', 'admin', 'maintain'].filter((k) => p[k] === true);
+        repoPermissions = (repo.body?.permissions ?? {}) as Record<string, boolean>;
       }
-      const write = [...writes, ...repoWrites.map((k) => `repository.${k}`)];
+      const write = githubDetectedWrites(user.headers['x-oauth-scopes'], repoPermissions);
       return {
         ok: true,
         message: write.length > 0 ? 'Connected, but this token can change the repository. Replace it with a read-only token.' : 'Connected to GitHub.',
@@ -94,16 +106,19 @@ class GitHubClient implements ConnectorClient {
 
   async inspectPermissions(): Promise<PermissionReport> {
     const user = await this.get('/user');
-    const scopes = (user.headers['x-oauth-scopes'] ?? '').split(',').map((s: string) => s.trim()).filter(Boolean);
-    const writes = githubWriteScopes(user.headers['x-oauth-scopes']);
-    const notes = scopes.length === 0 ? ['GitHub did not report OAuth scopes. Fine-grained tokens often do this; repository permissions were checked when a repository is set.'] : [];
+    const scopeHeader = user.headers['x-oauth-scopes'];
+    const scopes = (scopeHeader ?? '').split(',').map((s: string) => s.trim()).filter(Boolean);
+    let repoPermissions: Record<string, boolean> | undefined;
     if (this.cfg.repo) {
       const repo = await this.get(`/repos/${encodeURIComponent(this.cfg.org)}/${encodeURIComponent(this.cfg.repo)}`);
-      const p = (repo.body?.permissions ?? {}) as Record<string, boolean>;
-      for (const k of ['push', 'admin', 'maintain']) if (p[k] === true) writes.push(`repository.${k}`);
-      if (p.pull === true) scopes.push('repository.pull');
+      repoPermissions = (repo.body?.permissions ?? {}) as Record<string, boolean>;
+      if (repoPermissions.pull === true) scopes.push('repository.pull');
     }
-    return { granted: scopes.length > 0 ? scopes : ['metadata'], writePermissionsDetected: [...new Set(writes)], notes };
+    const writes = githubDetectedWrites(scopeHeader, repoPermissions);
+    const notes = scopeHeader == null || scopeHeader.trim() === ''
+      ? ['GitHub did not report token scopes. A repository owner is still shown as able to push; that account role is ignored. Keep the token Contents permission at Read-only.']
+      : [];
+    return { granted: scopes.length > 0 ? scopes : ['metadata'], writePermissionsDetected: writes, notes };
   }
 
   async probeCapabilities(): Promise<CapabilityProbeEntry[]> {
