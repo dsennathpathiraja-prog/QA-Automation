@@ -57,6 +57,13 @@ describe('credentials are accepted once and never come back', () => {
     expect(await s.connectors.list()).toEqual([]);
   });
 
+  it('leaves no credentials behind when the connector cannot be created', async () => {
+    const s = setup();
+    await sample(s);
+    await expect(sample(s, { secrets: { demoKey: `${CANARY}-orphan` } })).rejects.toMatchObject({ errorClass: 'conflict' });
+    expect(s.secrets.size).toBe(1);
+  });
+
   it('requires credentials when the provider uses them', async () => {
     const s = setup();
     await expect(sample(s, { secrets: undefined })).rejects.toMatchObject({ errorClass: 'validation' });

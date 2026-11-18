@@ -8,6 +8,10 @@ export class InMemorySecretStore implements SecretStore {
 
   constructor(private readonly clock: Clock = systemClock) {}
 
+  get size(): number {
+    return this.data.size;
+  }
+
   async put(locator: string, material: SecretMaterial) {
     assertLocator(locator);
     const version = (this.data.get(locator)?.version ?? 0) + 1;

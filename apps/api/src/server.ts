@@ -1,7 +1,9 @@
-import type { DeploymentProfile, PlatformEnv } from '@qa/domain';
+import { PlatformError, type DeploymentProfile, type PlatformEnv } from '@qa/domain';
 import { EgressPolicy, HardenedHttpClient, OidcProvider, initTelemetry, OllamaAdapter, OpenAiCompatibleAdapter, readSecretFile, type EgressRule } from '@qa/infrastructure';
 import type { LlmPort } from '@qa/llm';
-import { PgAuditLog, PgSessionStore, PgUserRepository, connectPostgres, migrate, pingDb, seedDefaultGroupMappings, seedRoles, type Db } from '@qa/persistence';
+import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgOperationLogReader, PgSessionStore, PgTestRequestQueue, PgUserRepository, connectPostgres, migrate, pingDb, seedDefaultGroupMappings, seedRoles, type Db } from '@qa/persistence';
+import { buildProviders, buildSecretStore } from '@qa/bootstrap';
+import { ConnectorService } from '@qa/application';
 import { buildApp } from './app';
 import { OidcSessionResolver, type AuthConfig } from './auth';
 import { DevHeaderSessionResolver } from './session';
@@ -111,6 +113,16 @@ function dbHooks(db: Db): NonNullable<AuthConfig['hooks']> {
   };
 }
 
+const noSecretStore = {
+  async put(): Promise<never> {
+    throw new PlatformError('unsupported', 'No secret store is configured, so connector credentials cannot be saved. Set SECRET_STORE or BAO_ADDR.');
+  },
+  async exists() {
+    return false;
+  },
+  async delete() {},
+};
+
 const useOidc = platformEnv === 'production' || env.AUTH_MODE === 'oidc';
 if (platformEnv === 'production' && env.AUTH_MODE === 'dev') throw new Error('AUTH_MODE=dev is not allowed when PLATFORM_ENV=production');
 
@@ -131,10 +143,30 @@ if (conn && env.MIGRATE_ON_START !== 'false') {
 }
 
 const auth = useOidc ? buildOidc(conn?.db) : undefined;
+
+function buildConnectors(db: Db | undefined) {
+  if (!db) return undefined;
+  const { providers, capabilities } = buildProviders(env, platformEnv);
+  const secrets = buildSecretStore(env, platformEnv, db);
+  const service = new ConnectorService({
+    connectors: new PgConnectorRepository(db),
+    tests: new PgTestRequestQueue(db),
+    // The API side only ever stores and deletes credentials; the worker is the only reader.
+    secrets: secrets?.store ?? noSecretStore,
+    providers,
+    capabilities,
+    hosts: new PgApprovedHostRepository(db),
+    audit: new PgAuditSink(new PgAuditLog(db)),
+  });
+  console.log(JSON.stringify({ msg: 'connectors ready', secretStore: secrets?.kind ?? 'none', providers: providers.all().map((p) => p.manifest.providerKey) }));
+  return { connectors: service, operations: new PgOperationLogReader(db) };
+}
+
 const app = buildApp({
   sessions: auth ? auth.resolver : new DevHeaderSessionResolver(platformEnv),
   profile,
   auth,
+  connectors: buildConnectors(conn?.db),
   llm: buildLlmStatus(),
   readiness: conn ? { database: () => pingDb(conn.db) } : undefined,
 });

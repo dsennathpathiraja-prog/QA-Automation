@@ -31,8 +31,106 @@ export const IdentityMappingsResponse = z.object({
 });
 export type IdentityMappingsResponse = z.infer<typeof IdentityMappingsResponse>;
 
-export const ConnectorListResponse = z.object({ items: z.array(z.object({ id: z.string(), name: z.string(), providerKey: z.string(), status: z.string() })) });
+const Category = z.enum(['work-item', 'source-repo', 'browser-automation', 'test-management', 'test-runner']);
+const ConnectorStatusSchema = z.enum(['draft', 'connected', 'degraded', 'error', 'disconnected']);
+
+export const ConnectorSummarySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  providerKey: z.string(),
+  providerName: z.string(),
+  category: Category,
+  status: ConnectorStatusSchema,
+  enabled: z.boolean(),
+  accessMode: z.enum(['read_only', 'read_write']),
+  lastSuccessAt: z.string().optional(),
+  lastTestedAt: z.string().optional(),
+  updatedAt: z.string(),
+});
+export type ConnectorSummary = z.infer<typeof ConnectorSummarySchema>;
+
+export const ConnectorListResponse = z.object({ items: z.array(ConnectorSummarySchema) });
 export type ConnectorListResponse = z.infer<typeof ConnectorListResponse>;
+
+const FieldViewSchema = z.object({ name: z.string(), label: z.string(), type: z.enum(['text', 'url', 'select', 'secret']), required: z.boolean() });
+
+export const ProviderViewSchema = z.object({
+  providerKey: z.string(),
+  category: Category,
+  displayName: z.string(),
+  description: z.string(),
+  requiresInternet: z.boolean(),
+  requiredPermissions: z.array(z.string()),
+  configFields: z.array(FieldViewSchema),
+  authMethods: z.array(z.object({ key: z.string(), label: z.string(), recommended: z.boolean(), fields: z.array(FieldViewSchema) })),
+  capabilities: z.array(z.object({ id: z.string(), access: z.enum(['read', 'write']) })),
+  steps: z.array(z.object({ key: z.string(), title: z.string(), action: z.string().optional() })),
+});
+export type ProviderView = z.infer<typeof ProviderViewSchema>;
+export const ProviderListResponse = z.object({ items: z.array(ProviderViewSchema) });
+export type ProviderListResponse = z.infer<typeof ProviderListResponse>;
+
+export const TestResultSchema = z.object({ ok: z.boolean(), message: z.string(), latencyMs: z.number().optional(), errorClass: z.string().optional() });
+
+export const ConnectorDetailSchema = ConnectorSummarySchema.extend({
+  configVersion: z.number(),
+  config: z.record(z.unknown()).optional(),
+  permissionReport: z.object({ granted: z.array(z.string()), writePermissionsDetected: z.array(z.string()), notes: z.array(z.string()).optional() }).optional(),
+  discoveredInfo: z.record(z.unknown()).optional(),
+  hasCredentials: z.boolean(),
+  capabilities: z.array(
+    z.object({ capability: z.string(), access: z.enum(['read', 'write', 'unknown']), support: z.enum(['supported', 'partial', 'unsupported']), reason: z.string().optional(), granted: z.boolean() }),
+  ),
+  latestTest: z.object({ id: z.string(), status: z.enum(['pending', 'running', 'succeeded', 'failed']), requestedAt: z.string(), finishedAt: z.string().optional(), result: TestResultSchema.optional() }).optional(),
+  hostIssues: z.array(
+    z.object({ host: z.string(), reason: z.enum(['not-approved', 'http-not-allowed']), suggestion: z.object({ hostPattern: z.string(), internal: z.boolean(), allowHttp: z.boolean() }) }),
+  ),
+  canEnable: z.boolean(),
+});
+export type ConnectorDetail = z.infer<typeof ConnectorDetailSchema>;
+
+export const CreateConnectorRequest = z.object({
+  providerKey: z.string().min(1).max(100),
+  name: z.string().min(1).max(200),
+  config: z.record(z.unknown()).optional(),
+  secrets: z.record(z.unknown()).optional(),
+});
+export type CreateConnectorRequest = z.infer<typeof CreateConnectorRequest>;
+
+export const UpdateConnectorRequest = z.object({ name: z.string().min(1).max(200).optional(), config: z.record(z.unknown()).optional() });
+export type UpdateConnectorRequest = z.infer<typeof UpdateConnectorRequest>;
+
+export const ReplaceCredentialsRequest = z.object({ secrets: z.record(z.unknown()) });
+export type ReplaceCredentialsRequest = z.infer<typeof ReplaceCredentialsRequest>;
+
+export const TestRequestResponse = z.object({ id: z.string(), status: z.enum(['pending', 'running', 'succeeded', 'failed']), requestedAt: z.string() });
+export type TestRequestResponse = z.infer<typeof TestRequestResponse>;
+
+export const OperationLogResponse = z.object({
+  items: z.array(
+    z.object({
+      seq: z.number(),
+      at: z.string(),
+      executionId: z.string().optional(),
+      actorType: z.string(),
+      actorId: z.string(),
+      capability: z.string(),
+      access: z.string().optional(),
+      outcome: z.string(),
+      denialReason: z.string().optional(),
+      errorClass: z.string().optional(),
+      durationMs: z.number(),
+    }),
+  ),
+  nextBeforeSeq: z.number().optional(),
+});
+export type OperationLogResponse = z.infer<typeof OperationLogResponse>;
+
+export const ApprovedHostSchema = z.object({ id: z.string(), hostPattern: z.string(), internal: z.boolean(), allowHttp: z.boolean(), approvedAt: z.string() });
+export const ApprovedHostListResponse = z.object({ items: z.array(ApprovedHostSchema) });
+export type ApprovedHostListResponse = z.infer<typeof ApprovedHostListResponse>;
+export const ApproveHostRequest = z.object({ hostPattern: z.string().min(1).max(253), internal: z.boolean(), allowHttp: z.boolean() });
+export type ApproveHostRequest = z.infer<typeof ApproveHostRequest>;
 export type { ZodType } from 'zod';
 
 export const LogoutResponse = z.object({ loggedOut: z.boolean(), logoutUrl: z.string().nullable() });

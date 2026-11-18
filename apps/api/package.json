@@ -19,11 +19,15 @@
     "fastify": "^5.2.0",
     "tsx": "^4.19.2",
     "@qa/llm": "workspace:*",
-    "@qa/telemetry": "workspace:*"
+    "@qa/telemetry": "workspace:*",
+    "@qa/application": "workspace:*",
+    "@qa/bootstrap": "workspace:*",
+    "@qa/connector-sdk": "workspace:*"
   },
   "devDependencies": {
     "@opentelemetry/sdk-trace-base": "^2.0.0",
     "@opentelemetry/context-async-hooks": "^2.0.0",
-    "@opentelemetry/api": "^1.10.0"
+    "@opentelemetry/api": "^1.10.0",
+    "@qa/testing": "workspace:*"
   }
 }

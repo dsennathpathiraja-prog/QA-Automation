@@ -144,8 +144,13 @@ export class ConnectorService {
     const config = this.parseConfig(provider, input.config ?? {});
     const secrets = this.parseSecrets(provider, input.secrets);
     const id = randomUUID();
-    await this.d.connectors.insert({ id, providerKey: provider.manifest.providerKey, category: provider.manifest.category, name, config, accessMode: 'read_only' });
     if (secrets) await this.d.secrets.put(connectorSecretLocator(id), secrets);
+    try {
+      await this.d.connectors.insert({ id, providerKey: provider.manifest.providerKey, category: provider.manifest.category, name, config, accessMode: 'read_only' });
+    } catch (e) {
+      if (secrets) await this.d.secrets.delete(connectorSecretLocator(id)).catch(() => undefined);
+      throw e;
+    }
     await this.d.audit.append({
       actorId: actor.id,
       action: 'connector.create',

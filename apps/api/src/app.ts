@@ -7,6 +7,7 @@ import {
 import type { SessionResolver } from './session';
 import { registerRequestTelemetry } from './telemetry';
 import { registerAuthRoutes, type AuthConfig, type OidcSessionResolver } from './auth';
+import { registerConnectorRoutes, type ConnectorRouteDeps } from './connector-routes';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -26,7 +27,11 @@ export interface AppDeps {
   /** Read-only view of configured model providers for the AI Models screen. */
   llm?: { providers(): Promise<LlmProvidersResponse['items']> };
   auth?: { config: AuthConfig; resolver: OidcSessionResolver };
+  /** Connector management. Without it the connector list stays empty. */
+  connectors?: ConnectorRouteDeps;
 }
+
+const CLIENT_ERRORS: Partial<Record<string, number>> = { validation: 400, 'not-found': 404, conflict: 409, unsupported: 400 };
 
 const err = (cls: string, message: string): ErrorResponse => ({ error: { class: cls, message } });
 
@@ -43,6 +48,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const status = (e as { statusCode?: number }).statusCode;
     if (status && status >= 400 && status < 500) return reply.code(status).send(err('validation', 'Bad request'));
     if (isPlatformError(e) && e.errorClass === 'transient') return reply.code(503).send(err('transient', 'Dependency unavailable'));
+    // Service messages for these classes are written for users and never contain submitted values.
+    const clientStatus = isPlatformError(e) ? CLIENT_ERRORS[e.errorClass] : undefined;
+    if (isPlatformError(e) && clientStatus) return reply.code(clientStatus).send(err(e.errorClass, e.message));
     return reply.code(500).send(err('internal', 'Internal error'));
   });
 
@@ -90,7 +98,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     items: (deps.mappings ?? DEFAULT_GROUP_MAPPINGS).map((m) => ({ idpGroup: m.idpGroup, role: m.role, enabled: m.enabled !== false })),
   }));
 
-  app.get('/api/v1/connectors', { config: { access: requires('connector.view_status') } }, async () => ({ items: [] }));
+  if (deps.connectors) registerConnectorRoutes(app, deps.connectors, policy);
+  else app.get('/api/v1/connectors', { config: { access: requires('connector.view_status') } }, async () => ({ items: [] }));
 
   app.get('/api/v1/llm/providers', { config: { access: requires('llm.view') } }, async () =>
     LlmProvidersResponse.parse({ items: deps.llm ? await deps.llm.providers() : [] }),

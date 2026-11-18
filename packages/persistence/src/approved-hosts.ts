@@ -30,7 +30,7 @@ export class PgApprovedHostRepository implements ApprovedHostRepository {
     try {
       const [row] = await this.db
         .insert(egressAllowlist)
-        .values({ hostPattern: h.hostPattern, purpose: h.purpose, internal: h.internal, allowHttp: h.allowHttp, approvedBy: h.approvedBy && UUID.test(h.approvedBy) ? h.approvedBy : null })
+        .values({ hostPattern: h.hostPattern, purpose: h.purpose, internal: h.internal, allowHttp: h.allowHttp })
         .returning();
       return toHost(row!);
     } catch (e) {

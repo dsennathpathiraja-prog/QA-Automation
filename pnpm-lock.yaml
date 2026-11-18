@@ -20,6 +20,15 @@ importers:
 
   apps/api:
     dependencies:
+      '@qa/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@qa/bootstrap':
+        specifier: workspace:*
+        version: link:../../packages/bootstrap
+      '@qa/connector-sdk':
+        specifier: workspace:*
+        version: link:../../packages/connector-sdk
       '@qa/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -57,6 +66,9 @@ importers:
       '@opentelemetry/sdk-trace-base':
         specifier: ^2.0.0
         version: 2.12.0(@opentelemetry/api@1.10.0)
+      '@qa/testing':
+        specifier: workspace:*
+        version: link:../../packages/testing
 
   apps/runner-launcher:
     dependencies:
