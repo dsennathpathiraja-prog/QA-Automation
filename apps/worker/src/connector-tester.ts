@@ -20,6 +20,7 @@ export interface ConnectorTesterDeps {
 }
 
 const WRITE_PERMISSION_NOTE = 'The credential has write permissions. The platform only reads from this connector; use a read-only credential.';
+const SQUASH_WRITE_NOTE = 'The credential has write permissions. This Squash connector is read-only, so those writes are refused. Use a READ token on this instance. Publishing test cases and pushing results uses a separate writable connector.';
 
 /**
  * Executes queued Test Connection requests: connectivity, capability probing and permission inspection.
@@ -94,10 +95,11 @@ export class ConnectorTester {
 
     const states = this.capabilityStates(rec, provider, probes);
     const writeDetected = permissions.writePermissionsDetected.length > 0;
+    const writeNote = rec.category === 'test-management' ? SQUASH_WRITE_NOTE : WRITE_PERMISSION_NOTE;
     if (writeDetected && rec.category === 'source-repo') {
-      return this.fail(rec, WRITE_PERMISSION_NOTE, 'policy', conn.latencyMs, { permissionReport: permissions, states });
+      return this.fail(rec, writeNote, 'policy', conn.latencyMs, { permissionReport: permissions, states });
     }
-    const warnings = [...(writeDetected ? [WRITE_PERMISSION_NOTE] : []), ...(conn.discovered?.tokenExpiryWarning === true ? [message] : [])];
+    const warnings = [...(writeDetected ? [writeNote] : []), ...(conn.discovered?.tokenExpiryWarning === true ? [message] : [])];
     const now = this.clock.now();
     await this.d.connectors.replaceCapabilityStates(rec.id, states);
     await this.d.connectors.update(rec.id, {

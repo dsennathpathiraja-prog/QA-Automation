@@ -361,7 +361,7 @@ export class ConnectorService {
     return issues;
   }
 
-  /** Source repositories and test systems stay read-only. A browser connector may drive the page, which the catalog calls a write. */
+  /** Source repositories are always read-only. The current Squash is also created read-only (D20). A writable Squash is a separate, explicitly enabled connector. A browser connector may drive the page, which the catalog calls a write. */
   private accessModeFor(p: ConnectorProvider): 'read_only' | 'read_write' {
     if (p.manifest.category === 'browser-automation') return 'read_write';
     return 'read_only';

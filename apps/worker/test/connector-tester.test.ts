@@ -168,7 +168,7 @@ describe('Squash through Test Connection (documentation-based mock)', () => {
     const d = await s.service.get(c.id, { includeConfig: true });
     expect(d.status).toBe('degraded');
     expect(d.permissionReport?.writePermissionsDetected).toEqual(['token:READ_WRITE']);
-    expect(d.latestTest?.result?.message).toMatch(/write permissions/);
+    expect(d.latestTest?.result?.message).toMatch(/This Squash connector is read-only/);
     expect(d.canEnable).toBe(true);
   });
 

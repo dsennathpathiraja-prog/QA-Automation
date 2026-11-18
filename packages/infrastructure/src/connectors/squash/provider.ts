@@ -183,7 +183,7 @@ class SquashClient implements ConnectorClient {
       writePermissionsDetected: perm && /WRITE/i.test(perm) ? [`token:${perm}`] : [],
       notes: [
         perm ? undefined : 'The token permission could not be read from the token; Squash still enforces it.',
-        'Use a READ token. A READ_WRITE token is accepted only when the connector instance is read-only, where the platform refuses writes itself.',
+        'Use a READ token on this instance. A READ_WRITE token is reported here because this connector refuses writes. Publishing test cases and pushing results uses a separate writable connector.',
       ].filter((n): n is string => !!n),
     };
   }
