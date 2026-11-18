@@ -13,7 +13,7 @@ docker compose -f deploy/compose/local/docker-compose.local.yml up --build
 ```
 
 The first run builds three images and downloads Postgres and Keycloak, so it takes several minutes.
-When the log settles, open **http://localhost:8080** and sign in with one of these trial users
+When the log settles, open **http://localhost:8088** and sign in with one of these trial users
 (password `Trial-Pass-1` for all):
 
 | User | Group | Role |
@@ -23,7 +23,9 @@ When the log settles, open **http://localhost:8080** and sign in with one of the
 | `trial-engineer` | QA-Platform-Engineers | QA Engineer |
 | `trial-user` | QA-Platform-Users | Business User |
 
-Keycloak's admin console is at http://localhost:8080/auth (user `admin`, password `admin`).
+Keycloak's admin console is at http://localhost:8088/auth (user `admin`, password `admin`).
+
+If another program already uses port 8088, pick a free one: `WEB_PORT=9000 docker compose -f ... up --build` (PowerShell: `$env:WEB_PORT=9000` first), then open that port instead.
 
 ## What to check
 

@@ -45,7 +45,7 @@ Not blocking sign-off, tracked for the target Ubuntu host: run the full `deploy/
 1. Install and start Docker Desktop (Windows, macOS) or Docker Engine (Linux). Check: `docker --version` prints a version.
 2. Get the code: `git clone https://github.com/dsennathpathiraja-prog/QA-Automation.git`, then `cd QA-Automation`, then `git checkout cursor/phase1-foundation-2990` (run the next commands from this folder, the one that contains `deploy`).
 3. Start it: `docker compose -f deploy/compose/local/docker-compose.local.yml up --build`. The first run takes several minutes (it builds three images and downloads Postgres and Keycloak). Leave this window open.
-4. When the messages stop scrolling, open http://localhost:8080 in a browser. You should be sent to a Keycloak sign-in page.
+4. When the messages stop scrolling, open http://localhost:8088 in a browser (the page should say QA Platform; if you see a different application, another program owns that port: stop the stack with `down`, then start again with `WEB_PORT=9000` in front, PowerShell: `$env:WEB_PORT=9000` first, and open that port). You should be sent to a Keycloak sign-in page.
 5. Sign in as `trial-lead` with password `Trial-Pass-1`. You should land on the Dashboard with a menu on the left.
 6. Sign out, then try `trial-admin` (Administrator: the menu also shows Identity mapping and AI Models) and `trial-user` (Business User: a shorter menu, no Identity mapping or AI Models). Password for all four: `Trial-Pass-1`. Others: `trial-engineer`.
 7. In a second terminal run: `docker compose -f deploy/compose/local/docker-compose.local.yml ps`. Healthy looks like: `api` shows "healthy", `worker` and `web` and `postgres` and `keycloak` show "running".
@@ -59,7 +59,7 @@ If anything goes wrong, send back:
 - a screenshot of what the browser shows, and which step number failed
 - on Windows, whether you used PowerShell or Command Prompt, and whether Docker Desktop is using WSL 2
 
-Common first-run snags: port 8080 already in use (close the other program, or tell the agent and the port will be changed); Docker Desktop still starting (wait until it says it is running); a very slow first build (let it finish).
+Common first-run snags: another program on the port (use `WEB_PORT`, see step 4); Docker Desktop still starting (wait until it says it is running); a very slow first build (let it finish).
 
 ## Deferred by design (not Phase 1 work)
 - **S3 object store adapter:** the roadmap says "S3 adapter in Phase 2+ if chosen"; `local-fs` is the Phase 1 adapter. Decide with the Q16 host sizing answer.

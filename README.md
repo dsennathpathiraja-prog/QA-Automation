@@ -31,7 +31,7 @@ Not yet validated (these are the sign-off checks): OIDC has only been tested aga
 
 ## Try it locally with Docker
 
-`deploy/compose/local/README.md` starts the whole stack (web, API, worker, Postgres, Keycloak with four trial users) on one machine at http://localhost:8080. It has never been run by the authors; your first run is the validation (the step-by-step checklist is in `docs/phase1-status.md`).
+`deploy/compose/local/README.md` starts the whole stack (web, API, worker, Postgres, Keycloak with four trial users) on one machine at http://localhost:8088. It has never been run by the authors; your first run is the validation (the step-by-step checklist is in `docs/phase1-status.md`).
 
 ## Squash discovery probe (read-only)
 
