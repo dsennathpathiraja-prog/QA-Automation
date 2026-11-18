@@ -2,7 +2,10 @@
 
 Started Nov 18, 2026, after the Phase 2 sign-off. Scope is the roadmap Phase 3 (Environment management), not the workflow engine. The engine is Phase 4 and is noted in [`phase4-plan.md`](phase4-plan.md).
 
-Slices 1 to 6 are in this branch: environment records, authentication and test data with write-only secrets, connector references, production authorization, validation, and the Environments page. Slice 7, the connectivity check, waits until a runner can place it. The page says the check has not been run.
+## Status (Nov 18, 2026)
+Phase 3 is signed off by the user. A QA environment showed as selectable, an application host was approved and accepted, and the remaining checks (the other tabs, a password that stays hidden, a connector, Check this environment, production authorization, and a view-only QA engineer) were reported working. Slice 7, the connectivity check, still waits until a runner can place it. The page says the check has not been run.
+
+Slices 1 to 6 are in this branch: environment records, authentication and test data with write-only secrets, connector references, production authorization, validation, and the Environments page.
 
 ## What the roadmap asks for
 Environments a person can configure: kind, application URL, browser settings, test data, authentication, connector references, and execution restrictions. Credentials are write-only. A production environment cannot be selected until an Administrator has an active authorization for it. Validation errors name what to fix. A resolver later turns a saved environment into a `ResolvedEnvironment` for a run.
