@@ -27,16 +27,16 @@ tests run in CI and ran green earlier on a real Postgres).
 - `docs/development.md` (developer guide), README status refreshed, `tmp/` ignored.
 - Checked without Docker: all Compose files parse and every referenced Dockerfile and mounted file exists (the full stack also expects `./certs`, created on the target host); `api`, `worker` and `runner-launcher` start from the same `pnpm deploy --prod` layout the Dockerfiles use (the runner launcher answers `/healthz` and rejects a missing token).
 
-## What is left for Phase 1 sign-off (items 2 to 4 need the user)
+## What is left for Phase 1 sign-off (items 3 and 4 need the user)
 
 | # | Item | Who | Done when |
 |---|------|-----|-----------|
 | 1 | Run the local Docker trial stack (checklist below) | user | **DONE Nov 18, 2026:** user confirmed sign-in works on http://localhost:8088 with real Keycloak (needed two fixes: port clash with another local app, then Keycloak redirect wildcard). Per-role menus and `ps` health were not reported separately |
-| 2 | GitHub CI check | user | The latest run on `cursor/phase1-foundation-2990` is green (new steps: Squid install, OpenBao container) |
+| 2 | GitHub CI check | user | **DONE Nov 18, 2026:** CI run #12 (commit `44f33e6`) is green, including the real OpenBao and Squid tests. An earlier run failed on the Squid test; fixed by refusing IP-address URLs in `squid.conf` |
 | 3 | Rotate the GitHub token that was pasted in chat | user | Old token revoked; a new one is given to the agent only when a push is needed, never stored |
 | 4 | SquashTM READ-only token plus VPN probe | user | `tools/squash-probe` run from the VPN machine; `squash-report.json` shared. Does not block any code, but it is the first step of Phase 2 and the Squash adapter is only trusted against the mock until then |
 
-Once 2 and 3 are done (and 4 is shared or consciously postponed), the agent: fixes anything the Docker run exposes, ticks this table, and reports Phase 1 closed.
+Once 3 is done (and 4 is shared or consciously postponed), the agent: fixes anything the Docker run exposes, ticks this table, and reports Phase 1 closed.
 
 Not blocking sign-off, tracked for the target Ubuntu host: run the full `deploy/compose/docker-compose.yml` core profile with `scripts/install.sh` (OpenBao init and unseal, Keycloak client secret, TLS certificates), build the `runner-launcher` image and launch a trivial digest-pinned image through it, then check the hardening with `docker inspect`. The local trial stack covers login, sessions and role mapping on real Keycloak; OpenBao policies and the egress proxy are already proven against the real programs.
 
@@ -77,4 +77,4 @@ Common first-run snags: another program on the port (use `WEB_PORT`, see step 4)
 ## How to resume
 1. `git checkout cursor/phase1-foundation-2990 && git pull`
 2. `pnpm install && pnpm check` (see `docs/development.md` for the optional OpenBao, Squid and Postgres tests).
-3. Ask the user for the results of table items 2 to 4, then fix what they show.
+3. Ask the user for the results of table items 3 and 4, then fix what they show.
