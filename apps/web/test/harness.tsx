@@ -31,7 +31,7 @@ export function fakeBackend(b: Backend) {
     calls.push({ method: init?.method ?? 'GET', url, headers: (init?.headers ?? {}) as Record<string, string> });
     const reply = (status: number, body?: unknown) => new Response(body === undefined ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
     if (url === '/api/v1/me') return reply(b.me?.status ?? 200, b.me?.body);
-    const r = b.routes?.[url];
+    const r = b.routes?.[`${init?.method ?? 'GET'} ${url}`] ?? b.routes?.[url];
     return r ? reply(r.status, r.body) : reply(404, { error: { class: 'not-found', message: 'no route' } });
   }) as typeof fetch;
   return { calls, fetchImpl };

@@ -20,6 +20,10 @@ export interface ApiClientOptions {
 export interface ApiClient {
   get<T>(path: string, schema: ZodType<T>): Promise<T>;
   post<T>(path: string, body: unknown, schema: ZodType<T>): Promise<T>;
+  put<T>(path: string, body: unknown, schema: ZodType<T>): Promise<T>;
+  patch<T>(path: string, body: unknown, schema: ZodType<T>): Promise<T>;
+  /** For endpoints that answer 204 No Content. */
+  delete(path: string): Promise<void>;
 }
 
 /**
@@ -58,9 +62,14 @@ export function createApiClient(opts: ApiClientOptions = {}): ApiClient {
     return schema.parse(json);
   }
 
+  const nothing = { parse: () => undefined } as unknown as ZodType<void>;
+
   return {
     get: (path, schema) => send('GET', path, undefined, schema),
     post: (path, body, schema) => send('POST', path, body, schema),
+    put: (path, body, schema) => send('PUT', path, body, schema),
+    patch: (path, body, schema) => send('PATCH', path, body, schema),
+    delete: (path) => send('DELETE', path, undefined, nothing),
   };
 }
 

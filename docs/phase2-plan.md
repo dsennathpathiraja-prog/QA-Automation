@@ -19,8 +19,10 @@ Connector Execution Manager with the full policy pipeline, capability registry, 
 
 Slices 1 and 2 need nothing from outside. Slices 3 to 5 need answers below, and ideally sandbox accounts for live opt-in tests (fixtures-only is possible if none exist).
 
-## Questions for the user (defaults apply if unanswered)
-1. **Which systems can you reach for testing?** GitHub (github.com or Enterprise), Azure DevOps (Services or Server), Jira (Cloud or Data Center), Azure Boards. Default: build all four against recorded fixtures only, no live tests.
-2. **Where do acceptance criteria live in Jira?** Description text or a custom field. Default: configurable per connector, description by default.
-3. **Playwright MCP:** do you already run a Playwright MCP server, or should the platform manage one? Default: platform-managed.
-4. **Applications under test:** form login or SSO/MFA? Default: form login or saved browser state; SSO/MFA flows are out of scope for Phase 2.
+## Answers from the user (Nov 18, 2026)
+1. **Reachable for testing:** GitHub and Azure Boards. Azure DevOps Repos and Jira are not reachable, so those two connectors are built against recorded fixtures only and are marked "not verified against a live instance" until someone can run the opt-in live tests. GitHub and Azure Boards get opt-in live tests as soon as sandbox credentials exist.
+2. **Jira acceptance criteria:** in the description. The extractor reads the description by default; a custom-field mapping stays configurable for later.
+3. **Playwright MCP:** the platform manages it (managed container, health-checked by the worker).
+4. **Applications under test:** plain username and password login, or a saved browser session. MFA is handled through a saved browser session captured once by a person; the platform never automates the MFA prompt itself.
+
+Effect on slices: slice 3 builds GitHub live-capable and Azure DevOps Repos fixture-only; slice 4 builds Azure Boards live-capable and Jira fixture-only with description-based acceptance criteria; slice 5 builds the managed Playwright MCP with saved-session support.
