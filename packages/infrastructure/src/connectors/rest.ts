@@ -16,6 +16,7 @@ export interface JsonResult {
   status: number;
   headers: Record<string, string>;
   body: any;
+  text: string;
 }
 
 /** GET or POST JSON. Error messages name the system and the status, never the credential or the body. */
@@ -39,5 +40,5 @@ export async function requestJson(http: HttpPort, req: HttpRequest, system: stri
   if (res.status === 403) throw new PlatformError('denied', `${system} refused this credential`);
   if (res.status === 404) throw new PlatformError('not-found', `${system} could not find that item`);
   if (res.status >= 400) throw new PlatformError('transient', `${system} returned status ${res.status}`);
-  return { status: res.status, headers, body };
+  return { status: res.status, headers, body, text };
 }

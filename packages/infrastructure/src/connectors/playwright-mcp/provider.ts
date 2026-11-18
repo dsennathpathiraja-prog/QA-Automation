@@ -49,9 +49,28 @@ export const playwrightMcpProvider: ConnectorProvider = {
   },
 };
 
+/** Playwright answers with one JSON object or with an event-stream line beginning `data:`. */
+function rpcMessage(body: unknown, text: string): { result?: any; error?: unknown } | undefined {
+  if (body && typeof body === 'object' && ('result' in body || 'error' in body)) return body as { result?: any; error?: unknown };
+  let found: { result?: any; error?: unknown } | undefined;
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) continue;
+    const payload = trimmed.slice(5).trim();
+    if (!payload || payload === '[DONE]') continue;
+    try {
+      const msg = JSON.parse(payload) as { result?: unknown; error?: unknown };
+      if (msg && typeof msg === 'object') found = msg;
+    } catch { /* a non-JSON event is ignored */ }
+  }
+  return found;
+}
+
 class PlaywrightClient implements ConnectorClient {
   private rpc = 0;
   private tools = new Set<string>();
+  private sessionId?: string;
+  private opening?: Promise<any>;
 
   constructor(
     private readonly cfg: z.infer<typeof ConfigSchema>,
@@ -62,21 +81,47 @@ class PlaywrightClient implements ConnectorClient {
     return this.cfg.allowedOrigins.split(',').map((s) => s.trim()).filter(Boolean);
   }
 
-  private async rpcCall(method: string, params?: unknown) {
+  private headers(): Record<string, string> {
+    const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
+    if (this.sessionId) headers['mcp-session-id'] = this.sessionId;
+    return headers;
+  }
+
+  private async post(payload: unknown) {
+    const res = await requestJson(this.deps.http, { method: 'POST', url: joinUrl(this.cfg.baseUrl, '/mcp'), headers: this.headers(), body: JSON.stringify(payload) }, 'Playwright');
+    const session = res.headers['mcp-session-id'];
+    if (session) this.sessionId = session;
+    return rpcMessage(res.body, res.text);
+  }
+
+  /** Open one browser-server session. The server rejects a call that does not accept its event stream. */
+  private open() {
+    this.opening ??= this.startSession();
+    return this.opening;
+  }
+
+  private async startSession() {
     this.rpc += 1;
-    const res = await requestJson(
-      this.deps.http,
-      { method: 'POST', url: joinUrl(this.cfg.baseUrl, '/mcp'), headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: this.rpc, method, params }) },
-      'Playwright',
-    );
-    if (res.body?.error) throw new PlatformError('transient', 'Playwright refused the request');
-    return res.body?.result;
+    const message = await this.post({ jsonrpc: '2.0', id: this.rpc, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'qa-platform', version: '0.0.0' } } });
+    if (message?.error) throw new PlatformError('transient', 'Playwright refused the request');
+    try {
+      await this.post({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    } catch { /* The server already accepted initialize. */ }
+    return message?.result;
+  }
+
+  private async rpcCall(method: string, params?: unknown) {
+    await this.open();
+    this.rpc += 1;
+    const message = await this.post({ jsonrpc: '2.0', id: this.rpc, method, params });
+    if (message?.error) throw new PlatformError('transient', 'Playwright refused the request');
+    return message?.result;
   }
 
   async testConnection(): Promise<ConnectionTestResult> {
     const started = Date.now();
     try {
-      const result = await this.rpcCall('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'qa-platform', version: '0.0.0' } });
+      const result = await this.open();
       return {
         ok: true,
         message: this.cfg.savedSessionName ? `Connected to the managed Playwright server. It will reuse the saved session "${this.cfg.savedSessionName}".` : 'Connected to the managed Playwright server.',

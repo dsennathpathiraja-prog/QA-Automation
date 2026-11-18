@@ -6,7 +6,7 @@ import { assertProviderContract } from '../src';
 const TOKEN = 'readonly-token-value-0001';
 const lease = { value: { token: TOKEN }, expiresAt: new Date(Date.now() + 60_000), release() {} };
 
-interface Hit { method: string; path: string; auth?: string; body?: string }
+interface Hit { method: string; path: string; auth?: string; body?: string; accept?: string; session?: string }
 
 let closeServer: (() => Promise<void>) | undefined;
 afterEach(async () => {
@@ -14,16 +14,16 @@ afterEach(async () => {
   closeServer = undefined;
 });
 
-async function mock(handle: (hit: Hit) => { status?: number; headers?: Record<string, string>; body: unknown }) {
+async function mock(handle: (hit: Hit) => { status?: number; headers?: Record<string, string>; body: unknown; raw?: string }) {
   const hits: Hit[] = [];
   const server = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
-    const hit: Hit = { method: req.method ?? 'GET', path: req.url ?? '/', auth: req.headers.authorization, body: Buffer.concat(chunks).toString() };
+    const hit: Hit = { method: req.method ?? 'GET', path: req.url ?? '/', auth: req.headers.authorization, accept: req.headers.accept, session: req.headers['mcp-session-id'] as string | undefined, body: Buffer.concat(chunks).toString() };
     hits.push(hit);
     const out = handle(hit);
     res.writeHead(out.status ?? 200, { 'content-type': 'application/json', ...(out.headers ?? {}) });
-    res.end(JSON.stringify(out.body));
+    res.end(out.raw ?? JSON.stringify(out.body));
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const addr = server.address();
@@ -154,6 +154,7 @@ describe('source and work-item providers', () => {
     const conn = await client.testConnection();
     expect(conn.ok).toBe(true);
     expect(conn.message).toMatch(/ada-signed-in/);
+    expect(m.hits[0]?.accept).toContain('text/event-stream');
     const probes = await client.probeCapabilities();
     expect(probes.find((p) => p.capability === 'browser.navigate')).toMatchObject({ support: 'supported' });
     expect(await client.handle({ id: 'browser.navigate' } as never, { url: 'https://shop.example.com/cart' }, {} as never)).toMatchObject({ finalUrl: 'https://shop.example.com/cart' });
@@ -165,6 +166,22 @@ describe('source and work-item providers', () => {
     const m = await mock(() => ({ status: 403, body: { error: 'forbidden' } }));
     const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'https://shop.example.com' }, undefined, { http: m.http });
     expect((await client.testConnection()).message).toMatch(/playwright-mcp/);
+  });
+
+  it('reads a Playwright event-stream reply', async () => {
+    const m = await mock((hit) => {
+      const body = JSON.parse(hit.body || '{}') as { method?: string };
+      if (body.method === 'initialize') {
+        return { headers: { 'content-type': 'text/event-stream', 'mcp-session-id': 'sess-1' }, raw: 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"playwright","version":"1.55"}}}\n\n', body: {} };
+      }
+      return { status: 202, body: {} };
+    });
+    const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'https://shop.example.com' }, undefined, { http: m.http });
+    const conn = await client.testConnection();
+    expect(conn.ok).toBe(true);
+    expect(conn.discovered).toMatchObject({ server: 'playwright', version: '1.55' });
+    expect(m.hits[1]?.body).toContain('notifications/initialized');
+    expect(m.hits[1]?.session).toBe('sess-1');
   });
 });
 
