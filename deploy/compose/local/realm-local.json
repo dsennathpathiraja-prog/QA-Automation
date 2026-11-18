@@ -33,7 +33,8 @@
       "implicitFlowEnabled": false,
       "serviceAccountsEnabled": false,
       "redirectUris": [
-        "http://localhost:*/api/v1/auth/callback"
+        "http://localhost:8088/api/v1/auth/callback",
+        "http://localhost:*"
       ],
       "webOrigins": [
         "+"

@@ -26,6 +26,7 @@ When the log settles, open **http://localhost:8088** and sign in with one of the
 Keycloak's admin console is at http://localhost:8088/auth (user `admin`, password `admin`).
 
 If another program already uses port 8088, pick a free one: `WEB_PORT=9000 docker compose -f ... up --build` (PowerShell: `$env:WEB_PORT=9000` first), then open that port instead.
+The trial realm accepts any `http://localhost:<port>` as a sign-in return address (Keycloak only allows a wildcard at the very end of the address); this is acceptable only because the stack is for localhost.
 
 ## What to check
 
