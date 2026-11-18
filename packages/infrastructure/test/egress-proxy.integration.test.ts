@@ -44,6 +44,14 @@ describe.skipIf(!squid)('egress proxy (real squid, repository configuration)', (
   let originPort: number;
   const procs: ChildProcess[] = [];
 
+  const accessLog = (port: number) => {
+    try {
+      return `squid access log:\n${readFileSync(join(dir, `access-${port}.log`), 'utf8')}`;
+    } catch {
+      return 'no access log';
+    }
+  };
+
   async function startSquid(allowed: string[]): Promise<number> {
     const port = await freePort();
     const hostsFile = join(dir, `allowed-${port}.txt`);
@@ -79,10 +87,12 @@ describe.skipIf(!squid)('egress proxy (real squid, repository configuration)', (
     const bound = await new Promise<boolean>((r) => approved.once('error', () => r(false)).listen(8080, () => r(true)));
     try {
       const proxy = await startSquid(['localhost']);
-      expect(await viaProxy(proxy, 'http://127.0.0.1:8080/'), 'unlisted host (by address)').toBe(403);
-      expect(await viaProxy(proxy, 'http://blocked.example.invalid:8080/'), 'unlisted host').toBe(403);
+      for (const literal of ['http://127.0.0.1:8080/', 'http://2130706433:8080/', 'http://0x7f000001:8080/', 'http://[::1]:8080/']) {
+        expect(await viaProxy(proxy, literal), `address literal ${literal}\n${accessLog(proxy)}`).toBe(403);
+      }
+      expect(await viaProxy(proxy, 'http://blocked.example.invalid:8080/'), `unlisted host\n${accessLog(proxy)}`).toBe(403);
       if (!bound) return ctx.skip();
-      expect(await viaProxy(proxy, 'http://localhost:8080/'), 'listed host').toBe(200);
+      expect(await viaProxy(proxy, 'http://localhost:8080/'), `listed host\n${accessLog(proxy)}`).toBe(200);
     } finally {
       if (bound) approved.close();
     }
