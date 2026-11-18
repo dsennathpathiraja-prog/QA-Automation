@@ -160,6 +160,12 @@ describe('source and work-item providers', () => {
     await expect(client.handle({ id: 'browser.navigate' } as never, { url: 'https://evil.example/phish' }, {} as never)).rejects.toMatchObject({ errorClass: 'denied' });
     expect(await client.handle({ id: 'browser.snapshot' } as never, {}, {} as never)).toMatchObject({ accessibilityTree: 'button Checkout' });
   });
+
+  it('explains a Playwright 403 as a host-name refusal', async () => {
+    const m = await mock(() => ({ status: 403, body: { error: 'forbidden' } }));
+    const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'https://shop.example.com' }, undefined, { http: m.http });
+    expect((await client.testConnection()).message).toMatch(/playwright-mcp/);
+  });
 });
 
 const liveGithub = process.env.GITHUB_LIVE_TOKEN && process.env.GITHUB_LIVE_ORG ? describe : describe.skip;

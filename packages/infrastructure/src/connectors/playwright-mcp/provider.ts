@@ -84,7 +84,8 @@ class PlaywrightClient implements ConnectorClient {
         discovered: { server: result?.serverInfo?.name, version: result?.serverInfo?.version, savedSession: this.cfg.savedSessionName, origins: this.origins() },
       };
     } catch (e) {
-      return { ok: false, message: e instanceof PlatformError ? e.message : 'Could not reach the Playwright server', latencyMs: Date.now() - started };
+      const refused = e instanceof PlatformError && e.errorClass === 'denied';
+      return { ok: false, message: refused ? 'The Playwright server refused the call because it was not addressed as localhost. Restart the browser service so it allows the name playwright-mcp.' : e instanceof PlatformError ? e.message : 'Could not reach the Playwright server', latencyMs: Date.now() - started };
     }
   }
 

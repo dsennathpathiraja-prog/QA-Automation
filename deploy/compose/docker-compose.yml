@@ -120,7 +120,7 @@ services:
     <<: *common
     profiles: [browser]
     image: mcr.microsoft.com/playwright:v1.55.0-noble
-    command: ["bash", "-lc", "npx --yes @playwright/mcp --port 8931 --host 0.0.0.0"]
+    command: ["bash", "-lc", "npx --yes @playwright/mcp --port 8931 --host 0.0.0.0 --allowed-hosts '*'"]
     networks: [app]
     read_only: true
     tmpfs: [/tmp]
