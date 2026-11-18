@@ -9,6 +9,11 @@ Started Nov 18, 2026. Scope and acceptance come from the roadmap (Phase 2). This
 ## What we already have for Phase 2
 Connector Execution Manager with the full policy pipeline, capability registry, secret store ports, hardened HTTP client, a Squash read provider, a stub work-item provider, the provider contract-test kit, the `connector_instance` and operation-log tables, role-aware web shell with a Connectors page (empty state).
 
+## Status (Nov 18, 2026)
+- Slices 1 and 2 are code-complete: connector instances (create, update, credentials replace, test, enable/disable, disconnect, remove), operation log viewer, approved-host admin, wizard driven by provider descriptors, Test Connection on the worker with capability probing and permission inspection, per-capability table. Providers: SquashTM (mock-backed) and a built-in offline demo provider ("Sample work items (demo)", off in production by default).
+- Credentials: the API can store and delete, never read. The worker reads them to run tests. Local trial uses an encrypted-in-database store with a throw-away key; the core Compose stack uses OpenBao AppRole credentials per service (run `deploy/compose/scripts/install.sh` again to create the worker credentials).
+- Slices 3 to 5 are unblocked by the answers below.
+
 ## Slices (each ends with something a person can use)
 1. **Connector instances backend and list/detail UI (no real providers needed).** API: create, read, update, enable/disable, disconnect, list; secret values accepted once and written to the secret store, never returned; operation log viewer for administrators. Web: list with status, detail with capabilities and last successful connection. Uses the stub provider and the Squash mock. Acceptance covered: disabled instance cannot be used by the manager; canary test that no secret value appears in any API response or log.
 2. **Wizard framework and Test Connection.** Provider descriptors drive the form (fields, secret fields, scope, help text); Test Connection runs capability probing and permission inspection through the manager; the result is a per-capability supported / partial / unsupported table. Squash is the first provider shown (mock-backed).

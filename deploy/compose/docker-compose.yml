@@ -30,6 +30,8 @@ secrets:
   keycloak_admin_password: { file: ./secrets/keycloak_admin_password }
   bao_api_role_id: { file: ./secrets/bao_api_role_id }
   bao_api_secret_id: { file: ./secrets/bao_api_secret_id }
+  bao_worker_role_id: { file: ./secrets/bao_worker_role_id }
+  bao_worker_secret_id: { file: ./secrets/bao_worker_secret_id }
   oidc_client_secret: { file: ./secrets/oidc_client_secret }
   launcher_token: { file: ./secrets/launcher_token }
 
@@ -98,11 +100,14 @@ services:
       DATABASE_NAME: qa_platform
       DATABASE_USER: qa_platform
       DATABASE_PASSWORD_FILE: /run/secrets/platform_db_password
+      BAO_ADDR: http://openbao:8200
+      BAO_ROLE_ID_FILE: /run/secrets/bao_worker_role_id
+      BAO_SECRET_ID_FILE: /run/secrets/bao_worker_secret_id
       HTTPS_PROXY: http://egress-proxy:3128
       NO_PROXY: postgres,openbao,keycloak,ollama,localhost
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-    secrets: [platform_db_password]
-    depends_on: { postgres: { condition: service_healthy } }
+    secrets: [platform_db_password, bao_worker_role_id, bao_worker_secret_id]
+    depends_on: { postgres: { condition: service_healthy }, openbao: { condition: service_started } }
     read_only: true
     tmpfs: [/tmp]
     healthcheck:

@@ -27,7 +27,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { id: 'agents', label: 'AI Agents', to: '/agents', group: 'config', anyOf: ['agent.view'], phase: 5, summary: 'System agents, their settings and run history.' },
   { id: 'models', label: 'AI Models', to: '/models', group: 'config', anyOf: ['llm.view'], phase: 5, summary: 'Local model providers, qualification and per-agent assignment.' },
   { id: 'identity', label: 'Users & Identity mapping', to: '/admin/identity', group: 'admin', anyOf: ['user.manage'], phase: 10, summary: 'How identity provider groups map to platform roles.' },
-  { id: 'hosts', label: 'Approved hosts', to: '/admin/hosts', group: 'admin', anyOf: ['security.policy.manage'], phase: 10, summary: 'The outbound allowlist and external model approvals.' },
+  { id: 'hosts', label: 'Approved hosts', to: '/admin/hosts', group: 'admin', anyOf: ['security.policy.manage'], phase: 2, summary: 'The outbound allowlist and external model approvals.' },
   { id: 'security', label: 'Security & Approvals', to: '/admin/security', group: 'admin', anyOf: ['security.policy.manage'], phase: 10, summary: 'Approval policies and production authorizations.' },
   { id: 'audit', label: 'Audit Log', to: '/admin/audit', group: 'admin', anyOf: ['audit.read'], phase: 10, summary: 'Who did what, tamper-evident.' },
   { id: 'settings', label: 'System Settings', to: '/admin/settings', group: 'admin', anyOf: ['security.policy.manage'], phase: 10, summary: 'Retention, concurrency caps and sign-in settings.' },

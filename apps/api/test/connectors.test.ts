@@ -39,7 +39,7 @@ afterEach(() => {
   for (const s of spies.splice(0)) s.mockRestore();
 });
 
-const call = (method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, headers: Record<string, string>, payload?: unknown) => app.inject({ method, url, headers, payload: payload as object | undefined });
+const call = (method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, headers: Record<string, string> = {}, payload?: unknown) => app.inject({ method, url, headers, payload: payload as object | undefined });
 const create = (over: Record<string, unknown> = {}) =>
   call('POST', '/api/v1/connectors', admin, { providerKey: 'sample-work-items', name: 'Demo source', config: { projectName: 'Retail Web' }, secrets: { demoKey: CANARY }, ...over });
 

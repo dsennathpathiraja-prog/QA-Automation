@@ -30,6 +30,9 @@ services:
       OIDC_CLIENT_ID: qa-platform
       OIDC_CLIENT_SECRET: local-trial-client-secret
       OIDC_GROUP_FORMAT: name
+      # Connector credentials are encrypted with a throw-away key in the database (development only; production uses OpenBao).
+      SECRET_STORE: db-envelope
+      SECRET_MASTER_KEY: bG9jYWwtdHJpYWwtbWFzdGVyLWtleS0zMi1ieXRlcyE=
       # To see models from an Ollama running on your own machine, uncomment:
       # OLLAMA_URL: http://host.docker.internal:11434
     extra_hosts: ["host.docker.internal:host-gateway"]
@@ -52,6 +55,8 @@ services:
       DATABASE_NAME: qa_platform
       DATABASE_USER: qa_platform
       DATABASE_PASSWORD: local-trial-db-password
+      SECRET_STORE: db-envelope
+      SECRET_MASTER_KEY: bG9jYWwtdHJpYWwtbWFzdGVyLWtleS0zMi1ieXRlcyE=
     depends_on:
       api: { condition: service_healthy }
 

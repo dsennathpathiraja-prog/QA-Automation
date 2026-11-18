@@ -13,7 +13,7 @@ mkdir -p secrets
 
 gen() { [ -s "secrets/$1" ] || head -c 36 /dev/urandom | base64 | tr -d '\n=+/' | head -c 40 > "secrets/$1"; }
 for s in postgres_password keycloak_db_password platform_db_password keycloak_admin_password oidc_client_secret launcher_token; do gen "$s"; done
-: > secrets/bao_api_role_id; : > secrets/bao_api_secret_id
+: > secrets/bao_api_role_id; : > secrets/bao_api_secret_id; : > secrets/bao_worker_role_id; : > secrets/bao_worker_secret_id
 
 compose() { docker compose "$@"; }
 bao() { compose exec -T -e BAO_ADDR=http://127.0.0.1:8200 ${BAO_TOKEN:+-e BAO_TOKEN="$BAO_TOKEN"} openbao bao "$@"; }
@@ -46,6 +46,8 @@ done
 # AppRole credentials are written to Docker secret files; the platform renews short-lived tokens itself.
 bao read -field=role_id auth/approle/role/qa-api/role-id > secrets/bao_api_role_id
 bao write -f -field=secret_id auth/approle/role/qa-api/secret-id > secrets/bao_api_secret_id
+bao read -field=role_id auth/approle/role/qa-worker/role-id > secrets/bao_worker_role_id
+bao write -f -field=secret_id auth/approle/role/qa-worker/secret-id > secrets/bao_worker_secret_id
 
 # Seed platform-owned secrets (database credentials) into OpenBao so services fetch them at runtime.
 bao kv put qa-platform/platform/database username=qa_platform password="$(cat secrets/platform_db_password)"

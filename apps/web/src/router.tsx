@@ -5,7 +5,10 @@ import { AppShell } from './layout/AppShell';
 import { NAV_ITEMS, type NavItem } from './nav';
 import { AccessDenied, ComingSoon, PageHeader } from './pages/common';
 import { AiModels } from './pages/AiModels';
+import { ApprovedHosts } from './pages/ApprovedHosts';
 import { Connectors } from './pages/Connectors';
+import { ConnectorDetailPage } from './pages/connectors/ConnectorDetailPage';
+import { ConnectorWizard } from './pages/connectors/ConnectorWizard';
 import { Dashboard } from './pages/Dashboard';
 import { IdentityMapping } from './pages/IdentityMapping';
 import { SignInError } from './pages/SignInError';
@@ -25,7 +28,7 @@ const NotFound = () => (
   </>
 );
 
-const real: Record<string, () => ReactNode> = { dashboard: () => <Dashboard />, connectors: () => <Connectors />, identity: () => <IdentityMapping />, models: () => <AiModels /> };
+const real: Record<string, () => ReactNode> = { dashboard: () => <Dashboard />, connectors: () => <Connectors />, identity: () => <IdentityMapping />, hosts: () => <ApprovedHosts />, models: () => <AiModels /> };
 
 export interface RouterOptions {
   history?: Parameters<typeof createRouter>[0]['history'];
@@ -63,7 +66,12 @@ export function buildRouter(opts: RouterOptions = {}): AnyRouter {
     }),
   );
 
-  return createRouter({ routeTree: root.addChildren([signInError, shell.addChildren(pages)]), history: opts.history, defaultPreload: false });
+  const connectorItem = NAV_ITEMS.find((i) => i.id === 'connectors')!;
+  const manageItem: NavItem = { ...connectorItem, anyOf: ['connector.manage'] };
+  const connectorNew = createRoute({ getParentRoute: () => shell, path: '/connectors/new', component: () => <Guarded item={manageItem}><ConnectorWizard /></Guarded> });
+  const connectorDetail = createRoute({ getParentRoute: () => shell, path: '/connectors/$id', component: () => <Guarded item={connectorItem}><ConnectorDetailPage /></Guarded> });
+
+  return createRouter({ routeTree: root.addChildren([signInError, shell.addChildren([...pages, connectorNew, connectorDetail])]), history: opts.history, defaultPreload: false });
 }
 
 declare module '@tanstack/react-router' {
