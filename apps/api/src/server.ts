@@ -1,9 +1,9 @@
 import { PlatformError, type DeploymentProfile, type PlatformEnv } from '@qa/domain';
 import { EgressPolicy, HardenedHttpClient, OidcProvider, initTelemetry, OllamaAdapter, OpenAiCompatibleAdapter, readSecretFile, type EgressRule } from '@qa/infrastructure';
 import type { LlmPort } from '@qa/llm';
-import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgEnvironmentRepository, PgOperationLogReader, PgSessionStore, PgTestRequestQueue, PgUserRepository, connectPostgres, migrate, pingDb, seedDefaultGroupMappings, seedRoles, type Db } from '@qa/persistence';
+import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgEnvironmentRepository, PgOperationLogReader, PgSessionStore, PgTestRequestQueue, PgUserRepository, PgWorkflowRepository, connectPostgres, migrate, pingDb, seedDefaultGroupMappings, seedRoles, type Db } from '@qa/persistence';
 import { buildProviders, buildSecretStore } from '@qa/bootstrap';
-import { ConnectorService, EnvironmentService } from '@qa/application';
+import { ConnectorService, EnvironmentService, WorkflowService } from '@qa/application';
 import { buildApp } from './app';
 import { OidcSessionResolver, type AuthConfig } from './auth';
 import { DevHeaderSessionResolver } from './session';
@@ -178,6 +178,7 @@ const app = buildApp({
         connectors: new PgConnectorRepository(conn.db),
       })
     : undefined,
+  workflows: conn ? new WorkflowService({ workflows: new PgWorkflowRepository(conn.db), audit: new PgAuditSink(new PgAuditLog(conn.db)) }) : undefined,
   llm: buildLlmStatus(),
   readiness: conn ? { database: () => pingDb(conn.db) } : undefined,
 });

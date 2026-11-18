@@ -1,9 +1,14 @@
-# Phase 4 note: workflow definition and the engine
+# Phase 4 plan: workflow definition and the engine
 
-Not started. The roadmap places this after environment management. Do not build it during Phase 3.
+Started after the Phase 3 sign-off. This is the roadmap Phase 4, not a new reading of Phase 3.
 
-## What Phase 4 is
-Workflow definitions and the visual builder, plus the durable engine: versions, publish and QA Lead approval, leases, an append-only event log, pause/resume/cancel, retries, and a chaos test that kills a worker mid-step. A trivial demo workflow with no-op steps proves a run survives a restart. ADR 0004 is the engine decision. The API does not run workflows; the worker does.
+## Slices
+1. **Draft records.** Name, type (requirement validation or regression), and an empty definition shell. QA Lead and Administrator can create. A person who can only view published workflows does not see drafts. No steps, publish, or run yet.
+2. **Step registry and validator.** Step types as data. `WorkflowValidator` rules V1–V11. A draft with a broken graph cannot be saved as ready.
+3. **Versions and publish.** Immutable version, content hash, QA Lead approval. Business users see published workflows only.
+4. **Engine.** Leases, append-only event log, pause/resume/cancel, retries. The worker runs it. The API does not. ADR 0004.
+5. **Durability proof.** A no-op demo workflow survives a worker killed mid-step, without repeating a side effect.
+6. **Builder UI.** Guided list first. Flow view is read-only. Run wizard framework.
 
-## Why it is not Phase 3
-The roadmap (Phase 3, Environment management) is environments, secrets, production authorization, connector references, and the environments UI. The engine is listed under Phase 4 (Workflow definition and visual builder). A plan written earlier in this branch treated the engine as Phase 3. That plan is withdrawn. This note is the placeholder so the engine work is not lost.
+## Not in the first slice
+Templates, the chaos suite, and starting a real Requirement Validation or regression run. Those follow the slices above.

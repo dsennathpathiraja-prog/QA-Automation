@@ -12,6 +12,7 @@ import { ConnectorWizard } from './pages/connectors/ConnectorWizard';
 import { Dashboard } from './pages/Dashboard';
 import { EnvironmentPage } from './pages/environments/EnvironmentPage';
 import { Environments } from './pages/Environments';
+import { Workflows } from './pages/Workflows';
 import { IdentityMapping } from './pages/IdentityMapping';
 import { SignInError } from './pages/SignInError';
 
@@ -30,7 +31,7 @@ const NotFound = () => (
   </>
 );
 
-const real: Record<string, () => ReactNode> = { dashboard: () => <Dashboard />, connectors: () => <Connectors />, environments: () => <Environments />, identity: () => <IdentityMapping />, hosts: () => <ApprovedHosts />, models: () => <AiModels /> };
+const real: Record<string, () => ReactNode> = { dashboard: () => <Dashboard />, workflows: () => <Workflows />, connectors: () => <Connectors />, environments: () => <Environments />, identity: () => <IdentityMapping />, hosts: () => <ApprovedHosts />, models: () => <AiModels /> };
 
 export interface RouterOptions {
   history?: Parameters<typeof createRouter>[0]['history'];

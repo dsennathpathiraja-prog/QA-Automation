@@ -28,10 +28,10 @@ describe('migrations', () => {
     const client = new PGlite();
     const db = drizzle(client, { schema }) as unknown as Db;
     const first = await migrate(db);
-    expect(first.applied).toEqual(['0000_baseline', '0001_append_only_guards', '0002_llm_call_log', '0003_llm_call_log_append_only', '0004_connector_management']);
+    expect(first.applied).toEqual(['0000_baseline', '0001_append_only_guards', '0002_llm_call_log', '0003_llm_call_log_append_only', '0004_connector_management', '0005_workflow_draft']);
     const second = await migrate(db);
     expect(second.applied).toEqual([]);
-    expect(second.alreadyApplied).toHaveLength(5);
+    expect(second.alreadyApplied).toHaveLength(6);
 
     const tmp = mkdtempSync(join(tmpdir(), 'mig-'));
     cpSync(DEFAULT_MIGRATIONS_DIR, tmp, { recursive: true });

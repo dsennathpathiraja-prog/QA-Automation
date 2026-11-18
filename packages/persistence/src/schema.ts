@@ -352,6 +352,29 @@ export const environmentAuthorization = pgTable(
   ],
 );
 
+/* ---------- workflows ---------- */
+
+export const workflow = pgTable(
+  'workflow',
+  {
+    id: id(),
+    key: text('key').notNull(),
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    type: text('type').notNull(),
+    status: text('status').notNull().default('draft'),
+    definition: jsonb('definition').$type<Record<string, unknown>>().notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    deletedAt: ts('deleted_at'),
+    ...audit(),
+  },
+  (t) => [
+    uniqueIndex('workflow_key_uq').on(t.key).where(sql`${t.deletedAt} is null`),
+    check('workflow_type_ck', sql`${t.type} in ('requirement-validation','regression-testing')`),
+    check('workflow_status_ck', sql`${t.status} in ('draft','disabled')`),
+  ],
+);
+
 /* ---------- governance ---------- */
 
 /** Append-only hash chain. Writers serialise through an advisory lock so seq and prev_hash never fork. */

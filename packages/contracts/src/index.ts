@@ -245,6 +245,20 @@ export const ResolvedEnvironmentSchema = z.object({
   connectors: z.array(z.object({ role: ConnectorRole, connectorId: z.string(), name: z.string() })),
   connectivity: z.literal('not-run'),
 });
+export const WorkflowSchema = z.object({
+  id: z.string(),
+  key: z.string(),
+  name: z.string(),
+  description: z.string(),
+  type: z.enum(['requirement-validation', 'regression-testing']),
+  status: z.enum(['draft', 'disabled']),
+  enabled: z.boolean(),
+  updatedAt: z.string(),
+});
+export const WorkflowListResponse = z.object({ items: z.array(WorkflowSchema) });
+export const CreateWorkflowRequest = z.object({ name: z.string(), type: z.enum(['requirement-validation', 'regression-testing']), description: z.string().optional(), key: z.string().optional() });
+export const UpdateWorkflowRequest = z.object({ name: z.string().optional(), description: z.string().optional() });
+
 export const ValidateEnvironmentRequest = z.object({
   workflowType: z.enum(['requirement-validation', 'regression-testing']).optional(),
   parallelism: z.number().optional(),

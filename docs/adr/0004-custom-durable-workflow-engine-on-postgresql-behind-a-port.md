@@ -16,4 +16,4 @@ No new infrastructure, and state is transparent to the UI. The team owns the eng
 
 ## Evidence
 
-Phase 1 delivers the worker loop (`apps/worker`) and the Postgres schema and migration pipeline; the engine itself is Phase 3.
+Phase 1 delivers the worker loop (`apps/worker`) and the Postgres schema and migration pipeline; the engine itself is Phase 4.
