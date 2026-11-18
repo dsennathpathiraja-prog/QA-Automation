@@ -3,9 +3,9 @@
 Connector-first, local-first agentic QA automation platform. Design: see the architecture documents
 (`architecture-and-roadmap.md`, `architecture/platform-decisions.md`).
 
-## Status: Phase 1 code complete, awaiting live validation
+## Status: Phase 1 code complete, awaiting sign-off checks
 
-What is done and what is still pending (with the resume steps) is in [`docs/phase1-status.md`](docs/phase1-status.md). Decisions are in [`docs/adr/`](docs/adr/README.md).
+What is done and what is still needed for sign-off is in [`docs/phase1-status.md`](docs/phase1-status.md). Decisions are in [`docs/adr/`](docs/adr/README.md). How to build, test and run: [`docs/development.md`](docs/development.md).
 
 Implemented and tested:
 
@@ -27,11 +27,11 @@ Implemented and tested:
 
 Also added since: OpenTelemetry (`packages/telemetry`), the runner launcher service with a Docker Engine adapter (`apps/runner-launcher`), real-OpenBao policy tests and a real-Squid egress test, and a repository scan for committed credentials.
 
-Not yet validated in Phase 1: OIDC has only been tested against a fake IdP (never against a real Keycloak), role changes apply at next login (user is re-provisioned and audited at every login), the baseline schema covers identity, connectors, environments, audit and sessions only (workflow, execution, QA-asset and agent tables arrive with their phases; only `llm_call_log` exists for LLM). Deferred by design: S3 object store adapter (Phase 2+), Kubernetes runner adapter (Phase 11).
+Not yet validated (these are the sign-off checks): OIDC has only been tested against a fake IdP, never a real Keycloak; the Compose stacks and images have not been run on a Docker host. Also: role changes apply at next login (user is re-provisioned and audited at every login), the baseline schema covers identity, connectors, environments, audit and sessions only (workflow, execution, QA-asset and agent tables arrive with their phases; only `llm_call_log` exists for LLM). Deferred by design: S3 object store adapter (Phase 2+), Kubernetes runner adapter (Phase 11).
 
 ## Try it locally with Docker
 
-`deploy/compose/local/README.md` starts the whole stack (web, API, worker, Postgres, Keycloak with four trial users) on one machine at http://localhost:8080. It has never been run by the authors; the first run is the validation.
+`deploy/compose/local/README.md` starts the whole stack (web, API, worker, Postgres, Keycloak with four trial users) on one machine at http://localhost:8080. It has never been run by the authors; your first run is the validation (the step-by-step checklist is in `docs/phase1-status.md`).
 
 ## Squash discovery probe (read-only)
 
