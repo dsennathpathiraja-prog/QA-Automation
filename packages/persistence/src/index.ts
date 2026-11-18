@@ -14,3 +14,5 @@ export * from './envelope-rows';
 export * from './connector-support';
 export * from './environment-repository';
 export * from './workflow-repository';
+export * from './workflow-version-repository';
+export * from './execution-repository';

@@ -2,6 +2,8 @@
 
 Started after the Phase 3 sign-off. This is the roadmap Phase 4, not a new reading of Phase 3.
 
+Status: slices 1–6 are in place. Handlers are no-ops, so a published workflow can run without doing real testing. Requirement Validation and regression behaviour stay in later phases. The chaos proof is an automated test: the side effect is stored, the worker dies before the step is marked complete, and the next worker continues without storing it again.
+
 ## Slices
 1. **Draft records.** Name, type (requirement validation or regression), and an empty definition shell. QA Lead and Administrator can create. A person who can only view published workflows does not see drafts. No steps, publish, or run yet.
 2. **Step registry and validator.** Step types as data. `WorkflowValidator` rules V1–V11. A draft with a broken graph cannot be saved as ready.

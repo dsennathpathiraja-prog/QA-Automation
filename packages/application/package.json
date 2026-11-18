@@ -7,6 +7,7 @@
   "scripts": { "typecheck": "tsc -p tsconfig.json" },
   "dependencies": {
     "@qa/domain": "workspace:*",
+    "@qa/workflow-definitions": "workspace:*",
     "@qa/connector-sdk": "workspace:*",
     "zod": "^3.24.1"
   }

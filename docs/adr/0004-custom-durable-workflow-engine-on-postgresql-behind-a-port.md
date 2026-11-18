@@ -12,7 +12,7 @@ Build a small engine on Postgres (leases, an append-only event log, `SELECT ... 
 
 ## Consequences
 
-No new infrastructure, and state is transparent to the UI. The team owns the engine, so the Phase 3 chaos suite (killing workers mid-step) is mandatory. Switch criteria: more than 100 concurrent executions, multi-day waits, or engine bugs consuming real effort.
+No new infrastructure, and state is transparent to the UI. The team owns the engine, so the Phase 4 chaos suite (killing workers mid-step) is mandatory. Switch criteria: more than 100 concurrent executions, multi-day waits, or engine bugs consuming real effort.
 
 ## Evidence
 

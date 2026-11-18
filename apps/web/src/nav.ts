@@ -16,7 +16,7 @@ export interface NavItem {
 
 export const NAV_ITEMS: readonly NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', to: '/', group: 'main', phase: 9, summary: 'Overview of runs, approvals and connector health.' },
-  { id: 'workflows', label: 'Workflows', to: '/workflows', group: 'main', anyOf: ['workflow.view_published', 'workflow.create'], phase: 4, summary: 'Templates, your workflows, the builder and the run wizard.' },
+  { id: 'workflows', label: 'Workflows', to: '/workflows', group: 'main', anyOf: ['workflow.view_published', 'workflow.create'], phase: 4, summary: 'Templates, the builder, publish, and the run wizard.' },
   { id: 'executions', label: 'Executions', to: '/executions', group: 'main', anyOf: ['execution.start', 'execution.control'], phase: 5, summary: 'Live runs and execution history.' },
   { id: 'test-cases', label: 'Test Cases', to: '/test-cases', group: 'main', anyOf: ['testcase.view'], phase: 5, summary: 'Test cases, versions and regression collections.' },
   { id: 'automation', label: 'Automation Mapping', to: '/automation', group: 'main', anyOf: ['automation.view'], phase: 7, summary: 'Link test cases to automated tests and review generated scripts.' },

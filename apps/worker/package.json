@@ -18,6 +18,7 @@
     "tsx": "^4.19.2",
     "@qa/telemetry": "workspace:*",
     "@qa/application": "workspace:*",
+    "@qa/workflow-engine": "workspace:*",
     "@qa/bootstrap": "workspace:*",
     "@qa/connector-sdk": "workspace:*",
     "@qa/security": "workspace:*"

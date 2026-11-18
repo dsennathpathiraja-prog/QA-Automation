@@ -58,7 +58,7 @@ export const ALLOWED_WORKSPACE_DEPS: Record<string, readonly string[]> = {
   persistence: ['domain', 'security', 'connector-sdk', 'llm', 'application'],
   bootstrap: ['domain', 'connector-sdk', 'security', 'infrastructure', 'persistence', 'llm', 'telemetry', 'application'],
   'runner-launcher': ['domain', 'infrastructure', 'telemetry', 'testing', 'connector-sdk'],
-  worker: ['domain', 'connector-sdk', 'security', 'infrastructure', 'persistence', 'llm', 'telemetry', 'application', 'bootstrap'],
+  worker: ['domain', 'connector-sdk', 'security', 'infrastructure', 'persistence', 'llm', 'telemetry', 'application', 'bootstrap', 'workflow-engine'],
 };
 
 /** Layers that must never read secret values. Only the worker side (Connector Execution Manager) and the runner launcher lease secrets. */

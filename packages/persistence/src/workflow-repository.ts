@@ -15,6 +15,7 @@ const toRecord = (r: typeof workflow.$inferSelect): WorkflowRecord => ({
   type: r.type as WorkflowType,
   status: r.status as WorkflowRecord['status'],
   enabled: r.enabled,
+  definition: r.definition,
   createdAt: r.createdAt,
   updatedAt: r.updatedAt,
 });
@@ -42,12 +43,13 @@ export class PgWorkflowRepository implements WorkflowRepository {
     }
   }
 
-  async update(id: string, patch: { name?: string; description?: string; enabled?: boolean; status?: 'draft' | 'disabled' }) {
+  async update(id: string, patch: { name?: string; description?: string; enabled?: boolean; status?: WorkflowRecord['status']; definition?: Record<string, unknown> }) {
     const set: Partial<typeof workflow.$inferInsert> = { updatedAt: new Date(), rowVersion: sql`${workflow.rowVersion} + 1` as unknown as number };
     if (patch.name !== undefined) set.name = patch.name;
     if (patch.description !== undefined) set.description = patch.description;
     if (patch.enabled !== undefined) set.enabled = patch.enabled;
     if (patch.status !== undefined) set.status = patch.status;
+    if (patch.definition !== undefined) set.definition = patch.definition;
     const [row] = await this.db.update(workflow).set(set).where(live(id)).returning();
     if (!row) throw new PlatformError('not-found', 'Workflow not found');
     return toRecord(row);

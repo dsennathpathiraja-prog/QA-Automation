@@ -7,4 +7,5 @@ export * from './runner-launcher-contract';
 export * from './in-memory-connectors';
 export * from './in-memory-environments';
 export * from './in-memory-workflows';
+export * from './in-memory-executions';
 export * from './connector-storage-contract';

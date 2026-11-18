@@ -371,8 +371,66 @@ export const workflow = pgTable(
   (t) => [
     uniqueIndex('workflow_key_uq').on(t.key).where(sql`${t.deletedAt} is null`),
     check('workflow_type_ck', sql`${t.type} in ('requirement-validation','regression-testing')`),
-    check('workflow_status_ck', sql`${t.status} in ('draft','disabled')`),
+    check('workflow_status_ck', sql`${t.status} in ('draft','in_review','published','disabled')`),
   ],
+);
+
+export const workflowVersion = pgTable(
+  'workflow_version',
+  {
+    id: id(),
+    workflowId: uuid('workflow_id').notNull(),
+    version: integer('version').notNull(),
+    contentHash: text('content_hash').notNull(),
+    definition: jsonb('definition').$type<Record<string, unknown>>().notNull(),
+    report: jsonb('report').$type<Record<string, unknown>>().notNull().default({}),
+    approvedBy: text('approved_by').notNull(),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('workflow_version_uq').on(t.workflowId, t.version)],
+);
+
+export const workflowExecution = pgTable(
+  'workflow_execution',
+  {
+    id: id(),
+    workflowId: uuid('workflow_id').notNull(),
+    versionId: uuid('version_id').notNull(),
+    status: text('status').notNull().default('queued'),
+    stepIndex: integer('step_index').notNull().default(0),
+    phase: text('phase').notNull().default('pending'),
+    control: text('control'),
+    leaseOwner: text('lease_owner'),
+    leaseUntil: ts('lease_until'),
+    definition: jsonb('definition').$type<Record<string, unknown>>().notNull(),
+    params: jsonb('params').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    check('workflow_execution_status_ck', sql`${t.status} in ('queued','running','paused','succeeded','failed','cancelled')`),
+    check('workflow_execution_phase_ck', sql`${t.phase} in ('pending','effect')`),
+    index('workflow_execution_status_idx').on(t.status),
+  ],
+);
+
+export const workflowEvent = pgTable('workflow_event', {
+  seq: bigserial('seq', { mode: 'number' }).primaryKey(),
+  executionId: uuid('execution_id').notNull(),
+  kind: text('kind').notNull(),
+  payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
+  at: ts('at').notNull().defaultNow(),
+});
+
+export const workflowEffect = pgTable(
+  'workflow_effect',
+  {
+    executionId: uuid('execution_id').notNull(),
+    stepId: text('step_id').notNull(),
+    effectKey: text('effect_key').notNull(),
+    at: ts('at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.executionId, t.stepId, t.effectKey] })],
 );
 
 /* ---------- governance ---------- */

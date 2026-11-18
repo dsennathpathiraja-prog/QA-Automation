@@ -13,6 +13,7 @@ import { Dashboard } from './pages/Dashboard';
 import { EnvironmentPage } from './pages/environments/EnvironmentPage';
 import { Environments } from './pages/Environments';
 import { Workflows } from './pages/Workflows';
+import { WorkflowPage } from './pages/workflows/WorkflowPage';
 import { IdentityMapping } from './pages/IdentityMapping';
 import { SignInError } from './pages/SignInError';
 
@@ -75,8 +76,10 @@ export function buildRouter(opts: RouterOptions = {}): AnyRouter {
   const connectorDetail = createRoute({ getParentRoute: () => shell, path: '/connectors/$id', component: () => <Guarded item={connectorItem}><ConnectorDetailPage /></Guarded> });
   const environmentItem = NAV_ITEMS.find((i) => i.id === 'environments')!;
   const environmentDetail = createRoute({ getParentRoute: () => shell, path: '/environments/$id', component: () => <Guarded item={environmentItem}><EnvironmentPage /></Guarded> });
+  const workflowItem = NAV_ITEMS.find((i) => i.id === 'workflows')!;
+  const workflowDetail = createRoute({ getParentRoute: () => shell, path: '/workflows/$id', component: () => <Guarded item={workflowItem}><WorkflowPage /></Guarded> });
 
-  return createRouter({ routeTree: root.addChildren([signInError, shell.addChildren([...pages, connectorNew, connectorDetail, environmentDetail])]), history: opts.history, defaultPreload: false });
+  return createRouter({ routeTree: root.addChildren([signInError, shell.addChildren([...pages, connectorNew, connectorDetail, environmentDetail, workflowDetail])]), history: opts.history, defaultPreload: false });
 }
 
 declare module '@tanstack/react-router' {

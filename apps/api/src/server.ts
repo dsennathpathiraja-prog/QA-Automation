@@ -1,7 +1,7 @@
 import { PlatformError, type DeploymentProfile, type PlatformEnv } from '@qa/domain';
 import { EgressPolicy, HardenedHttpClient, OidcProvider, initTelemetry, OllamaAdapter, OpenAiCompatibleAdapter, readSecretFile, type EgressRule } from '@qa/infrastructure';
 import type { LlmPort } from '@qa/llm';
-import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgEnvironmentRepository, PgOperationLogReader, PgSessionStore, PgTestRequestQueue, PgUserRepository, PgWorkflowRepository, connectPostgres, migrate, pingDb, seedDefaultGroupMappings, seedRoles, type Db } from '@qa/persistence';
+import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgEnvironmentRepository, PgOperationLogReader, PgSessionStore, PgTestRequestQueue, PgExecutionRepository, PgUserRepository, PgWorkflowRepository, PgWorkflowVersionRepository, connectPostgres, migrate, pingDb, seedDefaultGroupMappings, seedRoles, type Db } from '@qa/persistence';
 import { buildProviders, buildSecretStore } from '@qa/bootstrap';
 import { ConnectorService, EnvironmentService, WorkflowService } from '@qa/application';
 import { buildApp } from './app';
@@ -162,23 +162,40 @@ function buildConnectors(db: Db | undefined, secrets: ReturnType<typeof buildSec
 }
 
 const secretSelection = conn ? buildSecretStore(env, platformEnv, conn.db) : undefined;
+const environments = conn
+  ? new EnvironmentService({
+      environments: new PgEnvironmentRepository(conn.db),
+      hosts: new PgApprovedHostRepository(conn.db),
+      audit: new PgAuditSink(new PgAuditLog(conn.db)),
+      secrets: secretSelection?.store ?? noSecretStore,
+      secretStoreKind: secretSelection?.kind,
+      users: new PgUserRepository(conn.db),
+      connectors: new PgConnectorRepository(conn.db),
+    })
+  : undefined;
 const app = buildApp({
   sessions: auth ? auth.resolver : new DevHeaderSessionResolver(platformEnv),
   profile,
   auth,
   connectors: buildConnectors(conn?.db, secretSelection),
-  environments: conn
-    ? new EnvironmentService({
-        environments: new PgEnvironmentRepository(conn.db),
-        hosts: new PgApprovedHostRepository(conn.db),
-        audit: new PgAuditSink(new PgAuditLog(conn.db)),
-        secrets: secretSelection?.store ?? noSecretStore,
-        secretStoreKind: secretSelection?.kind,
-        users: new PgUserRepository(conn.db),
+  environments,
+  workflows: conn
+    ? new WorkflowService({
+        workflows: new PgWorkflowRepository(conn.db),
+        versions: new PgWorkflowVersionRepository(conn.db),
+        executions: new PgExecutionRepository(conn.db),
         connectors: new PgConnectorRepository(conn.db),
+        audit: new PgAuditSink(new PgAuditLog(conn.db)),
+        environment: async (id) => {
+          try {
+            const found = await environments!.get(id);
+            return { kind: found.kind, enabled: found.enabled, productionAuthorized: found.kind === 'production' ? found.selectable : true };
+          } catch {
+            return null;
+          }
+        },
       })
     : undefined,
-  workflows: conn ? new WorkflowService({ workflows: new PgWorkflowRepository(conn.db), audit: new PgAuditSink(new PgAuditLog(conn.db)) }) : undefined,
   llm: buildLlmStatus(),
   readiness: conn ? { database: () => pingDb(conn.db) } : undefined,
 });

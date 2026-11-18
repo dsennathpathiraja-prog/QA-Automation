@@ -1,7 +1,8 @@
 import { buildProviders, buildSecretStore, connectDatabase } from '@qa/bootstrap';
 import type { DeploymentProfile, PlatformEnv } from '@qa/domain';
 import { EgressPolicy, HardenedHttpClient, initTelemetry, type EgressRule } from '@qa/infrastructure';
-import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
+import { tick as engineTick } from '@qa/workflow-engine';
+import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgExecutionRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
 import { buildWorkerApp } from './app';
 import { ConnectorTester } from './connector-tester';
 import { ConnectorHealthScheduler } from './health-scheduler';
@@ -50,13 +51,16 @@ if (conn && secrets) {
   scheduler = new ConnectorHealthScheduler({ connectors: new PgConnectorRepository(conn.db), tests: new PgTestRequestQueue(conn.db), intervalMs: env.CONNECTOR_HEALTH_MS ? Number(env.CONNECTOR_HEALTH_MS) : undefined });
 }
 
-// The workflow engine (Phase 3) extends this tick. Until then the worker runs Test Connection requests
-// for connectors, reports health and stops cleanly.
+const executions = conn ? new PgExecutionRepository(conn.db) : undefined;
 const loop = new WorkerLoop({
   tick: async () => {
-    if (!tester) return 'idle';
-    await scheduler?.enqueueDue();
-    return tester.runOnce();
+    let busy = false;
+    if (tester) {
+      await scheduler?.enqueueDue();
+      if ((await tester.runOnce()) === 'busy') busy = true;
+    }
+    if (executions && (await engineTick(executions, { owner: 'worker', now: new Date() })) === 'busy') busy = true;
+    return busy ? 'busy' : 'idle';
   },
   idleDelayMs: Number(env.WORKER_IDLE_MS ?? 1_000),
   graceMs: Number(env.WORKER_GRACE_MS ?? 30_000),

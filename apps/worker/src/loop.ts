@@ -29,7 +29,7 @@ export interface WorkerLoopOptions {
 
 /**
  * The worker's heartbeat: ask for work, run it, back off when things fail, stop cleanly.
- * The workflow engine (Phase 3) supplies `tick`; nothing here knows about workflows.
+ * The caller supplies `tick`. Nothing here knows about workflows.
  */
 export class WorkerLoop {
   private state: LoopState = 'created';

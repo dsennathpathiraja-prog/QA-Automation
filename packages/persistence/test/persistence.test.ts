@@ -8,7 +8,7 @@ import { drizzle } from 'drizzle-orm/pglite';
 import { describe, expect, it } from 'vitest';
 import { ROLES, ROLE_PERMISSIONS, uuidv7, type SessionRecord } from '@qa/domain';
 import {
-  DEFAULT_MIGRATIONS_DIR, PgAuditLog, PgLlmAuditSink, PgOperationLogSink, PgSessionStore, PgUserRepository, migrate, schema, seedDefaultGroupMappings, seedRoles, type Db,
+  DEFAULT_MIGRATIONS_DIR, PgAuditLog, PgExecutionRepository, PgLlmAuditSink, PgOperationLogSink, PgSessionStore, PgUserRepository, PgWorkflowRepository, PgWorkflowVersionRepository, migrate, schema, seedDefaultGroupMappings, seedRoles, type Db,
 } from '../src';
 import { freshDb } from './helpers';
 
@@ -28,10 +28,10 @@ describe('migrations', () => {
     const client = new PGlite();
     const db = drizzle(client, { schema }) as unknown as Db;
     const first = await migrate(db);
-    expect(first.applied).toEqual(['0000_baseline', '0001_append_only_guards', '0002_llm_call_log', '0003_llm_call_log_append_only', '0004_connector_management', '0005_workflow_draft']);
+    expect(first.applied).toEqual(['0000_baseline', '0001_append_only_guards', '0002_llm_call_log', '0003_llm_call_log_append_only', '0004_connector_management', '0005_workflow_draft', '0006_workflow_engine']);
     const second = await migrate(db);
     expect(second.applied).toEqual([]);
-    expect(second.alreadyApplied).toHaveLength(6);
+    expect(second.alreadyApplied).toHaveLength(7);
 
     const tmp = mkdtempSync(join(tmpdir(), 'mig-'));
     cpSync(DEFAULT_MIGRATIONS_DIR, tmp, { recursive: true });
@@ -204,6 +204,27 @@ describe('PgUserRepository', () => {
     await db.execute(sql`update app_user set status = 'disabled' where id = ${first.userId}`);
     expect(await repo.isDisabled('kc-1')).toBe(true);
     expect(await repo.isDisabled('nobody')).toBe(false);
+  });
+});
+
+describe('workflow engine storage', () => {
+  it('keeps a published version immutable and records a side effect once', async () => {
+    const { db } = await freshDb();
+    const workflows = new PgWorkflowRepository(db);
+    const versions = new PgWorkflowVersionRepository(db);
+    const runs = new PgExecutionRepository(db);
+    const wf = await workflows.insert({ id: uuidv7(), key: 'demo', name: 'Demo', description: '', type: 'requirement-validation', definition: { spec: { steps: [{ id: 'a' }] } } });
+    const version = await versions.insert({ id: uuidv7(), workflowId: wf.id, version: 1, contentHash: 'abc', definition: wf.definition, approvedBy: 'lead' });
+    expect(await failure(db.update(schema.workflowVersion).set({ contentHash: 'changed' }).where(sql`id = ${version.id}`))).toMatch(/not allowed/);
+    const run = await runs.insert({ id: uuidv7(), workflowId: wf.id, versionId: version.id, definition: { spec: { steps: [{ id: 'a' }, { id: 'b' }] } }, params: {} });
+    const now = new Date('2026-11-18T12:00:00Z');
+    const claimed = await runs.claim('w1', now, 30_000);
+    expect(claimed?.id).toBe(run.id);
+    expect(await runs.recordEffect(run.id, 'a', 'a')).toBe('new');
+    expect(await runs.claim('w2', now, 30_000)).toBeUndefined();
+    const resumed = await runs.claim('w2', new Date(now.getTime() + 31_000), 30_000);
+    expect(resumed?.stepIndex).toBe(0);
+    expect(await runs.recordEffect(run.id, 'a', 'a')).toBe('exists');
   });
 });
 

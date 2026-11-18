@@ -251,13 +251,24 @@ export const WorkflowSchema = z.object({
   name: z.string(),
   description: z.string(),
   type: z.enum(['requirement-validation', 'regression-testing']),
-  status: z.enum(['draft', 'disabled']),
+  status: z.enum(['draft', 'in_review', 'published', 'disabled']),
   enabled: z.boolean(),
   updatedAt: z.string(),
+  publishedVersion: z.number().nullable(),
 });
 export const WorkflowListResponse = z.object({ items: z.array(WorkflowSchema) });
-export const CreateWorkflowRequest = z.object({ name: z.string(), type: z.enum(['requirement-validation', 'regression-testing']), description: z.string().optional(), key: z.string().optional() });
+export const CreateWorkflowRequest = z.object({ name: z.string(), type: z.enum(['requirement-validation', 'regression-testing']), description: z.string().optional(), key: z.string().optional(), templateKey: z.string().optional() });
 export const UpdateWorkflowRequest = z.object({ name: z.string().optional(), description: z.string().optional() });
+export const WorkflowDefinitionResponse = z.object({ definition: z.unknown() });
+export const SaveWorkflowDefinitionRequest = z.object({ definition: z.record(z.unknown()) });
+export const WorkflowTemplateList = z.object({ items: z.array(z.object({ key: z.string(), name: z.string(), type: z.enum(['requirement-validation', 'regression-testing']), summary: z.string() })) });
+export const ValidationIssueSchema = z.object({ ruleId: z.string(), severity: z.enum(['error', 'warning']), path: z.string(), message: z.string(), fixHint: z.string() });
+export const ValidationReportSchema = z.object({ issues: z.array(ValidationIssueSchema) });
+export const ExecutionSchema = z.object({ id: z.string(), workflowId: z.string(), status: z.enum(['queued', 'running', 'paused', 'succeeded', 'failed', 'cancelled']), stepIndex: z.number(), createdAt: z.string(), updatedAt: z.string() });
+export const ExecutionListResponse = z.object({ items: z.array(ExecutionSchema) });
+export const StartRunRequest = z.object({ parameters: z.record(z.unknown()).optional() });
+export const ExecutionEventSchema = z.object({ seq: z.number(), kind: z.string(), at: z.string(), payload: z.record(z.unknown()) });
+export const ExecutionEventList = z.object({ items: z.array(ExecutionEventSchema) });
 
 export const ValidateEnvironmentRequest = z.object({
   workflowType: z.enum(['requirement-validation', 'regression-testing']).optional(),
