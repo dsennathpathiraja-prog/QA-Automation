@@ -29,6 +29,7 @@ export const sampleProvider: ConnectorProvider = {
     requiredPermissions: ['None. This is a built-in demo.'],
     accessModePolicy: 'read_write',
     requiresInternet: false,
+    verification: 'built-in',
     wizard: [
       { key: 'connection', title: 'Project', fields: [{ name: 'projectName', label: 'Demo project name', type: 'text', required: true }] },
       { key: 'credentials', title: 'Demo key', fields: [{ name: 'demoKey', label: 'Demo key', type: 'secret', required: true }] },

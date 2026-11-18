@@ -80,6 +80,7 @@ export function ConnectorWizard() {
                   <span>
                     <span className="block font-medium">{p.displayName}</span>
                     <span className="block text-sm text-slate-600 dark:text-slate-300">{p.description}</span>
+                    {p.verification === 'fixtures-only' && <span className="block text-xs text-amber-800 dark:text-amber-200">Not verified against a live instance.</span>}
                     <span className="block text-xs text-slate-600 dark:text-slate-300">Needs: {p.requiredPermissions.join('; ')}</span>
                   </span>
                 </label>
@@ -124,7 +125,7 @@ export function ConnectorWizard() {
           <dl className="mt-2 grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-sm">
             <dt className="font-medium">Name</dt><dd>{detail.data.name}</dd>
             <dt className="font-medium">Type</dt><dd>{detail.data.providerName}</dd>
-            <dt className="font-medium">Access</dt><dd>Read only</dd>
+            <dt className="font-medium">Access</dt><dd>{detail.data.accessMode === 'read_only' ? 'Read only' : 'Can operate the browser'}</dd>
             <dt className="font-medium">Usable capabilities</dt><dd>{detail.data.capabilities.filter((c) => c.granted).length} of {detail.data.capabilities.length}</dd>
           </dl>
           <div className="mt-4 flex gap-2">

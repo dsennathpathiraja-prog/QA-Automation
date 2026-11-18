@@ -73,7 +73,7 @@ services:
       OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_client_secret
       OIDC_GROUP_FORMAT: name
       HTTPS_PROXY: http://egress-proxy:3128
-      NO_PROXY: postgres,openbao,keycloak,ollama,localhost
+      NO_PROXY: postgres,openbao,keycloak,ollama,playwright-mcp,localhost
       OLLAMA_URL: http://ollama:11434
       OLLAMA_KEEP_ALIVE: 10m
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
@@ -104,7 +104,7 @@ services:
       BAO_ROLE_ID_FILE: /run/secrets/bao_worker_role_id
       BAO_SECRET_ID_FILE: /run/secrets/bao_worker_secret_id
       HTTPS_PROXY: http://egress-proxy:3128
-      NO_PROXY: postgres,openbao,keycloak,ollama,localhost
+      NO_PROXY: postgres,openbao,keycloak,ollama,playwright-mcp,localhost
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     secrets: [platform_db_password, bao_worker_role_id, bao_worker_secret_id]
     depends_on: { postgres: { condition: service_healthy }, openbao: { condition: service_started } }
@@ -115,6 +115,16 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+
+  playwright-mcp:
+    <<: *common
+    profiles: [browser]
+    image: mcr.microsoft.com/playwright:v1.55.0-noble
+    command: ["bash", "-lc", "npx --yes @playwright/mcp --port 8931 --host 0.0.0.0"]
+    networks: [app]
+    read_only: true
+    tmpfs: [/tmp]
+    expose: ["8931"]
 
   runner-launcher:
     <<: *common

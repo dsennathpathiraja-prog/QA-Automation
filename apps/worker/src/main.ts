@@ -4,6 +4,7 @@ import { EgressPolicy, HardenedHttpClient, initTelemetry, type EgressRule } from
 import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
 import { buildWorkerApp } from './app';
 import { ConnectorTester } from './connector-tester';
+import { ConnectorHealthScheduler } from './health-scheduler';
 import { WorkerLoop } from './loop';
 
 const env = process.env;
@@ -23,6 +24,7 @@ const conn = connectDatabase(env);
 const secrets = buildSecretStore(env, platformEnv, conn?.db);
 
 let tester: ConnectorTester | undefined;
+let scheduler: ConnectorHealthScheduler | undefined;
 if (conn && secrets) {
   const { providers, capabilities } = buildProviders(env, platformEnv);
   const hosts = new PgApprovedHostRepository(conn.db);
@@ -35,15 +37,27 @@ if (conn && secrets) {
     audit: new PgAuditSink(new PgAuditLog(conn.db)),
     http: async () => {
       const rules: EgressRule[] = (await hosts.list('connector')).map((h) => ({ hostPattern: h.hostPattern, purpose: 'connector', internal: h.internal, allowHttp: h.allowHttp }));
-      return new HardenedHttpClient({ egress: new EgressPolicy({ rules, profile, platformEnv }), allowedMethods: ['GET', 'HEAD'], timeoutMs: 20_000, maxBodyBytes: 8 * 1024 * 1024 });
+      return new HardenedHttpClient({
+        egress: new EgressPolicy({ rules, profile, platformEnv }),
+        allowedMethods: ['GET', 'HEAD'],
+        // Work-item search on Azure Boards and the managed Playwright server are the only POSTs a connector may send.
+        allowOther: (req) => req.method === 'POST' && /\/(_apis\/wit\/wiql|mcp)$/.test(new URL(req.url).pathname),
+        timeoutMs: 20_000,
+        maxBodyBytes: 8 * 1024 * 1024,
+      });
     },
   });
+  scheduler = new ConnectorHealthScheduler({ connectors: new PgConnectorRepository(conn.db), tests: new PgTestRequestQueue(conn.db), intervalMs: env.CONNECTOR_HEALTH_MS ? Number(env.CONNECTOR_HEALTH_MS) : undefined });
 }
 
 // The workflow engine (Phase 3) extends this tick. Until then the worker runs Test Connection requests
 // for connectors, reports health and stops cleanly.
 const loop = new WorkerLoop({
-  tick: async () => (tester ? tester.runOnce() : 'idle'),
+  tick: async () => {
+    if (!tester) return 'idle';
+    await scheduler?.enqueueDue();
+    return tester.runOnce();
+  },
   idleDelayMs: Number(env.WORKER_IDLE_MS ?? 1_000),
   graceMs: Number(env.WORKER_GRACE_MS ?? 30_000),
   onError: (e) => log('tick failed', { error: e instanceof Error ? e.message : 'unknown' }),

@@ -1,5 +1,5 @@
 import { ProviderRegistry, createDefaultCapabilityRegistry, type CapabilityRegistry } from '@qa/connector-sdk';
-import { sampleProvider, squashProvider } from '@qa/infrastructure';
+import { azureBoardsProvider, azureDevOpsProvider, githubProvider, jiraProvider, playwrightMcpProvider, sampleProvider, squashProvider } from '@qa/infrastructure';
 import type { PlatformEnv } from '@qa/domain';
 import type { Env } from './env';
 
@@ -13,6 +13,11 @@ export function buildProviders(env: Env, platformEnv: PlatformEnv): Providers {
   const capabilities = createDefaultCapabilityRegistry();
   const providers = new ProviderRegistry(capabilities);
   providers.register(squashProvider);
+  providers.register(githubProvider);
+  providers.register(azureDevOpsProvider);
+  providers.register(jiraProvider);
+  providers.register(azureBoardsProvider);
+  providers.register(playwrightMcpProvider);
   const sample = env.ENABLE_SAMPLE_PROVIDER ? env.ENABLE_SAMPLE_PROVIDER === 'true' : platformEnv !== 'production';
   if (sample) providers.register(sampleProvider);
   return { capabilities, providers };

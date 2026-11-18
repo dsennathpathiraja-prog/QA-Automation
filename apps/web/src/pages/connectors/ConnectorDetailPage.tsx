@@ -58,7 +58,10 @@ function Detail({ detail, provider }: { detail: ConnectorDetail; provider?: Prov
 
   return (
     <>
-      <PageHeader title={detail.name} description={`${detail.providerName}. Read-only access: the platform never changes anything in this system.`} />
+      <PageHeader title={detail.name} description={detail.category === 'browser-automation' ? `${detail.providerName}. The browser may open only the addresses listed on this connector.` : `${detail.providerName}. Read-only: the platform never changes anything in this system.`} />
+      {provider?.verification === 'fixtures-only' && (
+        <p role="status" className="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">Not verified against a live instance. The checks for this connector type used recorded responses.</p>
+      )}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <StatusBadge status={detail.status} />
         <EnabledBadge enabled={detail.enabled} />
@@ -101,6 +104,18 @@ function Detail({ detail, provider }: { detail: ConnectorDetail; provider?: Prov
       )}
 
       <div className="space-y-4">
+        {detail.readOnlyLayers && detail.readOnlyLayers.length > 0 && (
+          <Card label="Read-only checks">
+            <h2 className="mb-2 text-lg font-semibold">Read-only checks</h2>
+            <ul className="space-y-2 text-sm">
+              {detail.readOnlyLayers.map((layer) => (
+                <li key={layer.id}>
+                  <span className="font-medium">{layer.state === 'holds' ? 'Holds' : layer.state === 'blocked' ? 'Blocked' : 'Not checked'}: {layer.label}.</span> {layer.detail}
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
         <Card label="Connection test">
           <h2 className="mb-2 text-lg font-semibold">Connection</h2>
           <TestPanel detail={detail} />

@@ -26,7 +26,7 @@ export function ApprovedHosts() {
 
   return (
     <>
-      <PageHeader title="Approved hosts" description="The only addresses connectors may reach. Anything not on this list is refused, even if a connector is configured to use it." />
+      <PageHeader title="Approved hosts" description="The only addresses connectors may reach. This is the list that blocks a connector from calling an internal or unexpected address. Anything not listed is refused." />
       <div className="space-y-4">
         <Card label="Approve a host">
           <form onSubmit={(e) => { e.preventDefault(); add.mutate({ hostPattern: host, internal, allowHttp: internal && allowHttp }); }}>

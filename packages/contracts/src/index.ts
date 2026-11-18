@@ -65,6 +65,7 @@ export const ProviderViewSchema = z.object({
   authMethods: z.array(z.object({ key: z.string(), label: z.string(), recommended: z.boolean(), fields: z.array(FieldViewSchema) })),
   capabilities: z.array(z.object({ id: z.string(), access: z.enum(['read', 'write']) })),
   steps: z.array(z.object({ key: z.string(), title: z.string(), action: z.string().optional() })),
+  verification: z.enum(['live-capable', 'fixtures-only', 'built-in']).optional(),
 });
 export type ProviderView = z.infer<typeof ProviderViewSchema>;
 export const ProviderListResponse = z.object({ items: z.array(ProviderViewSchema) });
@@ -86,6 +87,8 @@ export const ConnectorDetailSchema = ConnectorSummarySchema.extend({
     z.object({ host: z.string(), reason: z.enum(['not-approved', 'http-not-allowed']), suggestion: z.object({ hostPattern: z.string(), internal: z.boolean(), allowHttp: z.boolean() }) }),
   ),
   canEnable: z.boolean(),
+  /** Present for source repositories: the checks that keep the connection read-only. */
+  readOnlyLayers: z.array(z.object({ id: z.string(), label: z.string(), state: z.enum(['holds', 'blocked', 'unknown']), detail: z.string() })).optional(),
 });
 export type ConnectorDetail = z.infer<typeof ConnectorDetailSchema>;
 

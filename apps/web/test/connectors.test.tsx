@@ -81,6 +81,16 @@ describe('connector detail', () => {
     },
   });
 
+  it('shows the six read-only checks when the connector is a source repository', async () => {
+    const layers = [
+      { id: 'access-mode', label: 'The connection is read-only', state: 'holds', detail: 'Stored read-only.' },
+      { id: 'credential', label: 'The token has no write permission', state: 'blocked', detail: 'Replace the token.' },
+    ];
+    renderApp(`/connectors/${ID}`, backend('administrator', { category: 'source-repo', readOnlyLayers: layers }));
+    expect(await screen.findByText(/Holds: The connection is read-only/)).toBeTruthy();
+    expect(screen.getByText(/Blocked: The token has no write permission/)).toBeTruthy();
+  });
+
   it('shows the per-capability table with support, usability and reasons', async () => {
     renderApp(`/connectors/${ID}`, backend('administrator'));
     const table = await screen.findByRole('table', { name: 'What this connector can do' });

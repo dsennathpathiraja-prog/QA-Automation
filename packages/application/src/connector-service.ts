@@ -47,6 +47,14 @@ export interface ProviderView {
   authMethods: { key: string; label: string; recommended: boolean; fields: FieldView[] }[];
   capabilities: { id: string; access: 'read' | 'write' }[];
   steps: { key: string; title: string; action?: string }[];
+  verification?: 'live-capable' | 'fixtures-only' | 'built-in';
+}
+
+export interface ReadOnlyLayer {
+  id: string;
+  label: string;
+  state: 'holds' | 'blocked' | 'unknown';
+  detail: string;
 }
 
 export interface ConnectorSummary {
@@ -81,6 +89,7 @@ export interface ConnectorDetail extends ConnectorSummary {
   latestTest?: { id: string; status: TestRequestRecord['status']; requestedAt: string; finishedAt?: string; result?: TestRequestRecord['result'] };
   hostIssues: HostIssue[];
   canEnable: boolean;
+  readOnlyLayers?: ReadOnlyLayer[];
 }
 
 export interface CreateConnectorInput {
@@ -135,6 +144,7 @@ export class ConnectorService {
       latestTest: latest && { id: latest.id, status: latest.status, requestedAt: latest.requestedAt.toISOString(), finishedAt: latest.finishedAt?.toISOString(), result: latest.result },
       hostIssues: provider ? this.hostIssues(provider, rec.config, approved) : [],
       canEnable: !rec.enabled && (rec.status === 'connected' || rec.status === 'degraded'),
+      readOnlyLayers: provider?.manifest.category === 'source-repo' ? this.readOnlyLayers(rec, provider, provider ? this.hostIssues(provider, rec.config, approved) : []) : undefined,
     };
   }
 
@@ -146,7 +156,7 @@ export class ConnectorService {
     const id = randomUUID();
     if (secrets) await this.d.secrets.put(connectorSecretLocator(id), secrets);
     try {
-      await this.d.connectors.insert({ id, providerKey: provider.manifest.providerKey, category: provider.manifest.category, name, config, accessMode: 'read_only' });
+      await this.d.connectors.insert({ id, providerKey: provider.manifest.providerKey, category: provider.manifest.category, name, config, accessMode: this.accessModeFor(provider) });
     } catch (e) {
       if (secrets) await this.d.secrets.delete(connectorSecretLocator(id)).catch(() => undefined);
       throw e;
@@ -323,6 +333,7 @@ export class ConnectorService {
       })),
       capabilities: m.capabilities.map((id) => ({ id, access: this.d.capabilities.has(id) ? this.d.capabilities.get(id).access : 'read' })),
       steps: m.wizard.map((s) => ({ key: s.key, title: s.title, action: s.action })),
+      verification: m.verification,
     };
   }
 
@@ -348,6 +359,32 @@ export class ConnectorService {
       }
     }
     return issues;
+  }
+
+  /** Source repositories and test systems stay read-only. A browser connector may drive the page, which the catalog calls a write. */
+  private accessModeFor(p: ConnectorProvider): 'read_only' | 'read_write' {
+    if (p.manifest.category === 'browser-automation') return 'read_write';
+    return 'read_only';
+  }
+
+  private readOnlyLayers(rec: ConnectorRecord, p: ConnectorProvider, hostIssues: HostIssue[]): ReadOnlyLayer[] | undefined {
+    if (rec.category !== 'source-repo') return undefined;
+    const writes = p.manifest.capabilities.filter((id) => this.d.capabilities.has(id) && this.d.capabilities.get(id).access === 'write');
+    const report = rec.permissionReport;
+    const credential: ReadOnlyLayer['state'] = !report ? 'unknown' : report.writePermissionsDetected.length > 0 ? 'blocked' : 'holds';
+    return [
+      { id: 'access-mode', label: 'The connection is read-only', state: rec.accessMode === 'read_only' ? 'holds' : 'blocked', detail: 'Source repositories are stored as read-only and the database refuses anything else.' },
+      { id: 'catalog', label: 'There is no write action for a source repository', state: writes.length === 0 ? 'holds' : 'blocked', detail: 'The platform has no capability that commits, pushes or edits repository files.' },
+      { id: 'http', label: 'Only read requests are sent', state: 'holds', detail: 'This connector is allowed to send GET requests. A write request is refused before it leaves the platform.' },
+      {
+        id: 'credential',
+        label: 'The token has no write permission',
+        state: credential,
+        detail: !report ? 'Run Test connection to inspect the token.' : credential === 'blocked' ? `Write permission found: ${report.writePermissionsDetected.join(', ')}. Replace it with a read-only token before switching this connector on.` : 'No write permission was found on this token.',
+      },
+      { id: 'host', label: 'The host is approved', state: hostIssues.length === 0 ? 'holds' : 'blocked', detail: hostIssues.length === 0 ? 'The address is on the approved-host list.' : 'Approve the host before this connector can connect.' },
+      { id: 'git', label: 'The platform cannot write git', state: 'holds', detail: 'No git write library is part of this build. Generated tests stay in a platform workspace, never in the connected repository.' },
+    ];
   }
 
   private validName(raw: string): string {

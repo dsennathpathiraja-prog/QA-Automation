@@ -74,6 +74,8 @@ export interface ConnectorManifest {
   requiredPermissions: string[];
   accessModePolicy: 'read_only_enforced' | 'read_write';
   requiresInternet: boolean;
+  /** live-capable can be pointed at a real system; fixtures-only has not been checked against one; built-in never leaves the platform. */
+  verification?: 'live-capable' | 'fixtures-only' | 'built-in';
   wizard: WizardStep[];
 }
 

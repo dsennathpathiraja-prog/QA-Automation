@@ -38,8 +38,9 @@ describe('secret store selection', () => {
 describe('provider registry', () => {
   it('offers the demo provider outside production only, unless overridden', () => {
     const keys = (env: Record<string, string>, pe: 'development' | 'production') => buildProviders(env, pe).providers.all().map((p) => p.manifest.providerKey).sort();
-    expect(keys({}, 'development')).toEqual(['sample-work-items', 'squash-tm']);
-    expect(keys({}, 'production')).toEqual(['squash-tm']);
-    expect(keys({ ENABLE_SAMPLE_PROVIDER: 'false' }, 'development')).toEqual(['squash-tm']);
+    const always = ['azure-boards', 'azure-devops-repos', 'github', 'jira', 'playwright-mcp', 'squash-tm'].sort();
+    expect(keys({}, 'development')).toEqual([...always, 'sample-work-items'].sort());
+    expect(keys({}, 'production')).toEqual(always);
+    expect(keys({ ENABLE_SAMPLE_PROVIDER: 'false' }, 'development')).toEqual(always);
   });
 });

@@ -81,6 +81,7 @@ export const squashProvider: ConnectorProvider = {
     requiredPermissions: ['API token with READ permission', 'Project read access for the token owner'],
     accessModePolicy: 'read_write',
     requiresInternet: false,
+    verification: 'fixtures-only',
     wizard: [
       { key: 'connection', title: 'Connection', fields: [{ name: 'baseUrl', label: 'SquashTM address (for example http://host/squash)', type: 'url', required: true }] },
       { key: 'credentials', title: 'API token', fields: [{ name: 'token', label: 'API token', type: 'secret', required: true }] },
