@@ -13,6 +13,7 @@ export function ApprovedHosts() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: key, queryFn: () => api.get('/api/v1/egress/hosts', ApprovedHostListResponse) });
   const [host, setHost] = useState('');
+  const [purpose, setPurpose] = useState<'connector' | 'application'>('connector');
   const [internal, setInternal] = useState(true);
   const [allowHttp, setAllowHttp] = useState(false);
   const add = useMutation({
@@ -26,12 +27,18 @@ export function ApprovedHosts() {
 
   return (
     <>
-      <PageHeader title="Approved hosts" description="The only addresses connectors may reach. This is the list that blocks a connector from calling an internal or unexpected address. Anything not listed is refused." />
+      <PageHeader title="Approved hosts" description="The only addresses connectors and application environments may use. Approve a connector host for GitHub, Azure or Squash. Approve an application host before saving an environment URL." />
       <div className="space-y-4">
         <Card label="Approve a host">
-          <form onSubmit={(e) => { e.preventDefault(); add.mutate({ hostPattern: host, internal, allowHttp: internal && allowHttp }); }}>
+          <form onSubmit={(e) => { e.preventDefault(); add.mutate({ hostPattern: host, purpose, internal, allowHttp: internal && allowHttp }); }}>
             <Field id="h-host" label="Host name" hint="For example squash.example.com or *.example.com. No scheme, port or path.">
               <input id="h-host" required className={fieldClass} value={host} onChange={(e) => setHost(e.target.value)} />
+            </Field>
+            <Field id="h-purpose" label="Used by">
+              <select id="h-purpose" className={fieldClass} value={purpose} onChange={(e) => setPurpose(e.target.value as 'connector' | 'application')}>
+                <option value="connector">Connectors</option>
+                <option value="application">Application environments</option>
+              </select>
             </Field>
             <div className="mt-3 space-y-1 text-sm">
               <label className="flex items-center gap-2"><input type="checkbox" checked={internal} onChange={(e) => { setInternal(e.target.checked); if (!e.target.checked) setAllowHttp(false); }} /> This host is inside our network</label>
@@ -50,6 +57,7 @@ export function ApprovedHosts() {
               <thead>
                 <tr className="border-b border-slate-200 dark:border-slate-700">
                   <th scope="col" className="py-2 pr-4">Host</th>
+                  <th scope="col" className="py-2 pr-4">Used by</th>
                   <th scope="col" className="py-2 pr-4">Where</th>
                   <th scope="col" className="py-2 pr-4">Plain http</th>
                   <th scope="col" className="py-2 pr-4">Approved</th>
@@ -60,6 +68,7 @@ export function ApprovedHosts() {
                 {q.data.items.map((h) => (
                   <tr key={h.id} className="border-b border-slate-100 last:border-0 dark:border-slate-800">
                     <td className="py-2 pr-4 font-mono">{h.hostPattern}</td>
+                    <td className="py-2 pr-4">{h.purpose === 'application' ? 'Application environments' : 'Connectors'}</td>
                     <td className="py-2 pr-4">{h.internal ? 'Inside our network' : 'External'}</td>
                     <td className="py-2 pr-4">{h.allowHttp ? 'Allowed' : 'Not allowed'}</td>
                     <td className="py-2 pr-4">{when(h.approvedAt)}</td>

@@ -264,13 +264,14 @@ export class ConnectorService {
     await this.d.audit.append({ actorId: actor.id, action: 'connector.delete', subjectType: 'connector', subjectId: id, detail: { name: rec.name } });
   }
 
-  async approveHost(actor: ActorRef, h: { hostPattern: string; internal: boolean; allowHttp: boolean }): Promise<ApprovedHost> {
+  async approveHost(actor: ActorRef, h: { hostPattern: string; purpose?: 'connector' | 'application'; internal: boolean; allowHttp: boolean }): Promise<ApprovedHost> {
     const pattern = h.hostPattern.trim().toLowerCase();
     if (!/^(\*\.)?[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(pattern)) throw new PlatformError('validation', 'Host must be a name such as example.com or *.example.com (no scheme, port or path).');
     if (pattern === '*' || pattern.startsWith('*.') && pattern.split('.').length < 3) throw new PlatformError('validation', 'Wildcards must name a domain, such as *.example.com.');
     if (h.allowHttp && !h.internal) throw new PlatformError('validation', 'Plain http is only allowed for internal hosts.');
-    const added = await this.d.hosts.add({ hostPattern: pattern, purpose: 'connector', internal: h.internal, allowHttp: h.allowHttp, approvedBy: actor.id });
-    await this.d.audit.append({ actorId: actor.id, action: 'egress.host.approve', subjectType: 'egress_host', subjectId: added.id, detail: { hostPattern: pattern, purpose: 'connector', internal: h.internal, allowHttp: h.allowHttp } });
+    const purpose = h.purpose ?? 'connector';
+    const added = await this.d.hosts.add({ hostPattern: pattern, purpose, internal: h.internal, allowHttp: h.allowHttp, approvedBy: actor.id });
+    await this.d.audit.append({ actorId: actor.id, action: 'egress.host.approve', subjectType: 'egress_host', subjectId: added.id, detail: { hostPattern: pattern, purpose, internal: h.internal, allowHttp: h.allowHttp } });
     return added;
   }
 
@@ -280,8 +281,9 @@ export class ConnectorService {
     await this.d.audit.append({ actorId: actor.id, action: 'egress.host.remove', subjectType: 'egress_host', subjectId: id, detail: { hostPattern: removed.hostPattern } });
   }
 
-  listHosts(): Promise<ApprovedHost[]> {
-    return this.d.hosts.list('connector');
+  async listHosts(): Promise<ApprovedHost[]> {
+    const [connectors, applications] = await Promise.all([this.d.hosts.list('connector'), this.d.hosts.list('application')]);
+    return [...connectors, ...applications].sort((a, b) => a.hostPattern.localeCompare(b.hostPattern) || a.purpose.localeCompare(b.purpose));
   }
 
   private summary(c: ConnectorRecord): ConnectorSummary {

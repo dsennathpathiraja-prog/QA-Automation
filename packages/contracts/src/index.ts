@@ -129,10 +129,10 @@ export const OperationLogResponse = z.object({
 });
 export type OperationLogResponse = z.infer<typeof OperationLogResponse>;
 
-export const ApprovedHostSchema = z.object({ id: z.string(), hostPattern: z.string(), internal: z.boolean(), allowHttp: z.boolean(), approvedAt: z.string() });
+export const ApprovedHostSchema = z.object({ id: z.string(), hostPattern: z.string(), purpose: z.enum(['connector', 'application']).optional(), internal: z.boolean(), allowHttp: z.boolean(), approvedAt: z.string() });
 export const ApprovedHostListResponse = z.object({ items: z.array(ApprovedHostSchema) });
 export type ApprovedHostListResponse = z.infer<typeof ApprovedHostListResponse>;
-export const ApproveHostRequest = z.object({ hostPattern: z.string().min(1).max(253), internal: z.boolean(), allowHttp: z.boolean() });
+export const ApproveHostRequest = z.object({ hostPattern: z.string().min(1).max(253), purpose: z.enum(['connector', 'application']).optional(), internal: z.boolean(), allowHttp: z.boolean() });
 export type ApproveHostRequest = z.infer<typeof ApproveHostRequest>;
 export type { ZodType } from 'zod';
 
