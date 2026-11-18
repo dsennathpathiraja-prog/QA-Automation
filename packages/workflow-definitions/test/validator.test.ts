@@ -55,4 +55,24 @@ describe('workflow validator', () => {
     rv.spec.steps[0]!.retry = { maxAttempts: 9 };
     expect(issues(rv).some((i) => i.ruleId === 'V11')).toBe(true);
   });
+
+  it('publishes against a read-only Squash when the work-item connector can read a story and its attachments', () => {
+    const def = templateDefinition('tpl-rv-standard')!;
+    const work = def.spec.connectors.find((c) => c.role === 'workItemSource')!;
+    work.requiredCapabilities = ['workitem.read', 'workitem.attachment.read', 'workitem.search'];
+    const tm = def.spec.connectors.find((c) => c.role === 'testManagement')!;
+    tm.requiredCapabilities = ['tm.testcase.upsert', 'tm.testcase.read', 'tm.execution.upsert', 'tm.execution.status.update'];
+    const instances = bind(def).map((i) => {
+      if (i.role === 'workItemSource') return { ...i, capabilities: ['workitem.read', 'workitem.attachment.read'] };
+      if (i.role === 'testManagement') return { ...i, capabilities: ['tm.testcase.read'] };
+      return i;
+    });
+    const report = validateWorkflow(def, { instances });
+    expect(errorsOf(report)).toEqual([]);
+    expect(report.some((i) => i.severity === 'warning' && i.message.includes('tm.testcase.upsert'))).toBe(true);
+
+    const regression = templateDefinition('tpl-rg-full')!;
+    const rg = bind(regression).map((i) => i.role === 'testManagement' ? { ...i, capabilities: ['tm.project.list', 'tm.campaign.list', 'tm.testcase.list', 'tm.testcase.read'] } : i);
+    expect(errorsOf(validateWorkflow(regression, { instances: rg }))).toEqual([]);
+  });
 });

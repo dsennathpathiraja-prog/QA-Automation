@@ -63,11 +63,11 @@ const rvParams: WfParameter[] = [
 ];
 
 function rvConnectors(browser: boolean | 'off' | 'optional', repo: boolean | 'off' | 'optional'): WfConnector[] {
-  const rows = [connector('workItemSource', 'work-item', ['workitem.read', 'workitem.attachment.read', 'workitem.search'])];
+  const rows = [connector('workItemSource', 'work-item', ['workitem.read', 'workitem.attachment.read'], ['workitem.search'])];
   if (browser !== 'off') rows.push(connector('browserAutomation', 'browser-automation', ['browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.interact', 'browser.screenshot'], [], browser === true));
   if (repo !== 'off') rows.push(connector('sourceRepo', 'source-repo', ['scm.tree.list', 'scm.file.read', 'scm.code.search', 'scm.branch.list'], [], repo === true));
   rows.push(
-    connector('testManagement', 'test-management', ['tm.testcase.upsert', 'tm.testcase.read', 'tm.execution.upsert', 'tm.execution.status.update'], ['tm.attachment.upload']),
+    connector('testManagement', 'test-management', ['tm.testcase.read'], ['tm.testcase.upsert', 'tm.execution.upsert', 'tm.execution.status.update', 'tm.attachment.upload']),
     connector('testRunner', 'test-runner', ['runner.test.execute']),
   );
   return rows;
@@ -102,7 +102,7 @@ function rgSteps(mode: 'all' | 'selected' | 'smoke'): WfStep[] {
 }
 
 const rgConnectors = (): WfConnector[] => [
-  connector('testManagement', 'test-management', ['tm.project.list', 'tm.suite.list', 'tm.campaign.list', 'tm.testcase.list', 'tm.testcase.read', 'tm.execution.upsert', 'tm.execution.status.update'], ['tm.attachment.upload', 'tm.tag.list']),
+  connector('testManagement', 'test-management', ['tm.project.list', 'tm.campaign.list', 'tm.testcase.list', 'tm.testcase.read'], ['tm.suite.list', 'tm.execution.upsert', 'tm.execution.status.update', 'tm.attachment.upload', 'tm.tag.list']),
   connector('testRunner', 'test-runner', ['runner.test.execute', 'runner.test.list']),
 ];
 

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { PlatformError } from '@qa/domain';
 import type { AdapterDeps, CapabilityDescriptor, CapabilityProbeEntry, ConnectionTestResult, ConnectorClient, ConnectorProvider, PermissionReport } from '@qa/connector-sdk';
 import { acceptanceCriteriaFromDescription, textOf } from '../acceptance-criteria';
-import { joinUrl, requestJson, required } from '../rest';
+import { downloadBytes, joinUrl, requestJson, required } from '../rest';
 
 export const JIRA_PROVIDER_KEY = 'jira';
 
@@ -21,7 +21,7 @@ export const jiraProvider: ConnectorProvider = {
     displayName: 'Jira',
     description: 'Reads projects and issues from Jira. Acceptance criteria are taken from the description. This connector has been checked against recorded responses, not a live site.',
     authMethods: [{ key: 'api_token', label: 'API token (Jira Cloud also needs the account email)', recommended: true, fields: [{ name: 'token', label: 'API token', secret: true, required: true }] }],
-    capabilities: ['workitem.project.list', 'workitem.search', 'workitem.read'],
+    capabilities: ['workitem.project.list', 'workitem.search', 'workitem.read', 'workitem.attachment.read'],
     requiredPermissions: ['Browse projects and read issues for the token owner.'],
     accessModePolicy: 'read_write',
     requiresInternet: true,
@@ -83,6 +83,7 @@ class JiraClient implements ConnectorClient {
     const search = out[0]?.support === 'supported' ? 'supported' : 'unsupported';
     out.push({ capability: 'workitem.search', support: search as 'supported' | 'unsupported' });
     out.push({ capability: 'workitem.read', support: search as 'supported' | 'unsupported', reason: this.cfg.acceptanceCriteriaField ? `Acceptance criteria are read from ${this.cfg.acceptanceCriteriaField}` : 'Acceptance criteria are read from the description' });
+    out.push({ capability: 'workitem.attachment.read', support: search as 'supported' | 'unsupported', reason: 'Attachments use the same permission as reading the issue' });
     return out;
   }
 
@@ -112,6 +113,17 @@ class JiraClient implements ConnectorClient {
         acceptanceCriteria: acSource,
         url: typeof r.body?.self === 'string' ? undefined : undefined,
       };
+    }
+    if (cap.id === 'workitem.attachment.read') {
+      const issueId = required(i.workItemId ?? i.id, 'Work item');
+      const attachmentId = required(i.attachmentId, 'Attachment');
+      const issue = await this.get(`/rest/api/3/issue/${encodeURIComponent(issueId)}`, { fields: 'attachment' });
+      const files = (issue.body?.fields?.attachment ?? []) as { id?: string; filename?: string; mimeType?: string; content?: string; size?: number }[];
+      const file = files.find((a) => a.id === attachmentId || a.filename === attachmentId);
+      if (!file?.content) throw new PlatformError('not-found', 'Jira could not find that item');
+      if ((file.size ?? 0) > 5_000_000) throw new PlatformError('validation', 'The attachment is larger than 5 MB.');
+      const downloaded = await downloadBytes(this.deps.http, file.content, this.auth, 'Jira', new URL(this.cfg.baseUrl));
+      return { name: file.filename ?? attachmentId, mimeType: file.mimeType ?? downloaded.mimeType, contentBase64: Buffer.from(downloaded.body).toString('base64') };
     }
     throw new PlatformError('unsupported', `Jira does not implement ${cap.id}`);
   }

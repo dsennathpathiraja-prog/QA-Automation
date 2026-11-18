@@ -5,6 +5,8 @@ import { WORKFLOW_TYPES, type ValidateCtx, type ValidationIssue, type WfDef, typ
 const KINDS = ['development', 'qa', 'staging', 'uat', 'production'];
 const PARAM_TYPES = ['string', 'integer', 'boolean', 'enum', 'work-item-ref', 'squash-scope', 'test-case-selection', 'environment-ref'];
 const PAUSE = { safe: 0, boundary: 1, never: 2 } as const;
+/** These are not available on the read-only connectors. A run previews them instead of blocking publish. */
+const PREVIEW = new Set(['workitem.search', 'tm.suite.list', 'tm.tag.list', 'tm.testcase.upsert', 'tm.execution.upsert', 'tm.execution.status.update', 'tm.attachment.upload']);
 
 const issue = (ruleId: string, severity: 'error' | 'warning', path: string, message: string, fixHint: string): ValidationIssue => ({ ruleId, severity, path, message, fixHint });
 const err = (ruleId: string, path: string, message: string, fixHint: string) => issue(ruleId, 'error', path, message, fixHint);
@@ -156,7 +158,9 @@ export function validateWorkflow(input: unknown, ctx: ValidateCtx = { instances:
       if (inst.category !== declared.category) issues.push(err('V5', path, `${role.role} is bound to the wrong kind of connector.`, `Choose a ${declared.category} connector.`));
       if (!inst.enabled || (inst.health !== 'healthy' && inst.health !== 'degraded')) issues.push(err('V4', path, `The connector for ${role.role} is not usable.`, 'Enable it and wait until its last check is healthy or degraded.'));
       for (const cap of new Set([...role.required, ...declared.requiredCapabilities])) {
-        if (!inst.capabilities.includes(cap)) issues.push(err('V4', path, `The connector for ${role.role} cannot ${cap}.`, 'Pick a connector whose last check includes that capability, or turn the step off if it is optional.'));
+        if (inst.capabilities.includes(cap)) continue;
+        if (PREVIEW.has(cap)) issues.push(issue('V4b', 'warning', path, `${role.role} does not offer ${cap}. That part of the run stays a preview and is not written back.`, 'Use a connector that offers it, or accept the preview.'));
+        else issues.push(err('V4', path, `The connector for ${role.role} cannot ${cap}.`, 'Pick a connector whose last check includes that capability, or turn the step off if it is optional.'));
       }
       for (const cap of declared.optionalCapabilities ?? []) {
         if (!inst.capabilities.includes(cap)) issues.push(issue('V4b', 'warning', path, `${role.role} does not offer ${cap}. That part of the run will be skipped.`, 'Use a connector that offers it, or accept the gap.'));

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { PlatformError } from '@qa/domain';
 import type { AdapterDeps, CapabilityDescriptor, CapabilityProbeEntry, ConnectionTestResult, ConnectorClient, ConnectorProvider, PermissionReport } from '@qa/connector-sdk';
 import { textOf } from '../acceptance-criteria';
-import { joinUrl, requestJson, required } from '../rest';
+import { downloadBytes, joinUrl, requestJson, required } from '../rest';
 
 export const AZURE_BOARDS_PROVIDER_KEY = 'azure-boards';
 
@@ -22,7 +22,7 @@ export const azureBoardsProvider: ConnectorProvider = {
     displayName: 'Azure Boards',
     description: 'Reads projects and work items from Azure Boards. Acceptance criteria come from the Acceptance Criteria field.',
     authMethods: [{ key: 'pat', label: 'Personal access token with Work Items (Read)', recommended: true, fields: [{ name: 'token', label: 'Access token', secret: true, required: true }] }],
-    capabilities: ['workitem.project.list', 'workitem.search', 'workitem.read'],
+    capabilities: ['workitem.project.list', 'workitem.search', 'workitem.read', 'workitem.attachment.read'],
     requiredPermissions: ['Work Items (Read) on the organisation.'],
     accessModePolicy: 'read_write',
     requiresInternet: true,
@@ -83,7 +83,7 @@ class AzureBoardsClient implements ConnectorClient {
       await this.call('GET', '/_apis/projects', { $top: '1' });
     } catch (e) {
       const reason = e instanceof PlatformError ? e.message : 'probe failed';
-      return ['workitem.project.list', 'workitem.search', 'workitem.read'].map((capability) => ({ capability, support: 'unsupported' as const, reason }));
+      return ['workitem.project.list', 'workitem.search', 'workitem.read', 'workitem.attachment.read'].map((capability) => ({ capability, support: 'unsupported' as const, reason }));
     }
     let search: CapabilityProbeEntry = { capability: 'workitem.search', support: 'supported' };
     try {
@@ -95,6 +95,7 @@ class AzureBoardsClient implements ConnectorClient {
       { capability: 'workitem.project.list', support: 'supported' },
       search,
       { capability: 'workitem.read', support: 'supported', reason: `Acceptance criteria are read from ${this.cfg.acceptanceCriteriaField}` },
+      { capability: 'workitem.attachment.read', support: 'supported', reason: 'Attachments use the same permission as reading the work item' },
     ];
   }
 
@@ -125,6 +126,16 @@ class AzureBoardsClient implements ConnectorClient {
         acceptanceCriteria: textOf(f[this.cfg.acceptanceCriteriaField]) || undefined,
         url: typeof r.body?._links?.html?.href === 'string' ? r.body._links.html.href : undefined,
       };
+    }
+    if (cap.id === 'workitem.attachment.read') {
+      const id = required(i.workItemId ?? i.id, 'Work item');
+      const attachmentId = required(i.attachmentId, 'Attachment');
+      const item = await this.call('GET', `/${encodeURIComponent(this.cfg.project)}/_apis/wit/workitems/${encodeURIComponent(id)}`, { $expand: 'relations' });
+      const relations = (item.body?.relations ?? []) as { rel?: string; url?: string; attributes?: { name?: string } }[];
+      const file = relations.find((r) => r.rel === 'AttachedFile' && (r.url?.includes(attachmentId) || r.attributes?.name === attachmentId));
+      if (!file?.url) throw new PlatformError('not-found', 'Azure Boards could not find that item');
+      const downloaded = await downloadBytes(this.deps.http, file.url, this.auth, 'Azure Boards', new URL(this.cfg.baseUrl));
+      return { name: file.attributes?.name ?? attachmentId, mimeType: downloaded.mimeType, contentBase64: Buffer.from(downloaded.body).toString('base64') };
     }
     throw new PlatformError('unsupported', `Azure Boards does not implement ${cap.id}`);
   }

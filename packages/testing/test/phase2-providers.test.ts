@@ -125,6 +125,20 @@ describe('source and work-item providers', () => {
     expect(JSON.stringify(m.hits)).not.toContain(TOKEN);
   });
 
+  it('reads a Jira attachment with the same credential', async () => {
+    let base = '';
+    const m = await mock((hit) => {
+      const path = pathOf(hit);
+      if (path.endsWith('/issue/SHOP-1')) return { body: { fields: { attachment: [{ id: '10001', filename: 'spec.txt', mimeType: 'text/plain', size: 5, content: `${base}/rest/api/3/attachment/content/10001` }] } } };
+      if (path.endsWith('/attachment/content/10001')) return { raw: 'hello', body: {} };
+      return { status: 404, body: {} };
+    });
+    base = m.baseUrl;
+    const client = jiraProvider.create({ baseUrl: m.baseUrl, email: 'ada@example.com' }, lease, { http: m.http });
+    const file = await client.handle({ id: 'workitem.attachment.read' } as never, { workItemId: 'SHOP-1', attachmentId: '10001' }, {} as never);
+    expect(file).toMatchObject({ name: 'spec.txt', mimeType: 'text/plain', contentBase64: Buffer.from('hello').toString('base64') });
+  });
+
   it('reads Azure Boards acceptance criteria from the field', async () => {
     const m = await mock((hit) => {
       const path = pathOf(hit);
@@ -139,6 +153,20 @@ describe('source and work-item providers', () => {
     expect(await client.handle({ id: 'workitem.read' } as never, { id: '12' }, {} as never)).toMatchObject({ title: 'Checkout', acceptanceCriteria: 'The saved card is listed' });
     expect(await client.handle({ id: 'workitem.search' } as never, { query: 'Checkout' }, {} as never)).toMatchObject({ items: [{ id: '12', title: 'Checkout' }] });
     expect(m.hits.some((h) => h.method === 'POST' && h.path.includes('wiql'))).toBe(true);
+  });
+
+  it('reads an Azure Boards attachment with the same credential', async () => {
+    let base = '';
+    const m = await mock((hit) => {
+      const path = pathOf(hit);
+      if (path.endsWith('/workitems/12')) return { body: { relations: [{ rel: 'AttachedFile', url: `${base}/attach/abc`, attributes: { name: 'spec.txt' } }] } };
+      if (path.endsWith('/attach/abc')) return { raw: 'hello', body: {} };
+      return { status: 404, body: {} };
+    });
+    base = m.baseUrl;
+    const client = azureBoardsProvider.create({ organization: 'contoso', project: 'Web', baseUrl: m.baseUrl }, lease, { http: m.http });
+    const file = await client.handle({ id: 'workitem.attachment.read' } as never, { workItemId: '12', attachmentId: 'abc' }, {} as never);
+    expect(file).toMatchObject({ name: 'spec.txt', contentBase64: Buffer.from('hello').toString('base64') });
   });
 
   it('talks to the managed Playwright server and refuses an unlisted origin', async () => {
