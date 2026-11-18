@@ -11,7 +11,7 @@ Connector Execution Manager with the full policy pipeline, capability registry, 
 ## Status (Nov 18, 2026)
 Phase 2 is code-complete. CI covers it with recorded responses. Nothing here has been run against a live GitHub organisation or Azure Boards project, because no sandbox token has been supplied.
 
-- Slices 1 and 2: connector instances, wizard, Test Connection on the worker, capability table, operation log, approved hosts. Providers include SquashTM (recorded responses; live check still postponed) and the offline "Sample work items (demo)" provider.
+- Slices 1 and 2: connector instances, wizard, Test Connection on the worker, capability table, operation log, approved hosts. Providers include SquashTM (the current instance is connected live and kept read-only) and the offline "Sample work items (demo)" provider.
 - Slice 3: GitHub (live-capable) and Azure DevOps Repos (recorded responses, labelled in the UI). A token that can push is refused and the connector cannot be switched on. The six read-only checks are on the connector page: read-only record, no write capability, GET only, token scope, approved host, no git write path.
 - Slice 4: Azure Boards (live-capable, acceptance criteria from the Acceptance Criteria field) and Jira (recorded responses, acceptance criteria from the description, with an optional field name).
 - Slice 5: managed Playwright server (`--profile browser`, address `http://playwright-mcp:8931`). The browser may open only the addresses listed on the connector. MFA is a saved browser session a person captures once; the platform does not enter the code. The worker re-tests enabled connectors on a schedule (`CONNECTOR_HEALTH_MS`, default 15 minutes). Approved hosts is the list that blocks unexpected addresses.
