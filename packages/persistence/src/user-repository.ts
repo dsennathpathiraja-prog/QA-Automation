@@ -17,6 +17,11 @@ export interface LoginProfile {
 export class PgUserRepository {
   constructor(private readonly db: Db) {}
 
+  async findBySubject(subject: string): Promise<{ id: string; displayName: string } | undefined> {
+    const [row] = await this.db.select({ id: appUser.id, displayName: appUser.displayName }).from(appUser).where(eq(appUser.externalSubject, subject)).limit(1);
+    return row;
+  }
+
   async recordLogin(p: LoginProfile, now: Date = new Date()): Promise<{ userId: string; created: boolean }> {
     return this.db.transaction(async (tx) => {
       const existing = await tx.select({ id: appUser.id, status: appUser.status }).from(appUser).where(eq(appUser.externalSubject, p.subject)).limit(1);

@@ -60,8 +60,8 @@ describe('route guard', () => {
   });
 
   it('placeholder pages say which phase delivers them', async () => {
-    renderApp('/environments', { me: { status: 200, body: meFor('qa_lead') } });
-    expect(await screen.findByText(/Phase 3/)).toBeTruthy();
+    renderApp('/workflows', { me: { status: 200, body: meFor('qa_lead') } });
+    expect(await screen.findByText(/Phase 4/)).toBeTruthy();
   });
 });
 

@@ -144,10 +144,9 @@ if (conn && env.MIGRATE_ON_START !== 'false') {
 
 const auth = useOidc ? buildOidc(conn?.db) : undefined;
 
-function buildConnectors(db: Db | undefined) {
+function buildConnectors(db: Db | undefined, secrets: ReturnType<typeof buildSecretStore>) {
   if (!db) return undefined;
   const { providers, capabilities } = buildProviders(env, platformEnv);
-  const secrets = buildSecretStore(env, platformEnv, db);
   const service = new ConnectorService({
     connectors: new PgConnectorRepository(db),
     tests: new PgTestRequestQueue(db),
@@ -162,12 +161,23 @@ function buildConnectors(db: Db | undefined) {
   return { connectors: service, operations: new PgOperationLogReader(db) };
 }
 
+const secretSelection = conn ? buildSecretStore(env, platformEnv, conn.db) : undefined;
 const app = buildApp({
   sessions: auth ? auth.resolver : new DevHeaderSessionResolver(platformEnv),
   profile,
   auth,
-  connectors: buildConnectors(conn?.db),
-  environments: conn ? new EnvironmentService({ environments: new PgEnvironmentRepository(conn.db), hosts: new PgApprovedHostRepository(conn.db), audit: new PgAuditSink(new PgAuditLog(conn.db)) }) : undefined,
+  connectors: buildConnectors(conn?.db, secretSelection),
+  environments: conn
+    ? new EnvironmentService({
+        environments: new PgEnvironmentRepository(conn.db),
+        hosts: new PgApprovedHostRepository(conn.db),
+        audit: new PgAuditSink(new PgAuditLog(conn.db)),
+        secrets: secretSelection?.store ?? noSecretStore,
+        secretStoreKind: secretSelection?.kind,
+        users: new PgUserRepository(conn.db),
+        connectors: new PgConnectorRepository(conn.db),
+      })
+    : undefined,
   llm: buildLlmStatus(),
   readiness: conn ? { database: () => pingDb(conn.db) } : undefined,
 });

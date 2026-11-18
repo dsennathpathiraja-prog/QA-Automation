@@ -1,18 +1,23 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { PlatformError, matchHost } from '@qa/domain';
+import { PlatformError, type SecretStore } from '@qa/domain';
 import type { ActorRef } from './connector-service';
+import { EnvironmentConfig, type EnvironmentValidation, type ResolvedEnvironment } from './environment-config';
+import { checkedApplicationUrl } from './environment-rules';
 import {
   ENVIRONMENT_KINDS,
   type ApprovedHost,
-  type AuditSink,
   type ApprovedHostRepository,
+  type AuditSink,
+  type ConnectorLookup,
   type EnvironmentAuthorizationRecord,
   type EnvironmentBrowser,
   type EnvironmentKind,
   type EnvironmentRecord,
   type EnvironmentRepository,
   type EnvironmentRestrictions,
+  type SecretRefWrite,
+  type UserDirectory,
 } from './ports';
 
 const BrowserSchema = z
@@ -69,10 +74,22 @@ export interface UpdateEnvironmentInput {
 }
 
 export class EnvironmentService {
+  private readonly config: EnvironmentConfig;
+
   constructor(
-    private readonly d: { environments: EnvironmentRepository; hosts: ApprovedHostRepository; audit: AuditSink },
+    private readonly d: {
+      environments: EnvironmentRepository;
+      hosts: ApprovedHostRepository;
+      audit: AuditSink;
+      secrets?: Pick<SecretStore, 'put' | 'exists' | 'delete'>;
+      secretStoreKind?: SecretRefWrite['store'];
+      users?: UserDirectory;
+      connectors?: ConnectorLookup;
+    },
     private readonly clock: { now(): Date } = { now: () => new Date() },
-  ) {}
+  ) {
+    this.config = new EnvironmentConfig(d, this.clock);
+  }
 
   async list(): Promise<EnvironmentSummary[]> {
     const rows = await this.d.environments.list();
@@ -197,22 +214,58 @@ export class EnvironmentService {
     return parsed.data;
   }
 
+  listAuthProfiles(environmentId: string) {
+    return this.config.listAuthProfiles(environmentId);
+  }
+  createAuthProfile(actor: ActorRef, environmentId: string, input: { name: string; type: string; config?: Record<string, string>; secrets?: Record<string, string> }) {
+    return this.config.createAuthProfile(actor, environmentId, input);
+  }
+  updateAuthProfile(actor: ActorRef, environmentId: string, id: string, input: { name?: string; type?: string; config?: Record<string, string>; secrets?: Record<string, string> }) {
+    return this.config.updateAuthProfile(actor, environmentId, id, input);
+  }
+  deleteAuthProfile(actor: ActorRef, environmentId: string, id: string) {
+    return this.config.deleteAuthProfile(actor, environmentId, id);
+  }
+  listTestData(environmentId: string) {
+    return this.config.listTestData(environmentId);
+  }
+  createTestData(actor: ActorRef, environmentId: string, input: { name: string; data?: Record<string, string>; secrets?: Record<string, string> }) {
+    return this.config.createTestData(actor, environmentId, input);
+  }
+  updateTestData(actor: ActorRef, environmentId: string, id: string, input: { name?: string; data?: Record<string, string>; secrets?: Record<string, string> }) {
+    return this.config.updateTestData(actor, environmentId, id, input);
+  }
+  deleteTestData(actor: ActorRef, environmentId: string, id: string) {
+    return this.config.deleteTestData(actor, environmentId, id);
+  }
+  listConnectorRefs(environmentId: string) {
+    return this.config.listConnectorRefs(environmentId);
+  }
+  setConnectorRef(actor: ActorRef, environmentId: string, input: { role: string; connectorId: string }) {
+    return this.config.setConnectorRef(actor, environmentId, input);
+  }
+  removeConnectorRef(actor: ActorRef, environmentId: string, role: string) {
+    return this.config.removeConnectorRef(actor, environmentId, role);
+  }
+  listAuthorizations(environmentId: string) {
+    return this.config.listAuthorizations(environmentId);
+  }
+  grantAuthorization(actor: ActorRef, environmentId: string, input: { justification: string; validFrom: string; validUntil: string }) {
+    return this.config.grantAuthorization(actor, environmentId, input);
+  }
+  revokeAuthorization(actor: ActorRef, environmentId: string, id: string) {
+    return this.config.revokeAuthorization(actor, environmentId, id);
+  }
+  async resolve(id: string): Promise<ResolvedEnvironment> {
+    const detail = await this.get(id);
+    return this.config.resolve(id, detail.selectable, detail.authorizationUntil);
+  }
+  async validate(id: string, ctx: { workflowType?: 'requirement-validation' | 'regression-testing'; parallelism?: number; prodSafe?: boolean } = {}): Promise<EnvironmentValidation> {
+    const detail = await this.get(id);
+    return this.config.validate(id, detail.selectable, detail.restrictions, detail.kind, ctx);
+  }
+
   private applicationUrl(raw: string, hosts: ApprovedHost[]): string {
-    let url: URL;
-    try {
-      url = new URL(raw.trim());
-    } catch {
-      throw new PlatformError('validation', 'Application URL must be a full address, such as https://qa.example.com.');
-    }
-    if (url.username || url.password) throw new PlatformError('validation', 'Put credentials in an authentication profile, not in the application URL.');
-    const host = url.hostname.toLowerCase();
-    const rule = hosts.find((h) => matchHost(h.hostPattern, host));
-    if (!rule) throw new PlatformError('validation', `Host ${host} is not on the approved-host list for applications. Approve it, then save the environment again.`);
-    if (url.protocol === 'http:') {
-      if (!(rule.internal && rule.allowHttp)) throw new PlatformError('validation', `Plain http is not allowed for ${host}. Approve it as an internal host, or use https.`);
-    } else if (url.protocol !== 'https:') {
-      throw new PlatformError('validation', 'Application URL must use https, or http for an approved internal host.');
-    }
-    return url.toString();
+    return checkedApplicationUrl(raw, hosts);
   }
 }

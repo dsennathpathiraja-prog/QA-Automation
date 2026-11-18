@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { EnvironmentService } from '@qa/application';
+import { InMemorySecretStore } from '@qa/infrastructure';
 import { InMemoryAuditSink, InMemoryEnvironmentRepository, InMemoryHostRepository } from '@qa/testing';
 import { buildApp, DevHeaderSessionResolver } from '../src';
 
@@ -15,7 +16,15 @@ beforeEach(async () => {
   for (const m of ['log', 'info', 'warn', 'error', 'debug'] as const) spies.push(vi.spyOn(console, m).mockImplementation(() => undefined));
   const hosts = new InMemoryHostRepository();
   await hosts.add({ hostPattern: 'qa.shop.example', purpose: 'application', internal: false, allowHttp: false });
-  const service = new EnvironmentService({ environments: new InMemoryEnvironmentRepository(), hosts, audit: new InMemoryAuditSink() });
+  const service = new EnvironmentService({
+    environments: new InMemoryEnvironmentRepository(),
+    hosts,
+    audit: new InMemoryAuditSink(),
+    secrets: new InMemorySecretStore(),
+    secretStoreKind: 'db-envelope',
+    users: { findBySubject: async () => ({ id: '11111111-1111-4111-8111-111111111111', displayName: 'Ada' }) },
+    connectors: { get: async () => undefined },
+  });
   app = buildApp({ sessions: new DevHeaderSessionResolver('test'), profile: 'standard', environments: service });
 });
 
@@ -35,5 +44,15 @@ describe('environment routes', () => {
     const body = created.json();
     expect(body.selectable).toBe(true);
     expect((await call('GET', '/api/v1/environments', engineer)).json()).toMatchObject({ items: [{ name: 'QA' }] });
+  });
+
+  it('accepts a password and answers without it', async () => {
+    const created = await call('POST', '/api/v1/environments', admin, { name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' });
+    const id = created.json().id as string;
+    const profile = await call('POST', `/api/v1/environments/${id}/auth-profiles`, admin, { name: 'qa-user', type: 'basic', config: { username: 'qa.bot' }, secrets: { password: 'pw-not-shown' } });
+    expect(profile.statusCode).toBe(201);
+    expect(JSON.stringify(profile.json())).not.toContain('pw-not-shown');
+    expect(profile.json()).toMatchObject({ hasSecret: true, config: { username: 'qa.bot' } });
+    expect((await call('POST', `/api/v1/environments/${id}/auth-profiles`, engineer, { name: 'other', type: 'none' })).statusCode).toBe(403);
   });
 });

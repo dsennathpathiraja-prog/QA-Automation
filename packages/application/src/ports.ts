@@ -190,6 +190,68 @@ export interface EnvironmentAuthorizationRecord {
   status: 'active' | 'revoked' | 'expired';
   validFrom: Date;
   validUntil: Date;
+  justification?: string;
+  grantedByName?: string;
+}
+
+export const AUTH_PROFILE_TYPES = ['none', 'basic', 'form-login', 'bearer', 'storage-state'] as const;
+export type AuthProfileType = (typeof AUTH_PROFILE_TYPES)[number];
+
+export const CONNECTOR_ROLES = ['work-item', 'source-repo', 'test-management', 'browser-automation'] as const;
+export type ConnectorRole = (typeof CONNECTOR_ROLES)[number];
+
+export interface AuthProfileRecord {
+  id: string;
+  environmentId: string;
+  name: string;
+  type: AuthProfileType;
+  /** Non-secret fields only, such as a login address or username. */
+  config: Record<string, string>;
+  hasSecret: boolean;
+  secretLocator?: string;
+}
+
+export interface TestDataRecord {
+  id: string;
+  environmentId: string;
+  name: string;
+  data: Record<string, string>;
+  hasSecret: boolean;
+  secretLocator?: string;
+}
+
+export interface ConnectorRefRecord {
+  environmentId: string;
+  role: ConnectorRole;
+  connectorInstanceId: string;
+  connectorName: string;
+}
+
+export interface NewAuthorization {
+  id: string;
+  environmentId: string;
+  grantedBy: string;
+  grantedByName: string;
+  justification: string;
+  validFrom: Date;
+  validUntil: Date;
+}
+
+export interface SecretRefWrite {
+  id: string;
+  store: 'openbao' | 'db-envelope';
+  locator: string;
+  version: number;
+  ownerType: 'auth_profile' | 'test_data_profile';
+  ownerId: string;
+}
+
+export interface UserDirectory {
+  findBySubject(subject: string): Promise<{ id: string; displayName: string } | undefined>;
+}
+
+export interface ConnectorLookup {
+  get(id: string): Promise<{ id: string; name: string; category: string; enabled: boolean } | undefined>;
 }
 
 export interface EnvironmentRepository {
@@ -200,4 +262,20 @@ export interface EnvironmentRepository {
   update(id: string, patch: EnvironmentPatch): Promise<EnvironmentRecord>;
   softDelete(id: string): Promise<void>;
   activeAuthorization(environmentId: string, at: Date): Promise<EnvironmentAuthorizationRecord | undefined>;
+  listAuthProfiles(environmentId: string): Promise<AuthProfileRecord[]>;
+  insertAuthProfile(rec: AuthProfileRecord): Promise<AuthProfileRecord>;
+  updateAuthProfile(id: string, patch: Partial<Pick<AuthProfileRecord, 'name' | 'type' | 'config' | 'hasSecret' | 'secretLocator'>>): Promise<AuthProfileRecord>;
+  deleteAuthProfile(id: string): Promise<void>;
+  listTestData(environmentId: string): Promise<TestDataRecord[]>;
+  insertTestData(rec: TestDataRecord): Promise<TestDataRecord>;
+  updateTestData(id: string, patch: Partial<Pick<TestDataRecord, 'name' | 'data' | 'hasSecret' | 'secretLocator'>>): Promise<TestDataRecord>;
+  deleteTestData(id: string): Promise<void>;
+  listConnectorRefs(environmentId: string): Promise<ConnectorRefRecord[]>;
+  upsertConnectorRef(rec: ConnectorRefRecord): Promise<void>;
+  deleteConnectorRef(environmentId: string, role: ConnectorRole): Promise<void>;
+  listAuthorizations(environmentId: string): Promise<EnvironmentAuthorizationRecord[]>;
+  insertAuthorization(rec: NewAuthorization): Promise<EnvironmentAuthorizationRecord>;
+  revokeAuthorization(id: string, environmentId: string): Promise<EnvironmentAuthorizationRecord | undefined>;
+  saveSecretRef(rec: SecretRefWrite): Promise<void>;
+  deleteSecretRef(ownerType: SecretRefWrite['ownerType'], ownerId: string): Promise<void>;
 }

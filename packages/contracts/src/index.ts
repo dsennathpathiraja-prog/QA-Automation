@@ -200,3 +200,53 @@ export const CreateEnvironmentRequest = z.object({
 });
 export const UpdateEnvironmentRequest = CreateEnvironmentRequest.partial();
 export type EnvironmentDetail = z.infer<typeof EnvironmentDetailSchema>;
+
+const AuthType = z.enum(['none', 'basic', 'form-login', 'bearer', 'storage-state']);
+const ConnectorRole = z.enum(['work-item', 'source-repo', 'test-management', 'browser-automation']);
+const stringMap = z.record(z.string());
+
+export const AuthProfileSchema = z.object({ id: z.string(), name: z.string(), type: AuthType, config: stringMap, hasSecret: z.boolean() });
+export const AuthProfileListResponse = z.object({ items: z.array(AuthProfileSchema) });
+export const AuthProfileRequest = z.object({ name: z.string(), type: AuthType, config: stringMap.optional(), secrets: stringMap.optional() });
+export const TestDataProfileSchema = z.object({ id: z.string(), name: z.string(), data: stringMap, hasSecret: z.boolean() });
+export const TestDataListResponse = z.object({ items: z.array(TestDataProfileSchema) });
+export const TestDataRequest = z.object({ name: z.string(), data: stringMap.optional(), secrets: stringMap.optional() });
+export const ConnectorRefSchema = z.object({ environmentId: z.string(), role: ConnectorRole, connectorInstanceId: z.string(), connectorName: z.string() });
+export const ConnectorRefListResponse = z.object({ items: z.array(ConnectorRefSchema) });
+export const SetConnectorRefRequest = z.object({ role: ConnectorRole, connectorId: z.string() });
+export const AuthorizationSchema = z.object({
+  id: z.string(),
+  status: z.enum(['active', 'revoked', 'expired']),
+  validFrom: z.string(),
+  validUntil: z.string(),
+  justification: z.string(),
+  grantedByName: z.string(),
+  active: z.boolean(),
+});
+export const AuthorizationListResponse = z.object({ items: z.array(AuthorizationSchema) });
+export const GrantAuthorizationRequest = z.object({ justification: z.string(), validFrom: z.string(), validUntil: z.string() });
+export const EnvironmentValidationSchema = z.object({
+  ok: z.boolean(),
+  selectable: z.boolean(),
+  connectivity: z.literal('not-run'),
+  errors: z.array(z.object({ message: z.string() })),
+});
+export const ResolvedEnvironmentSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: EnvironmentKindSchema,
+  applicationUrl: z.string(),
+  browser: EnvironmentBrowserSchema,
+  restrictions: EnvironmentRestrictionsSchema,
+  selectable: z.boolean(),
+  authorizationUntil: z.string().optional(),
+  authProfiles: z.array(AuthProfileSchema),
+  testDataProfiles: z.array(TestDataProfileSchema),
+  connectors: z.array(z.object({ role: ConnectorRole, connectorId: z.string(), name: z.string() })),
+  connectivity: z.literal('not-run'),
+});
+export const ValidateEnvironmentRequest = z.object({
+  workflowType: z.enum(['requirement-validation', 'regression-testing']).optional(),
+  parallelism: z.number().optional(),
+  prodSafe: z.boolean().optional(),
+});

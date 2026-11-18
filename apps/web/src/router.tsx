@@ -10,6 +10,8 @@ import { Connectors } from './pages/Connectors';
 import { ConnectorDetailPage } from './pages/connectors/ConnectorDetailPage';
 import { ConnectorWizard } from './pages/connectors/ConnectorWizard';
 import { Dashboard } from './pages/Dashboard';
+import { EnvironmentPage } from './pages/environments/EnvironmentPage';
+import { Environments } from './pages/Environments';
 import { IdentityMapping } from './pages/IdentityMapping';
 import { SignInError } from './pages/SignInError';
 
@@ -28,7 +30,7 @@ const NotFound = () => (
   </>
 );
 
-const real: Record<string, () => ReactNode> = { dashboard: () => <Dashboard />, connectors: () => <Connectors />, identity: () => <IdentityMapping />, hosts: () => <ApprovedHosts />, models: () => <AiModels /> };
+const real: Record<string, () => ReactNode> = { dashboard: () => <Dashboard />, connectors: () => <Connectors />, environments: () => <Environments />, identity: () => <IdentityMapping />, hosts: () => <ApprovedHosts />, models: () => <AiModels /> };
 
 export interface RouterOptions {
   history?: Parameters<typeof createRouter>[0]['history'];
@@ -70,8 +72,10 @@ export function buildRouter(opts: RouterOptions = {}): AnyRouter {
   const manageItem: NavItem = { ...connectorItem, anyOf: ['connector.manage'] };
   const connectorNew = createRoute({ getParentRoute: () => shell, path: '/connectors/new', component: () => <Guarded item={manageItem}><ConnectorWizard /></Guarded> });
   const connectorDetail = createRoute({ getParentRoute: () => shell, path: '/connectors/$id', component: () => <Guarded item={connectorItem}><ConnectorDetailPage /></Guarded> });
+  const environmentItem = NAV_ITEMS.find((i) => i.id === 'environments')!;
+  const environmentDetail = createRoute({ getParentRoute: () => shell, path: '/environments/$id', component: () => <Guarded item={environmentItem}><EnvironmentPage /></Guarded> });
 
-  return createRouter({ routeTree: root.addChildren([signInError, shell.addChildren([...pages, connectorNew, connectorDetail])]), history: opts.history, defaultPreload: false });
+  return createRouter({ routeTree: root.addChildren([signInError, shell.addChildren([...pages, connectorNew, connectorDetail, environmentDetail])]), history: opts.history, defaultPreload: false });
 }
 
 declare module '@tanstack/react-router' {
