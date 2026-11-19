@@ -176,7 +176,7 @@ class SquashClient implements ConnectorClient {
     const canWrite = !!claims.permissions && /WRITE/i.test(claims.permissions);
     out.push({
       capability: 'tm.testcase.upsert',
-      support: supported.has('tm.testcase.list') ? 'supported' : 'unsupported',
+      support: !supported.has('tm.testcase.list') ? 'unsupported' : canWrite ? 'supported' : 'partial',
       reason: !supported.has('tm.testcase.list')
         ? 'Follows tm.testcase.list'
         : canWrite

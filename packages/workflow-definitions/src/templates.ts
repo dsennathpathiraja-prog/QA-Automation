@@ -65,7 +65,6 @@ function rvConnectors(browser: boolean | 'off' | 'optional', repo: boolean | 'of
   if (repo !== 'off') rows.push(connector('sourceRepo', 'source-repo', ['scm.tree.list', 'scm.file.read', 'scm.code.search', 'scm.branch.list'], [], repo === true));
   rows.push(
     connector('testManagement', 'test-management', ['tm.testcase.read'], ['tm.testcase.upsert', 'tm.execution.upsert', 'tm.execution.status.update', 'tm.attachment.upload']),
-    connector('testRunner', 'test-runner', ['runner.test.execute']),
   );
   return rows;
 }

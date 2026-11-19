@@ -67,8 +67,17 @@ describe('Squash provider against the documentation-based mock', () => {
     expect(by['tm.testcase.list']!.support).toBe('supported');
     expect(by['tm.requirement.read']!.support).toBe('supported');
     expect(by['tm.testcase.search']).toMatchObject({ support: 'partial' });
+    expect(by['tm.testcase.upsert']).toMatchObject({ support: 'partial', reason: expect.stringMatching(/READ_WRITE/) });
     for (const id of ['tm.tag.list', 'tm.customfield.list', 'tm.suite.list']) expect(by[id]!.support).toBe('unsupported');
     expect(mock.nonGetRequests()).toEqual([]);
+  });
+
+  it('marks upsert supported when the token is READ_WRITE', async () => {
+    const rw = makeSquashToken({ permissions: 'READ_WRITE' });
+    await mock.close();
+    mock = await startSquashMock({ token: rw, permissions: 'READ_WRITE' });
+    const probe = await connect({ token: rw }).probeCapabilities();
+    expect(probe.find((p) => p.capability === 'tm.testcase.upsert')).toMatchObject({ support: 'supported' });
   });
 
   it('reads test cases through a project when the global list is refused', async () => {
