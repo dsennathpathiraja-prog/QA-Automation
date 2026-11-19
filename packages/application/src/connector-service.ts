@@ -409,8 +409,12 @@ export class ConnectorService {
     if (!raw || Object.keys(raw).length === 0) throw new PlatformError('validation', 'Credentials are required for this connector.');
     const r = p.secretSchema.safeParse(raw);
     if (!r.success) {
-      // Field names only: the submitted values must never be echoed back.
-      throw new PlatformError('validation', `Credentials are not valid: ${r.error.issues.map((i) => i.path.join('.') || 'credentials').join(', ')}`);
+      // Field paths by default (never echo values). Custom messages are allowed when the schema
+      // authored them without embedding the submitted secret (e.g. Squash password-without-token).
+      const detail = r.error.issues
+        .map((i) => (i.code === 'custom' && i.message ? i.message : i.path.join('.') || 'credentials'))
+        .join('; ');
+      throw new PlatformError('validation', `Credentials are not valid: ${detail}`);
     }
     return r.data as Record<string, string>;
   }

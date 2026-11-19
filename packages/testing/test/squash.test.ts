@@ -79,6 +79,46 @@ describe('Squash provider against the documentation-based mock', () => {
     ).toThrow(/token|API token/i);
   });
 
+  it('fails fast when a password is present but the API token is missing', () => {
+    expect(() => squashProvider.secretSchema.parse({ password: 'not-a-token', username: 'qa' })).toThrow(/personal API token|Bearer|username\/password/i);
+    const rules: EgressRule[] = [{ hostPattern: '127.0.0.1', purpose: 'application', internal: true, allowHttp: true, allowLoopback: true }];
+    const http = new HardenedHttpClient({ egress: new EgressPolicy({ rules, profile: 'standard', platformEnv: 'development' }), allowedMethods: ['GET'] });
+    expect(() =>
+      squashProvider.create(
+        { baseUrl: mock.baseUrl },
+        { value: { password: 'login-password-value', username: 'squash-user' }, expiresAt: new Date(Date.now() + 60_000), release() {} },
+        { http },
+      ),
+    ).toThrow(/personal API token|Bearer|username\/password/i);
+  });
+
+  it('ignores username/password when a token is present and never sends Basic on upsert', async () => {
+    const rw = makeSquashToken({ permissions: 'READ_WRITE' });
+    await mock.close();
+    mock = await startSquashMock({ token: rw, permissions: 'READ_WRITE' });
+    const rules: EgressRule[] = [{ hostPattern: '127.0.0.1', purpose: 'application', internal: true, allowHttp: true, allowLoopback: true }];
+    const http = new HardenedHttpClient({
+      egress: new EgressPolicy({ rules, profile: 'standard', platformEnv: 'development' }),
+      allowedMethods: ['GET'],
+      allowOther: (req) => req.method === 'POST' && /\/api\/rest\/[^/]+\/(projects\/\d+\/test-cases|test-cases\/\d+\/steps)$/.test(new URL(req.url).pathname),
+    });
+    const client = squashProvider.create(
+      { baseUrl: `http://user:pass@127.0.0.1:${new URL(mock.baseUrl).port}${new URL(mock.baseUrl).pathname}` },
+      {
+        value: { token: rw, username: 'ignored-user', password: 'ignored-password' },
+        expiresAt: new Date(Date.now() + 60_000),
+        release() {},
+      },
+      { http },
+    );
+    await call(client, 'tm.testcase.upsert', { reference: 'QAP-no-basic-1', name: 'No Basic', steps: [{ action: 'Open', expected: 'Ok' }] });
+    const posts = mock.nonGetRequests().filter((item) => item.method === 'POST');
+    expect(posts.length).toBeGreaterThan(0);
+    expect(posts.every((item) => item.authorization === `Bearer ${rw}`)).toBe(true);
+    expect(posts.every((item) => !String(item.authorization ?? '').startsWith('Basic '))).toBe(true);
+    expect(mock.requests.every((item) => !String(item.authorization ?? '').startsWith('Basic '))).toBe(true);
+  });
+
   it('probes capabilities from real endpoints and declares what Squash does not offer', async () => {
     const probe = await connect().probeCapabilities();
     const by = Object.fromEntries(probe.map((p) => [p.capability, p]));
@@ -274,6 +314,7 @@ describe('Squash provider against the documentation-based mock', () => {
     ]));
     // Upsert POST must use Bearer only (same header as GET) — never Token, Basic, or bare token.
     expect(posts.every((item) => item.authorization === `Bearer ${rw}`)).toBe(true);
+    expect(posts.every((item) => !String(item.authorization ?? '').startsWith('Basic '))).toBe(true);
     expect(mock.requests.filter((item) => item.method === 'GET').every((item) => item.authorization === `Bearer ${rw}`)).toBe(true);
   });
 

@@ -184,4 +184,31 @@ describe('approved hosts', () => {
       }),
     ).rejects.toMatchObject({ errorClass: 'validation' });
   });
+
+  it('rejects Squash username/password without a token and stores only the token when both are sent', async () => {
+    const s = setup();
+    await expect(
+      s.service.create(actor, {
+        providerKey: 'squash-tm',
+        name: 'Squash password only',
+        config: { baseUrl: 'http://squash.corp.local/squash' },
+        secrets: { username: 'qa', password: 'not-allowed-for-rest' },
+      }),
+    ).rejects.toMatchObject({
+      errorClass: 'validation',
+      message: expect.stringMatching(/personal API token|Bearer|username\/password/i),
+    });
+    const token = `${'c'.repeat(30)}`;
+    const c = await s.service.create(actor, {
+      providerKey: 'squash-tm',
+      name: 'Squash token wins',
+      config: { baseUrl: 'http://user:pass@squash.corp.local/squash' },
+      secrets: { token, username: 'qa', password: 'ignored' },
+    });
+    const leased = (await s.secrets.lease(connectorSecretLocator(c.id))).value;
+    expect(leased).toEqual({ token });
+    expect(leased).not.toHaveProperty('password');
+    expect(leased).not.toHaveProperty('username');
+    expect((await s.service.get(c.id, { includeConfig: true })).config?.baseUrl).toMatch(/^http:\/\/squash\.corp\.local\/squash\/?$/);
+  });
 });

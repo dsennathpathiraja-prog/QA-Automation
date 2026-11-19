@@ -26,6 +26,15 @@ export interface HardenedHttpOptions {
 const defaultResolve = async (host: string): Promise<string[]> =>
   (await dnsLookup(host, { all: true })).map((a) => a.address);
 
+/** Remove userinfo so undici/fetch cannot synthesize Authorization: Basic from the URL. */
+export function stripUrlUserinfo(url: URL): URL {
+  if (!url.username && !url.password) return url;
+  const clean = new URL(url.href);
+  clean.username = '';
+  clean.password = '';
+  return clean;
+}
+
 export class HardenedHttpClient implements HttpPort {
   private readonly allowed: Set<string>;
 
@@ -38,7 +47,8 @@ export class HardenedHttpClient implements HttpPort {
     if (!this.allowed.has(method) && !this.o.allowOther?.({ ...req, method })) {
       throw new PlatformError('denied', `HTTP method ${method} is not allowed for this connector`);
     }
-    let url = new URL(req.url);
+    // Never pass URL userinfo to fetch — clients may emit Authorization: Basic from it (breaks Squash 15.x).
+    let url = stripUrlUserinfo(new URL(req.url));
     const maxRedirects = this.o.maxRedirects ?? 3;
     for (let hop = 0; hop <= maxRedirects; hop += 1) {
       const rule = this.o.egress.assertAllowed(url);
@@ -48,7 +58,7 @@ export class HardenedHttpClient implements HttpPort {
         const loc = res.headers['location'];
         if (!loc) return res;
         if (method !== 'GET' && method !== 'HEAD') throw new PlatformError('denied', 'redirects are only followed for GET/HEAD');
-        url = new URL(loc, url);
+        url = stripUrlUserinfo(new URL(loc, url));
         continue;
       }
       return res;
