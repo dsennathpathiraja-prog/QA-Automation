@@ -51,6 +51,9 @@ export interface EnvironmentSummary {
 export interface EnvironmentDetail extends EnvironmentSummary {
   browser: EnvironmentBrowser;
   restrictions: EnvironmentRestrictions;
+  reachability: EnvironmentRecord['reachability'];
+  reachabilityDetail?: string;
+  reachabilityCheckedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -100,7 +103,16 @@ export class EnvironmentService {
 
   async get(id: string): Promise<EnvironmentDetail> {
     const row = await this.require(id);
-    return { ...(await this.summary(row)), browser: row.browser, restrictions: row.restrictions, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
+    return {
+      ...(await this.summary(row)),
+      browser: row.browser,
+      restrictions: row.restrictions,
+      reachability: row.reachability,
+      reachabilityDetail: row.reachabilityDetail,
+      reachabilityCheckedAt: row.reachabilityCheckedAt?.toISOString(),
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    };
   }
 
   async create(actor: ActorRef, input: CreateEnvironmentInput): Promise<EnvironmentDetail> {
@@ -137,7 +149,16 @@ export class EnvironmentService {
       restrictions,
       enabled: input.enabled,
     });
+    if (applicationUrl !== current.applicationUrl) await this.d.environments.clearReachability(id);
     await this.d.audit.append({ actorId: actor.id, action: 'environment.update', subjectType: 'environment', subjectId: id, detail: { name: input.name ?? current.name, kind } });
+    return this.get(id);
+  }
+
+  async requestReachability(actor: ActorRef, id: string): Promise<EnvironmentDetail> {
+    const row = await this.require(id);
+    if (!row.enabled) throw new PlatformError('conflict', 'Enable this environment before checking it.');
+    await this.d.environments.queueReachability(id);
+    await this.d.audit.append({ actorId: actor.id, action: 'environment.reachability.request', subjectType: 'environment', subjectId: id });
     return this.get(id);
   }
 

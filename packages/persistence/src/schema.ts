@@ -288,12 +288,16 @@ export const environment = pgTable(
     browserConfig: jsonb('browser_config').$type<Record<string, unknown>>().notNull().default({}),
     executionRestrictions: jsonb('execution_restrictions').$type<Record<string, unknown>>().notNull().default({}),
     enabled: boolean('enabled').notNull().default(true),
+    reachability: text('reachability').notNull().default('not-run'),
+    reachabilityDetail: text('reachability_detail'),
+    reachabilityCheckedAt: ts('reachability_checked_at'),
     deletedAt: ts('deleted_at'),
     ...audit(),
   },
   (t) => [
     uniqueIndex('environment_name_uq').on(t.name).where(sql`${t.deletedAt} is null`),
     check('environment_kind_ck', sql`${t.kind} in ('development','qa','staging','uat','production')`),
+    check('environment_reachability_ck', sql`${t.reachability} in ('not-run','queued','checking','reachable','unreachable')`),
   ],
 );
 

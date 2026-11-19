@@ -2,11 +2,12 @@ import { buildProviders, buildSecretStore, connectDatabase } from '@qa/bootstrap
 import type { DeploymentProfile, PlatformEnv } from '@qa/domain';
 import { EgressPolicy, HardenedHttpClient, initTelemetry, type EgressRule } from '@qa/infrastructure';
 import { tick as engineTick } from '@qa/workflow-engine';
-import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgExecutionRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
+import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgEnvironmentRepository, PgExecutionRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
 import { buildWorkerApp } from './app';
 import { ConnectorTester } from './connector-tester';
 import { ConnectorHealthScheduler } from './health-scheduler';
 import { WorkerLoop } from './loop';
+import { checkReachability } from './reachability';
 
 const env = process.env;
 const profile = (env.PLATFORM_PROFILE ?? 'standard') as DeploymentProfile;
@@ -24,11 +25,11 @@ const platformEnv = (env.PLATFORM_ENV ?? 'development') as PlatformEnv;
 const conn = connectDatabase(env);
 const secrets = buildSecretStore(env, platformEnv, conn?.db);
 
+const hosts = conn ? new PgApprovedHostRepository(conn.db) : undefined;
 let tester: ConnectorTester | undefined;
 let scheduler: ConnectorHealthScheduler | undefined;
-if (conn && secrets) {
+if (conn && secrets && hosts) {
   const { providers, capabilities } = buildProviders(env, platformEnv);
-  const hosts = new PgApprovedHostRepository(conn.db);
   tester = new ConnectorTester({
     connectors: new PgConnectorRepository(conn.db),
     tests: new PgTestRequestQueue(conn.db),
@@ -52,6 +53,7 @@ if (conn && secrets) {
 }
 
 const executions = conn ? new PgExecutionRepository(conn.db) : undefined;
+const environments = conn ? new PgEnvironmentRepository(conn.db) : undefined;
 const loop = new WorkerLoop({
   tick: async () => {
     let busy = false;
@@ -60,6 +62,12 @@ const loop = new WorkerLoop({
       if ((await tester.runOnce()) === 'busy') busy = true;
     }
     if (executions && (await engineTick(executions, { owner: 'worker', now: new Date() })) === 'busy') busy = true;
+    if (environments && hosts && (await checkReachability(environments, async (url) => {
+      const rules: EgressRule[] = (await hosts.list('application')).map((h) => ({ hostPattern: h.hostPattern, purpose: 'application', internal: h.internal, allowHttp: h.allowHttp }));
+      const http = new HardenedHttpClient({ egress: new EgressPolicy({ rules, profile, platformEnv }), allowedMethods: ['GET', 'HEAD'], timeoutMs: 10_000, maxBodyBytes: 64 * 1024 });
+      const res = await http.request({ method: 'GET', url, headers: { accept: '*/*' } });
+      return { status: res.status };
+    })) === 'busy') busy = true;
     return busy ? 'busy' : 'idle';
   },
   idleDelayMs: Number(env.WORKER_IDLE_MS ?? 1_000),

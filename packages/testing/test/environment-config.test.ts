@@ -81,4 +81,20 @@ describe('environment configuration', () => {
     expect(JSON.stringify(resolved)).not.toContain('secretLocator');
     expect(resolved.connectors).toEqual([{ role: 'source-repo', connectorId: 'c1', name: 'GitHub' }]);
   });
+
+  it('queues a reachability check and clears it when the address changes', async () => {
+    const s = setup();
+    await s.hosts.add({ hostPattern: 'qa.shop.example', purpose: 'application', internal: false, allowHttp: false });
+    const env = await s.service.create(actor, { name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' });
+    expect(env.reachability).toBe('not-run');
+    expect((await s.service.requestReachability(actor, env.id)).reachability).toBe('queued');
+    expect((await s.service.requestReachability(actor, env.id)).reachability).toBe('queued');
+    await s.environments.finishReachability(env.id, 'reachable', 'The application answered 200.', new Date('2026-06-01T00:00:00Z'));
+    expect((await s.service.get(env.id)).reachabilityDetail).toBe('The application answered 200.');
+    const moved = await s.service.update(actor, env.id, { applicationUrl: 'https://qa.shop.example/shop' });
+    expect(moved.reachability).toBe('not-run');
+    expect(moved.reachabilityDetail).toBeUndefined();
+    await s.service.disable(actor, env.id);
+    await expect(s.service.requestReachability(actor, env.id)).rejects.toThrow(/Enable this environment/);
+  });
 });

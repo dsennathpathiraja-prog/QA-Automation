@@ -1,6 +1,6 @@
 import { and, eq, gt, isNull, lte, sql } from 'drizzle-orm';
 import { PlatformError } from '@qa/domain';
-import type { AuthProfileRecord, AuthProfileType, ConnectorRefRecord, ConnectorRole, EnvironmentAuthorizationRecord, EnvironmentBrowser, EnvironmentKind, EnvironmentPatch, EnvironmentRecord, EnvironmentRepository, EnvironmentRestrictions, NewAuthorization, NewEnvironment, SecretRefWrite, TestDataRecord } from '@qa/application';
+import type { AuthProfileRecord, AuthProfileType, ConnectorRefRecord, ConnectorRole, EnvironmentAuthorizationRecord, EnvironmentBrowser, EnvironmentKind, EnvironmentPatch, EnvironmentRecord, EnvironmentRepository, EnvironmentRestrictions, NewAuthorization, NewEnvironment, Reachability, SecretRefWrite, TestDataRecord } from '@qa/application';
 import type { Db } from './db';
 import { appUser, authProfile, connectorInstance, environment, environmentAuthorization, environmentConnectorRef, secretRef, testDataProfile } from './schema';
 
@@ -21,6 +21,9 @@ const toRecord = (r: Row): EnvironmentRecord => ({
   browser: r.browserConfig as unknown as EnvironmentBrowser,
   restrictions: r.executionRestrictions as unknown as EnvironmentRestrictions,
   enabled: r.enabled,
+  reachability: r.reachability as Reachability,
+  reachabilityDetail: r.reachabilityDetail ?? undefined,
+  reachabilityCheckedAt: r.reachabilityCheckedAt ?? undefined,
   createdAt: r.createdAt,
   updatedAt: r.updatedAt,
 });
@@ -240,6 +243,38 @@ export class PgEnvironmentRepository implements EnvironmentRepository {
   async deleteSecretRef(ownerType: SecretRefWrite['ownerType'], ownerId: string): Promise<void> {
     if (ownerType === 'test_data_profile') await this.db.update(testDataProfile).set({ secretRefId: null }).where(eq(testDataProfile.id, ownerId));
     await this.db.delete(secretRef).where(and(eq(secretRef.ownerType, ownerType), eq(secretRef.ownerId, ownerId)));
+  }
+
+  async queueReachability(id: string): Promise<EnvironmentRecord> {
+    const current = await this.get(id);
+    if (!current) throw new PlatformError('not-found', 'Environment not found');
+    if (current.reachability === 'queued' || current.reachability === 'checking') return current;
+    const [row] = await this.db
+      .update(environment)
+      .set({ reachability: 'queued', reachabilityDetail: null, reachabilityCheckedAt: null, updatedAt: new Date() })
+      .where(live(id))
+      .returning();
+    if (!row) throw new PlatformError('not-found', 'Environment not found');
+    return toRecord(row);
+  }
+
+  async claimReachability(): Promise<EnvironmentRecord | undefined> {
+    const [candidate] = await this.db.select({ id: environment.id }).from(environment).where(and(eq(environment.reachability, 'queued'), isNull(environment.deletedAt))).limit(1);
+    if (!candidate) return undefined;
+    const [row] = await this.db
+      .update(environment)
+      .set({ reachability: 'checking', updatedAt: new Date() })
+      .where(and(eq(environment.id, candidate.id), eq(environment.reachability, 'queued'), isNull(environment.deletedAt)))
+      .returning();
+    return row && toRecord(row);
+  }
+
+  async finishReachability(id: string, result: 'reachable' | 'unreachable', detail: string, at: Date): Promise<void> {
+    await this.db.update(environment).set({ reachability: result, reachabilityDetail: detail, reachabilityCheckedAt: at, updatedAt: at }).where(live(id));
+  }
+
+  async clearReachability(id: string): Promise<void> {
+    await this.db.update(environment).set({ reachability: 'not-run', reachabilityDetail: null, reachabilityCheckedAt: null, updatedAt: new Date() }).where(live(id));
   }
 }
 

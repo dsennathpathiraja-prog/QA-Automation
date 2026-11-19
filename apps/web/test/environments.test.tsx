@@ -14,6 +14,7 @@ const env = {
   applicationUrl: 'https://qa.shop.example/',
   enabled: true,
   selectable: true,
+  reachability: 'not-run',
   browser: { browser: 'chromium', headless: true },
   restrictions: { maxParallelism: 1, prodSafeOnly: false },
   createdAt: '2026-11-18T08:00:00.000Z',
@@ -40,6 +41,8 @@ describe('environments', () => {
         [`/api/v1/environments/${ID}/auth-profiles`]: { status: 200, body: { items: [{ id: 'p1', name: 'qa-user', type: 'form-login', config: { username: 'qa.bot' }, hasSecret: true }] } },
       },
     });
+    expect(await screen.findByText('Reachability has not been checked.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Check reachability' })).toBeTruthy();
     await user.click(await screen.findByRole('tab', { name: 'Authentication' }));
     expect(await screen.findByText(/qa-user/)).toBeTruthy();
     expect(screen.getByText(/•••••••• saved/)).toBeTruthy();

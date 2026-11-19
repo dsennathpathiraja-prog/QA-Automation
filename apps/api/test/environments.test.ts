@@ -55,4 +55,13 @@ describe('environment routes', () => {
     expect(profile.json()).toMatchObject({ hasSecret: true, config: { username: 'qa.bot' } });
     expect((await call('POST', `/api/v1/environments/${id}/auth-profiles`, engineer, { name: 'other', type: 'none' })).statusCode).toBe(403);
   });
+
+  it('queues a reachability check for an administrator', async () => {
+    const created = await call('POST', '/api/v1/environments', admin, { name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' });
+    const id = created.json().id as string;
+    expect((await call('POST', `/api/v1/environments/${id}/reachability`, engineer)).statusCode).toBe(403);
+    const queued = await call('POST', `/api/v1/environments/${id}/reachability`, admin);
+    expect(queued.statusCode).toBe(200);
+    expect(queued.json()).toMatchObject({ reachability: 'queued' });
+  });
 });

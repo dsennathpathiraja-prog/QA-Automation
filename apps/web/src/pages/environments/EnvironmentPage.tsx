@@ -30,7 +30,14 @@ const TABS: { id: Tab; label: string }[] = [
 export function EnvironmentPage() {
   const { id } = useParams({ strict: false }) as { id: string };
   const api = useApi();
-  const q = useQuery({ queryKey: ['environment', id], queryFn: () => api.get(`/api/v1/environments/${id}`, EnvironmentDetailSchema) });
+  const q = useQuery({
+    queryKey: ['environment', id],
+    queryFn: () => api.get(`/api/v1/environments/${id}`, EnvironmentDetailSchema),
+    refetchInterval: (query) => {
+      const reachability = query.state.data?.reachability;
+      return reachability === 'queued' || reachability === 'checking' ? 1000 : false;
+    },
+  });
   if (q.isError) return (
     <>
       <PageHeader title="Environment" />
@@ -42,12 +49,39 @@ export function EnvironmentPage() {
   return <Detail env={q.data} />;
 }
 
+function reachabilityText(env: EnvironmentDetail): string {
+  if (env.reachability === 'queued' || env.reachability === 'checking') return 'The check is running. This page updates on its own.';
+  if (env.reachability === 'reachable') return env.reachabilityDetail ?? 'The application answered.';
+  if (env.reachability === 'unreachable') return env.reachabilityDetail ?? 'The application did not answer.';
+  return 'Reachability has not been checked.';
+}
+
+function Reachability({ env }: { env: EnvironmentDetail }) {
+  const api = useApi();
+  const manage = useSession().can('environment.manage');
+  const qc = useQueryClient();
+  const running = env.reachability === 'queued' || env.reachability === 'checking';
+  const check = useMutation({
+    mutationFn: () => api.post(`/api/v1/environments/${env.id}/reachability`, {}, EnvironmentDetailSchema),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['environment', env.id] }),
+  });
+  return (
+    <div className="mb-4 text-sm">
+      <p>{reachabilityText(env)}</p>
+      {manage && (
+        <button type="button" className={`${buttonClass} mt-2`} disabled={running || check.isPending} onClick={() => check.mutate()}>Check reachability</button>
+      )}
+      {check.isError && <p className="mt-2">{errorText(check.error, 'The check could not be started.')}</p>}
+    </div>
+  );
+}
+
 function Detail({ env }: { env: EnvironmentDetail }) {
   const [tab, setTab] = useState<Tab>('general');
   return (
     <>
       <PageHeader title={env.name} description={`${kindLabel(env.kind)} · ${env.selectable ? 'Selectable for a run' : env.kind === 'production' ? 'Not selectable until an authorization is active' : 'Not selectable'}`} />
-      <p className="mb-4 text-sm">Reachability has not been checked yet. That check waits until a runner can place it. Connectors are chosen on the workflow.</p>
+      <Reachability env={env} />
       <div role="tablist" aria-label="Environment settings" className="mb-4 flex flex-wrap gap-2">
         {TABS.map((t) => (
           <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} className={tab === t.id ? primaryButtonClass : buttonClass} onClick={() => setTab(t.id)}>{t.label}</button>
@@ -245,7 +279,7 @@ function Restrictions({ env }: { env: EnvironmentDetail }) {
       <button type="button" className={`${buttonClass} mt-3`} onClick={() => check.mutate()}>Check this environment</button>
       {check.data && (
         <div className="mt-3" role="status">
-          {check.data.ok ? <p>This environment is ready to select. Reachability has not been checked.</p> : (
+          {check.data.ok ? <p>This environment is ready to select.</p> : (
             <ul className="list-disc pl-5 text-sm">{check.data.errors.map((e) => <li key={e.message}>{e.message}</li>)}</ul>
           )}
         </div>

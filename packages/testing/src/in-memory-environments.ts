@@ -33,7 +33,7 @@ export class InMemoryEnvironmentRepository implements EnvironmentRepository {
   async insert(n: NewEnvironment) {
     if ([...this.rows.values()].some((r) => r.name.toLowerCase() === n.name.toLowerCase())) throw new PlatformError('conflict', `An environment named "${n.name}" already exists.`);
     const now = new Date();
-    const rec: EnvironmentRecord = { id: n.id, name: n.name, kind: n.kind, applicationUrl: n.applicationUrl, browser: n.browser, restrictions: n.restrictions, enabled: n.enabled, createdAt: now, updatedAt: now };
+    const rec: EnvironmentRecord = { id: n.id, name: n.name, kind: n.kind, applicationUrl: n.applicationUrl, browser: n.browser, restrictions: n.restrictions, enabled: n.enabled, reachability: 'not-run', createdAt: now, updatedAt: now };
     this.rows.set(rec.id, structuredClone(rec));
     return structuredClone(rec);
   }
@@ -157,6 +157,44 @@ export class InMemoryEnvironmentRepository implements EnvironmentRepository {
   async deleteSecretRef(ownerType: SecretRefWrite['ownerType'], ownerId: string) {
     const i = this.secretRefs.findIndex((r) => r.ownerType === ownerType && r.ownerId === ownerId);
     if (i >= 0) this.secretRefs.splice(i, 1);
+  }
+
+  async queueReachability(id: string) {
+    const row = this.rows.get(id);
+    if (!row) throw new PlatformError('not-found', 'Environment not found');
+    if (row.reachability !== 'queued' && row.reachability !== 'checking') {
+      row.reachability = 'queued';
+      row.reachabilityDetail = undefined;
+      row.reachabilityCheckedAt = undefined;
+      row.updatedAt = new Date();
+    }
+    return structuredClone(row);
+  }
+
+  async claimReachability() {
+    const row = [...this.rows.values()].find((r) => r.reachability === 'queued');
+    if (!row) return undefined;
+    row.reachability = 'checking';
+    row.updatedAt = new Date();
+    return structuredClone(row);
+  }
+
+  async finishReachability(id: string, result: 'reachable' | 'unreachable', detail: string, at: Date) {
+    const row = this.rows.get(id);
+    if (!row) return;
+    row.reachability = result;
+    row.reachabilityDetail = detail;
+    row.reachabilityCheckedAt = at;
+    row.updatedAt = at;
+  }
+
+  async clearReachability(id: string) {
+    const row = this.rows.get(id);
+    if (!row) return;
+    row.reachability = 'not-run';
+    row.reachabilityDetail = undefined;
+    row.reachabilityCheckedAt = undefined;
+    row.updatedAt = new Date();
   }
 
   private assertProfileName(rows: { id: string; environmentId: string; name: string }[], environmentId: string, name: string, except?: string) {

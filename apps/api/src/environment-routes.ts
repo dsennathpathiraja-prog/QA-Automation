@@ -65,6 +65,10 @@ export function registerEnvironmentRoutes(app: FastifyInstance, environments: En
     return reply.code(204).send();
   });
 
+  app.post('/api/v1/environments/:id/reachability', { config: { access: requires('environment.manage') } }, async (req) =>
+    EnvironmentDetailSchema.parse(await environments.requestReachability({ id: req.principal!.id }, idOf((req.params as { id: string }).id))),
+  );
+
   const envId = (req: { params: unknown }) => idOf((req.params as { id: string }).id);
   const childId = (req: { params: unknown }) => idOf((req.params as { profileId: string }).profileId);
 

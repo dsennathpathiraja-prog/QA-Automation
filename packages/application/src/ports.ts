@@ -152,6 +152,9 @@ export interface EnvironmentRestrictions {
   prodSafeOnly: boolean;
 }
 
+export const REACHABILITY = ['not-run', 'queued', 'checking', 'reachable', 'unreachable'] as const;
+export type Reachability = (typeof REACHABILITY)[number];
+
 export interface EnvironmentRecord {
   id: string;
   name: string;
@@ -160,6 +163,10 @@ export interface EnvironmentRecord {
   browser: EnvironmentBrowser;
   restrictions: EnvironmentRestrictions;
   enabled: boolean;
+  /** Whether the application address answered the last check. */
+  reachability: Reachability;
+  reachabilityDetail?: string;
+  reachabilityCheckedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -278,4 +285,11 @@ export interface EnvironmentRepository {
   revokeAuthorization(id: string, environmentId: string): Promise<EnvironmentAuthorizationRecord | undefined>;
   saveSecretRef(rec: SecretRefWrite): Promise<void>;
   deleteSecretRef(ownerType: SecretRefWrite['ownerType'], ownerId: string): Promise<void>;
+  /** Marks a check as waiting. A check that is already queued or running is left as it is. */
+  queueReachability(id: string): Promise<EnvironmentRecord>;
+  /** Takes one queued check and marks it running. Undefined when nothing is waiting. */
+  claimReachability(): Promise<EnvironmentRecord | undefined>;
+  finishReachability(id: string, result: 'reachable' | 'unreachable', detail: string, at: Date): Promise<void>;
+  /** Drops a previous result, used when the application address changes. */
+  clearReachability(id: string): Promise<void>;
 }

@@ -186,6 +186,9 @@ export const EnvironmentSummarySchema = z.object({
 export const EnvironmentDetailSchema = EnvironmentSummarySchema.extend({
   browser: EnvironmentBrowserSchema,
   restrictions: EnvironmentRestrictionsSchema,
+  reachability: z.enum(['not-run', 'queued', 'checking', 'reachable', 'unreachable']),
+  reachabilityDetail: z.string().optional(),
+  reachabilityCheckedAt: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
