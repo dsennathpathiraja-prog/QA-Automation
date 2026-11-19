@@ -11,7 +11,7 @@ A requirement-validation run records each stage. playwright-test-planner writes 
 
 ## Slices
 1. **Execution history.** One list across workflows. Open a run to see its events and, while it is still open, pause, resume, or cancel it.
-2. **Test case library.** Cases kept by this platform, with versions and a collection a regression workflow can name. No writes to the current Squash.
+2. **Test case library.** Cases kept by this platform, with versions and a collection a regression workflow can name. A requirement-validation publish also stores the generated cases in Squash.
 
 ## Not in this phase
-A test suite inside the runner, driving the browser, and pushing results back to Squash.
+A test suite inside the runner, driving the browser, and pushing execution results back to Squash. The order for that remaining work is [requirement-validation-implementation.md](requirement-validation-implementation.md).
