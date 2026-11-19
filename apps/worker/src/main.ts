@@ -87,7 +87,7 @@ if (conn && secrets && hosts && built) {
 /** Work-item search, Playwright MCP, Squash test-case store, and Squash execution status writes. */
 function squashWriteAllowed(method: string, path: string): boolean {
   if (method === 'POST' && /\/(_apis\/wit\/wiql|mcp)$/.test(path)) return true;
-  if (method === 'POST' && /\/api\/rest\/[^/]+\/(projects\/\d+\/test-cases|test-cases\/\d+\/steps|iterations\/\d+\/executions)$/.test(path)) return true;
+  if (method === 'POST' && /\/api\/rest\/[^/]+\/(test-cases(\/\d+\/steps)?|iterations\/\d+\/executions)$/.test(path)) return true;
   return method === 'PATCH' && /\/api\/rest\/[^/]+\/executions\/\d+$/.test(path);
 }
 const executions = conn ? new PgExecutionRepository(conn.db) : undefined;

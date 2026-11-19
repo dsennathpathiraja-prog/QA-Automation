@@ -11,6 +11,8 @@ export interface SquashMockRequest {
   method: string;
   path: string;
   authorization?: string;
+  /** Parsed JSON body for POST/PATCH (tests assert create shape). */
+  body?: unknown;
 }
 
 export interface SquashMockOptions {
@@ -79,8 +81,14 @@ const EXECUTIONS: Record<string, any>[] = [
 ];
 
 const summaryOf = (e: Record<string, any>) => {
-  const { _type, id, name, reference } = e;
-  return reference === undefined ? { _type, id, name } : { _type, id, name, reference };
+  const { _type, id, name, reference, automated_test_reference } = e;
+  return {
+    _type,
+    id,
+    name,
+    ...(reference === undefined ? {} : { reference }),
+    ...(automated_test_reference === undefined ? {} : { automated_test_reference }),
+  };
 };
 
 export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock> {
@@ -156,10 +164,25 @@ export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock>
         } catch {
           return send(400, { message: 'invalid json' });
         }
+        rec.body = payload;
         let created: RegExpMatchArray | null;
-        if (req.method === 'POST' && (created = path.match(/^\/projects\/(\d+)\/test-cases$/))) {
+        // SquashTM 15.0.4: POST /test-cases with parent project + automated_test_reference (not POST /projects/{id}/test-cases).
+        if (req.method === 'POST' && path === '/test-cases') {
+          const parent = payload.parent as { _type?: string; id?: unknown } | undefined;
+          const projectId = Number(parent?.id);
+          if (parent?._type !== 'project' || !Number.isInteger(projectId) || projectId <= 0) {
+            return send(400, { message: 'parent {_type:project,id} is required' });
+          }
           const id = 1000 + cases.length;
-          const row = { _type: 'test-case', id, name: String(payload.name ?? ''), reference: String(payload.reference ?? ''), project: projectById(Number(created[1])), steps: [] as Record<string, unknown>[] };
+          const row = {
+            _type: 'test-case',
+            id,
+            name: String(payload.name ?? ''),
+            automated_test_reference: String(payload.automated_test_reference ?? ''),
+            description: typeof payload.description === 'string' ? payload.description : undefined,
+            project: projectById(projectId),
+            steps: [] as Record<string, unknown>[],
+          };
           cases.push(row);
           return send(201, row);
         }
