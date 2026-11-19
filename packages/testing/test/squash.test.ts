@@ -112,6 +112,45 @@ describe('Squash provider against the documentation-based mock', () => {
     expect(r.items.map((t: any) => t.id)).toEqual(['300']);
   });
 
+  it('resolves a configured project name via GET /projects before listing', async () => {
+    const r = (await call(connect({ config: { projectName: 'Back Office' } }), 'tm.testcase.list')) as any;
+    expect(r.items.map((t: any) => t.id)).toEqual(['300']);
+    expect(mock.requests.some((req) => req.method === 'GET' && req.path.includes('/projects'))).toBe(true);
+  });
+
+  it('accepts a legacy project id config field as projectId', async () => {
+    const r = (await call(connect({ config: { project: '2' } }), 'tm.testcase.list')) as any;
+    expect(r.items.map((t: any) => t.id)).toEqual(['300']);
+  });
+
+  it('reports a clear error when the project name is missing or ambiguous', async () => {
+    await expect(call(connect({ config: { projectName: 'Missing Project' } }), 'tm.testcase.list')).rejects.toMatchObject({
+      errorClass: 'validation',
+      message: expect.stringContaining('No Squash project named "Missing Project"'),
+    });
+    await mock.close();
+    mock = await startSquashMock({
+      token,
+      projects: [
+        { id: 10, name: 'ToolKit-AgenFlow' },
+        { id: 11, name: 'ToolKit-AgenFlow' },
+      ],
+    });
+    await expect(call(connect({ config: { projectName: 'ToolKit-AgenFlow' } }), 'tm.testcase.list')).rejects.toMatchObject({
+      errorClass: 'validation',
+      message: expect.stringMatching(/Several Squash projects are named "ToolKit-AgenFlow".*10.*11/),
+    });
+  });
+
+  it('tests connection against a project name and surfaces the resolved id', async () => {
+    await mock.close();
+    mock = await startSquashMock({ token, projects: [{ id: 7, name: 'ToolKit-AgenFlow' }, { id: 2, name: 'Back Office' }] });
+    const r = await connect({ config: { projectName: 'ToolKit-AgenFlow' } }).testConnection();
+    expect(r).toMatchObject({ ok: true, discovered: { projectId: '7', projectName: 'ToolKit-AgenFlow' } });
+    const missing = await connect({ config: { projectName: 'No Such' } }).testConnection();
+    expect(missing).toMatchObject({ ok: false, message: expect.stringContaining('No Squash project named "No Such"') });
+  });
+
   it('reads a test case as plain text with steps, tags and custom fields, and drops embedded scripts', async () => {
     const t = (await call(connect(), 'tm.testcase.read', { id: '238' })) as any;
     expect(t).toMatchObject({ id: '238', name: 'Guest checkout with card', reference: 'TC-238', kind: 'classic', importance: 'HIGH', status: 'APPROVED' });
@@ -201,8 +240,15 @@ describe('Squash provider against the documentation-based mock', () => {
     expect(again).toEqual({ id: '1004', created: false, projectId: '1' });
     const pinned = await call(client, 'tm.testcase.upsert', { project: '2', reference: 'QAP-qa-1-2', name: 'Pinned project case', steps: [{ action: 'Open', expected: 'Ok' }] });
     expect(pinned).toEqual({ id: '1005', created: true, projectId: '2' });
+    const byName = squashProvider.create(
+      { baseUrl: mock.baseUrl, projectName: 'Back Office' },
+      { value: { token: rw }, expiresAt: new Date(Date.now() + 60_000), release() {} },
+      { http },
+    );
+    const named = await call(byName, 'tm.testcase.upsert', { reference: 'QAP-qa-1-3', name: 'Named project case', steps: [{ action: 'Open', expected: 'Ok' }] });
+    expect(named).toEqual({ id: '1006', created: true, projectId: '2' });
     const posts = mock.nonGetRequests().filter((item) => item.method === 'POST' && item.path.includes('/test-cases') && !item.path.includes('/steps'));
-    expect(posts).toHaveLength(2);
+    expect(posts).toHaveLength(3);
     expect(posts.map((item) => item.path)).toEqual(expect.arrayContaining([
       expect.stringMatching(/\/projects\/1\/test-cases$/),
       expect.stringMatching(/\/projects\/2\/test-cases$/),

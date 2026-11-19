@@ -14,15 +14,23 @@ import type {
 import { htmlToText } from './html';
 import { readTokenClaims } from './token';
 
+const blankToUndef = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
+
 const ConfigSchema = z.object({
   baseUrl: z.string().url(),
-  /** Squash project id. When set, generated cases are stored in that project. When omitted, the first project the token can see is used. */
-  project: z.string().regex(/^\d+$/).optional(),
+  /** Squash project name (preferred). Resolved to an id via GET /projects before list or upsert. */
+  projectName: z.preprocess(blankToUndef, z.string().min(1).max(255).optional()),
+  /** Numeric Squash project id. Kept for back-compat when the name is not used. */
+  projectId: z.preprocess(blankToUndef, z.string().regex(/^\d+$/).optional()),
+  /** @deprecated Prefer projectId. Accepted so existing connectors keep working. */
+  project: z.preprocess(blankToUndef, z.string().regex(/^\d+$/).optional()),
   pageSize: z.number().int().min(1).max(200).default(50),
   maxItems: z.number().int().min(1).max(10_000).default(1_000),
   expiryWarnDays: z.number().int().min(1).max(90).default(14),
 });
 const SecretSchema = z.object({ token: z.string().min(20) });
+
+type SquashConfig = Omit<z.infer<typeof ConfigSchema>, 'project'> & { projectId?: string };
 
 export const SQUASH_PROVIDER_KEY = 'squash-tm';
 export const SQUASH_SUPPORTED_CAPABILITIES = [
@@ -88,7 +96,8 @@ export const squashProvider: ConnectorProvider = {
     wizard: [
       { key: 'connection', title: 'Connection', fields: [
         { name: 'baseUrl', label: 'SquashTM address (for example http://host/squash)', type: 'url', required: true },
-        { name: 'project', label: 'Squash project id (optional; leave blank to use the first project the token can see)', type: 'text', required: false },
+        { name: 'projectName', label: 'Squash project name (for example ToolKit-AgenFlow)', type: 'text', required: false },
+        { name: 'projectId', label: 'Squash project id (optional; only if you prefer the numeric id)', type: 'text', required: false },
       ] },
       { key: 'credentials', title: 'API token', fields: [{ name: 'token', label: 'API token', type: 'secret', required: true }] },
       { key: 'test', title: 'Test connection', action: 'test-connection' },
@@ -100,7 +109,9 @@ export const squashProvider: ConnectorProvider = {
   secretSchema: SecretSchema,
   create(config, secrets, deps) {
     if (!secrets) throw new PlatformError('auth', 'SquashTM needs an API token');
-    return new SquashClient(ConfigSchema.parse(config), SecretSchema.parse(secrets.value).token, deps);
+    const { project: legacyProject, ...parsed } = ConfigSchema.parse(config);
+    const cfg: SquashConfig = { ...parsed, projectId: parsed.projectId ?? legacyProject };
+    return new SquashClient(cfg, SecretSchema.parse(secrets.value).token, deps);
   },
 };
 
@@ -108,7 +119,7 @@ class SquashClient implements ConnectorClient {
   private readonly api: string;
 
   constructor(
-    private readonly cfg: z.infer<typeof ConfigSchema>,
+    private readonly cfg: SquashConfig,
     private readonly token: string,
     private readonly deps: AdapterDeps,
   ) {
@@ -122,12 +133,21 @@ class SquashClient implements ConnectorClient {
       const body = await this.get('/projects', { size: 1 });
       const days = claims.expiresAt ? Math.floor((claims.expiresAt.getTime() - Date.now()) / 86_400_000) : undefined;
       const warn = days !== undefined && days <= this.cfg.expiryWarnDays;
+      let projectId: string | undefined;
+      let projectName: string | undefined;
+      if (this.cfg.projectId || this.cfg.projectName) {
+        projectId = await this.resolveProjectId(undefined);
+        const match = (await this.listProjects()).find((p) => String(p.id) === projectId);
+        projectName = match ? String(match.name) : this.cfg.projectName;
+      }
       return {
         ok: true,
         message: warn ? `Connected. The API token expires in ${days} day(s); replace it soon.` : 'Connected to SquashTM.',
         latencyMs: Date.now() - started,
         discovered: {
           projectsVisible: (body.page as Page | undefined)?.totalElements,
+          projectId,
+          projectName,
           tokenPermissions: claims.permissions,
           tokenExpiresAt: claims.expiresAt?.toISOString(),
           tokenDaysToExpiry: days,
@@ -218,17 +238,17 @@ class SquashClient implements ConnectorClient {
 
   async handle(cap: CapabilityDescriptor, input: unknown, ctx: CallContext): Promise<unknown> {
     const i = (input ?? {}) as Record<string, any>;
-    const project = i.project ?? ctx.scope.project;
     const signal = ctx.signal;
+    const project = await this.resolveProjectId(i.project ?? ctx.scope.project, signal);
     switch (cap.id) {
       case 'tm.capabilities.probe':
         return { version: '15.0.4', capabilities: (await this.probeCapabilities()).map(({ capability, support, reason }) => ({ capability, support, reason })) };
       case 'tm.project.list':
         return this.list('/projects', 'projects', i, signal, (p) => ({ id: String(p.id), name: String(p.name) }));
       case 'tm.testcase.list':
-        return this.list(project ? `/projects/${idOf(project, 'project')}/test-cases` : '/test-cases', 'test-cases', i, signal, (t) => this.summary(t));
+        return this.list(project ? `/projects/${project}/test-cases` : '/test-cases', 'test-cases', i, signal, (t) => this.summary(t));
       case 'tm.testcase.search': {
-        const path = project ? `/projects/${idOf(project, 'project')}/test-cases` : '/test-cases';
+        const path = project ? `/projects/${project}/test-cases` : '/test-cases';
         const all = await this.collect(path, 'test-cases', signal);
         const q = typeof i.query === 'string' ? i.query.toLowerCase() : undefined;
         const ref = typeof i.reference === 'string' ? i.reference.toLowerCase() : undefined;
@@ -244,7 +264,7 @@ class SquashClient implements ConnectorClient {
       case 'tm.testcase.upsert':
         return this.upsert(i, project, signal);
       case 'tm.requirement.list':
-        return this.list(project ? `/projects/${idOf(project, 'project')}/requirements` : '/requirements', 'requirements', i, signal, (r) => ({
+        return this.list(project ? `/projects/${project}/requirements` : '/requirements', 'requirements', i, signal, (r) => ({
           id: String(r.id),
           name: String(r.name),
           reference: typeof r.reference === 'string' ? r.reference : undefined,
@@ -261,7 +281,7 @@ class SquashClient implements ConnectorClient {
           issueCount: typeof e.number_of_issues === 'number' ? e.number_of_issues : undefined,
         }));
       case 'tm.campaign.list':
-        return this.list(project ? `/projects/${idOf(project, 'project')}/campaigns` : '/campaigns', 'campaigns', i, signal, (c) => ({ id: String(c.id), name: String(c.name) }));
+        return this.list(project ? `/projects/${project}/campaigns` : '/campaigns', 'campaigns', i, signal, (c) => ({ id: String(c.id), name: String(c.name) }));
       case 'tm.iteration.list':
         return this.list(i.campaign ? `/campaigns/${idOf(i.campaign, 'campaign')}/iterations` : '/iterations', 'iterations', i, signal, (c) => ({ id: String(c.id), name: String(c.name) }));
       default:
@@ -352,11 +372,10 @@ class SquashClient implements ConnectorClient {
     return out.slice(0, this.cfg.maxItems);
   }
 
-  private async upsert(i: Record<string, any>, project: unknown, signal?: AbortSignal): Promise<{ id: string; created: boolean; projectId: string }> {
+  private async upsert(i: Record<string, any>, scoped: string | undefined, signal?: AbortSignal): Promise<{ id: string; created: boolean; projectId: string }> {
     const reference = String(i.reference ?? '').trim();
     const name = String(i.name ?? '').trim();
     if (!reference || !name) throw new PlatformError('validation', 'A Squash test case needs a name and a reference.');
-    const scoped = typeof project === 'string' && project ? idOf(project, 'project') : (this.cfg.project ? idOf(this.cfg.project, 'project') : undefined);
     const existing = await this.findByReference(reference, scoped, signal);
     if (existing) {
       const fromCase = existing.project && typeof existing.project === 'object' ? String((existing.project as Json).id ?? '') : '';
@@ -391,13 +410,46 @@ class SquashClient implements ConnectorClient {
     return all.find((item) => String(item.reference ?? '').toLowerCase() === reference.toLowerCase());
   }
 
+  /**
+   * Capability/scope numeric id wins, then config projectId, then projectName resolved via GET /projects.
+   * Returns undefined when nothing is configured so list can stay global and upsert can fall back to the first project.
+   */
+  private async resolveProjectId(override: unknown, signal?: AbortSignal): Promise<string | undefined> {
+    if (typeof override === 'string' && override.trim()) return idOf(override, 'project');
+    if (this.cfg.projectId) return idOf(this.cfg.projectId, 'project');
+    if (this.cfg.projectName) return this.findProjectIdByName(this.cfg.projectName, signal);
+    return undefined;
+  }
+
+  private async findProjectIdByName(name: string, signal?: AbortSignal): Promise<string> {
+    const wanted = name.trim().toLowerCase();
+    const matches = (await this.listProjects(signal)).filter((p) => String(p.name ?? '').trim().toLowerCase() === wanted);
+    if (matches.length === 0) {
+      throw new PlatformError('validation', `No Squash project named "${name.trim()}" is visible to this token.`);
+    }
+    if (matches.length > 1) {
+      const ids = matches.map((p) => String(p.id)).join(', ');
+      throw new PlatformError('validation', `Several Squash projects are named "${name.trim()}" (ids ${ids}). Set project id instead.`);
+    }
+    const id = String(matches[0]!.id ?? '');
+    if (!/^\d+$/.test(id)) throw new PlatformError('validation', `Squash project "${name.trim()}" has no numeric id.`);
+    return id;
+  }
+
+  private async listProjects(signal?: AbortSignal): Promise<Json[]> {
+    return this.collect('/projects', 'projects', signal);
+  }
+
   /** Some tokens can list one project's cases when the global test-case list is refused. */
   private async projectTestCases(): Promise<string | undefined> {
     try {
-      const body = await this.get('/projects', { size: 1 });
-      const first = ((body._embedded?.projects ?? []) as Json[])[0];
-      const id = String(first?.id ?? '');
-      if (!/^\d+$/.test(id)) return undefined;
+      let id: string | undefined;
+      if (this.cfg.projectId || this.cfg.projectName) id = await this.resolveProjectId(undefined);
+      if (!id) {
+        const body = await this.get('/projects', { size: 1 });
+        id = String(((body._embedded?.projects ?? []) as Json[])[0]?.id ?? '');
+      }
+      if (!id || !/^\d+$/.test(id)) return undefined;
       await this.get(`/projects/${id}/test-cases`, { size: 1 });
       return `GET /projects/${id}/test-cases`;
     } catch {
@@ -406,8 +458,7 @@ class SquashClient implements ConnectorClient {
   }
 
   private async onlyProject(signal?: AbortSignal): Promise<string> {
-    const body = await this.get('/projects', { size: 50 }, signal);
-    const projects = (body._embedded?.projects ?? []) as Json[];
+    const projects = await this.listProjects(signal);
     const first = projects[0];
     if (!first || !/^\d+$/.test(String(first.id ?? ''))) throw new PlatformError('validation', 'Squash has no project this token can use, so the test case was not stored.');
     return String(first.id);

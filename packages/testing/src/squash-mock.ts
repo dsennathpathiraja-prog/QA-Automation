@@ -18,6 +18,8 @@ export interface SquashMockOptions {
   /** What the mock's token may do. A READ token makes every non-GET answer 403, as Squash would. */
   permissions?: 'READ' | 'READ_WRITE';
   contextPath?: string;
+  /** Override the default Retail Web / Back Office projects (used for name-resolution tests). */
+  projects?: { id: number; name: string }[];
   /** Test hook: return a response to replace the normal one. */
   override?: (req: SquashMockRequest) => { status: number; body?: unknown; contentType?: string } | undefined;
 }
@@ -34,7 +36,8 @@ export function makeSquashToken(o: { permissions?: string; expiresAt?: Date } = 
   return `${enc({ alg: 'HS512' })}.${enc({ sub: '1', uuid: 'mock', permissions: o.permissions ?? 'READ', iat: 1_721_308_789, exp: Math.floor((o.expiresAt ?? new Date('2027-01-01T00:00:00Z')).getTime() / 1000) })}.${'s'.repeat(40)}`;
 }
 
-const project = (id: number) => ({ _type: 'project', id, name: id === 1 ? 'Retail Web' : 'Back Office' });
+const defaultProjectName = (id: number) => (id === 1 ? 'Retail Web' : 'Back Office');
+const project = (id: number, name = defaultProjectName(id)) => ({ _type: 'project', id, name });
 const link = (id: number, _type: string, name: string) => ({ _type, id, name });
 
 const TEST_CASES: Record<string, any>[] = [
@@ -94,9 +97,12 @@ export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock>
     return { _embedded: { [key]: slice }, page: { size, totalElements: items.length, totalPages: Math.max(1, Math.ceil(items.length / size)), number } };
   };
 
+  const projects = (o.projects ?? [{ id: 1, name: 'Retail Web' }, { id: 2, name: 'Back Office' }]).map((p) => project(p.id, p.name));
+  const projectById = (id: number) => projects.find((p) => p.id === id) ?? project(id);
+
   const route = (path: string, url: URL): { status: number; body: unknown } => {
     let m: RegExpMatchArray | null;
-    if (path === '/projects') return { status: 200, body: page([project(1), project(2)], 'projects', url) };
+    if (path === '/projects') return { status: 200, body: page(projects, 'projects', url) };
     if ((m = path.match(/^\/projects\/(\d+)\/test-cases$/))) return { status: 200, body: page(cases.filter((t) => t.project.id === Number(m![1])).map(summaryOf), 'test-cases', url) };
     if (path === '/test-cases') return { status: 200, body: page(cases.map(summaryOf), 'test-cases', url) };
     if ((m = path.match(/^\/test-cases\/(\d+)$/))) {
@@ -145,7 +151,7 @@ export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock>
         let created: RegExpMatchArray | null;
         if (req.method === 'POST' && (created = path.match(/^\/projects\/(\d+)\/test-cases$/))) {
           const id = 1000 + cases.length;
-          const row = { _type: 'test-case', id, name: String(payload.name ?? ''), reference: String(payload.reference ?? ''), project: project(Number(created[1])), steps: [] as Record<string, unknown>[] };
+          const row = { _type: 'test-case', id, name: String(payload.name ?? ''), reference: String(payload.reference ?? ''), project: projectById(Number(created[1])), steps: [] as Record<string, unknown>[] };
           cases.push(row);
           return send(201, row);
         }
