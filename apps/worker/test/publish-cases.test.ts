@@ -19,6 +19,21 @@ describe('publishGeneratedCases', () => {
     expect(out.summary).toMatch(/Squash ids: 42/);
   });
 
+  it('re-publishes the same reference without duplicating platform cases', async () => {
+    const repo = new InMemoryTestCaseRepository();
+    const testCases = new TestCaseService({ cases: repo, audit: new InMemoryAuditSink() });
+    const squash = async () => ({ id: '42', created: false, projectId: '7' });
+    await publishGeneratedCases({ workItem: '7259', cases, testCases, squash });
+    await publishGeneratedCases({
+      workItem: '7259',
+      cases: [{ ...cases[0]!, name: 'Positive: Positive', steps: 'Open again', expected: 'Still ok' }],
+      testCases,
+      squash,
+    });
+    expect(await testCases.list()).toHaveLength(1);
+    expect((await testCases.list())[0]).toMatchObject({ name: 'Positive: Positive', version: 2, summary: 'Squash 42' });
+  });
+
   it('explains a missing workflow binding', async () => {
     const testCases = new TestCaseService({ cases: new InMemoryTestCaseRepository(), audit: new InMemoryAuditSink() });
     const { PlatformError } = await import('@qa/domain');

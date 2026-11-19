@@ -56,11 +56,15 @@ export interface TestCaseRepository {
   versions(id: string): Promise<TestCaseVersionRecord[]>;
   saveVersion(id: string, version: number, steps: string, expected: string, summary: string): Promise<TestCaseRecord>;
   saveSummary(id: string, summary: string): Promise<TestCaseRecord>;
+  /** Updates name and/or stable key without bumping the case version. */
+  saveIdentity(id: string, patch: { name?: string; key?: string }): Promise<TestCaseRecord>;
+  softDelete(id: string): Promise<boolean>;
   listCollections(): Promise<TestCollectionRecord[]>;
   getCollection(id: string): Promise<{ id: string; name: string; description: string; cases: CollectionCaseRecord[] } | undefined>;
   insertCollection(row: { id: string; name: string; description: string }): Promise<TestCollectionRecord>;
   addCase(collectionId: string, testCaseId: string): Promise<'added' | 'exists'>;
   removeCase(collectionId: string, testCaseId: string): Promise<boolean>;
+  softDeleteCollection(id: string): Promise<boolean>;
   listWorkItemRuns(): Promise<WorkItemRunRecord[]>;
   getWorkItemRun(id: string): Promise<WorkItemRunRecord | undefined>;
   insertWorkItemRun(row: { id: string; workItem: string; environmentId: string; environmentName: string; caseCount: number }): Promise<WorkItemRunRecord>;
@@ -177,6 +181,14 @@ export class TestCaseService {
     return this.get(id);
   }
 
+  /** Soft-deletes a case and removes it from every collection. Squash is left alone. */
+  async remove(actor: ActorRef, id: string): Promise<void> {
+    await this.require(id);
+    const deleted = await this.d.cases.softDelete(id);
+    if (!deleted) throw new PlatformError('not-found', 'Test case not found');
+    await this.d.audit.append({ actorId: actor.id, action: 'testcase.delete', subjectType: 'test_case', subjectId: id });
+  }
+
   async collections() {
     return this.d.cases.listCollections();
   }
@@ -197,6 +209,17 @@ export class TestCaseService {
     return row;
   }
 
+  /**
+   * Soft-deletes a collection and its member cases on the platform.
+   * Squash (or other TM) copies are not deleted.
+   */
+  async removeCollection(actor: ActorRef, id: string): Promise<void> {
+    const row = await this.collection(id);
+    const deleted = await this.d.cases.softDeleteCollection(id);
+    if (!deleted) throw new PlatformError('not-found', 'Collection not found');
+    await this.d.audit.append({ actorId: actor.id, action: 'testcase.collection.delete', subjectType: 'test_collection', subjectId: id, detail: { name: row.name, caseCount: row.cases.length } });
+  }
+
   async addToCollection(actor: ActorRef, collectionId: string, testCaseId: string) {
     await this.collection(collectionId);
     await this.require(testCaseId);
@@ -206,18 +229,42 @@ export class TestCaseService {
     return this.collection(collectionId);
   }
 
-  /** Keeps a generated case under a collection named for its work item. A repeat of the same case stays in that collection. */
-  async fileUnderWorkItem(actor: ActorRef, input: { name: string; summary?: string; steps: string; expected: string; workItem?: string }): Promise<void> {
+  /**
+   * Upserts a generated case under a collection named for its work item.
+   * Scenario identity is `reference` (same key Squash uses as automated_test_reference).
+   * Re-running the same work item with the same reference updates the existing case instead of inserting a duplicate.
+   */
+  async fileUnderWorkItem(actor: ActorRef, input: { name: string; summary?: string; steps: string; expected: string; workItem?: string; reference?: string }): Promise<void> {
     const workItem = this.summary(input.workItem ?? '');
     if (!workItem) throw new PlatformError('validation', 'A generated case needs a work item.');
+    const name = this.name(input.name);
+    const reference = this.reference(input.reference ?? '');
+    const scenarioKey = reference ? this.key(reference) : this.key(`${workItem} ${name}`);
+    const legacyKey = this.key(`${workItem} ${name}`);
+    const existing = (await this.d.cases.findKey(scenarioKey)) ?? (reference && scenarioKey !== legacyKey ? await this.d.cases.findKey(legacyKey) : undefined);
     let id: string;
-    try {
-      id = (await this.create(actor, { ...input, workItem })).id;
-    } catch (e) {
-      if (!(e instanceof PlatformError) || e.errorClass !== 'conflict') throw e;
-      const existing = await this.d.cases.findKey(this.key(`${workItem} ${this.name(input.name)}`));
-      if (!existing) throw e;
+    if (existing) {
       id = existing.id;
+      if (existing.name !== name || existing.key !== scenarioKey) {
+        await this.d.cases.saveIdentity(id, { name, key: scenarioKey });
+      }
+      await this.revise(actor, id, { summary: input.summary, steps: input.steps, expected: input.expected });
+    } else {
+      const summary = this.summary(input.summary ?? '');
+      const steps = this.steps(input.steps);
+      const expected = this.expected(input.expected);
+      try {
+        const row = await this.d.cases.insert({ id: randomUUID(), key: scenarioKey, name, summary, workItem, steps, expected });
+        id = row.id;
+        await this.d.audit.append({ actorId: actor.id, action: 'testcase.create', subjectType: 'test_case', subjectId: id, detail: { key: scenarioKey, reference: reference || undefined } });
+      } catch (e) {
+        if (!(e instanceof PlatformError) || e.errorClass !== 'conflict') throw e;
+        const raced = (await this.d.cases.findKey(scenarioKey)) ?? (await this.d.cases.findKey(legacyKey));
+        if (!raced) throw e;
+        id = raced.id;
+        if (raced.name !== name || raced.key !== scenarioKey) await this.d.cases.saveIdentity(id, { name, key: scenarioKey });
+        await this.revise(actor, id, { summary: input.summary, steps: input.steps, expected: input.expected });
+      }
     }
     const collection = await this.ensureWorkItemCollection(actor, workItem.slice(0, 120));
     await this.d.cases.addCase(collection.id, id);
@@ -341,5 +388,11 @@ export class TestCaseService {
     const key = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80);
     if (key.length < 1) throw new PlatformError('validation', 'Name needs at least one letter or number.');
     return key;
+  }
+
+  private reference(raw: string) {
+    const reference = raw.trim();
+    if (reference.length > 50) throw new PlatformError('validation', 'Reference must be 50 characters or fewer.');
+    return reference;
   }
 }

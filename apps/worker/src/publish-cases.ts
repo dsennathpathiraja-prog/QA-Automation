@@ -56,6 +56,7 @@ export async function publishGeneratedCases(input: {
         steps: item.steps,
         expected: item.expected,
         workItem: item.workItem || workItem,
+        reference: item.reference,
         summary: squashId ? `Squash ${squashId}` : item.reference,
       },
     );
