@@ -54,7 +54,7 @@ Check, in order:
 2. **READ_WRITE token.** In Squash, create a personal API token with **read and write**. On the connector, **Replace credentials**, paste that token, **Test Connection** (it should say the token can store generated test cases), then **Switch on**.
 3. **Restart the worker** after credential or compose changes so it leases the new secret (`docker compose ... restart worker`, or a full rebuild).
 
-Publish and Test Connection both use `Authorization: Bearer <token>` against the same `baseUrl` and the same secret locator `connectors/<id>/credentials`. There is no separate publish token.
+Publish and Test Connection both use `Authorization: Bearer <token>` (trimmed; never `Token`, Basic, X-Api-Key, or a bare token) against the same `baseUrl` and the same secret locator `connectors/<id>/credentials`. There is no separate publish token. A 401 message may include a short Squash response snippet (token redacted) to help diagnose the next failure.
 
 ## How to resume after your reply
 1. `git checkout cursor/phase1-foundation-2990 && git pull` (merge the status PR if it is still open).

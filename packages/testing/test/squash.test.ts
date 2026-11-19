@@ -56,13 +56,27 @@ describe('Squash provider against the documentation-based mock', () => {
     expect((await connect().inspectPermissions()).writePermissionsDetected).toEqual([]);
   });
 
-  it('turns a wrong token into a clear auth error, and never sends the token anywhere but the header', async () => {
-    const bad = connect({ token: 'x'.repeat(30) });
+  it('turns a wrong token into a clear auth error with a Squash body snippet, and never echoes the token', async () => {
+    const badToken = 'x'.repeat(30);
+    const bad = connect({ token: badToken });
     const r = await bad.testConnection();
     expect(r.ok).toBe(false);
     expect(r.message).toMatch(/rejected the API token/);
-    expect(r.message).not.toContain('xxxx');
-    await expect(call(bad, 'tm.project.list')).rejects.toMatchObject({ errorClass: 'auth' });
+    expect(r.message).toMatch(/Squash said:.*Unauthorized/);
+    expect(r.message).not.toContain(badToken);
+    await expect(call(bad, 'tm.project.list')).rejects.toMatchObject({
+      errorClass: 'auth',
+      message: expect.stringMatching(/Squash said:.*Unauthorized/),
+    });
+  });
+
+  it('rejects a blank or whitespace-only token on save and on lease', () => {
+    expect(() => squashProvider.secretSchema.parse({ token: ' \n\t ' })).toThrow();
+    const rules: EgressRule[] = [{ hostPattern: '127.0.0.1', purpose: 'application', internal: true, allowHttp: true, allowLoopback: true }];
+    const http = new HardenedHttpClient({ egress: new EgressPolicy({ rules, profile: 'standard', platformEnv: 'development' }), allowedMethods: ['GET'] });
+    expect(() =>
+      squashProvider.create({ baseUrl: mock.baseUrl }, { value: { token: '   ' }, expiresAt: new Date(Date.now() + 60_000), release() {} }, { http }),
+    ).toThrow(/token|API token/i);
   });
 
   it('probes capabilities from real endpoints and declares what Squash does not offer', async () => {
@@ -237,7 +251,8 @@ describe('Squash provider against the documentation-based mock', () => {
       allowedMethods: ['GET'],
       allowOther: (req) => req.method === 'POST' && /\/api\/rest\/[^/]+\/(projects\/\d+\/test-cases|test-cases\/\d+\/steps)$/.test(new URL(req.url).pathname),
     });
-    const client = squashProvider.create({ baseUrl: mock.baseUrl }, { value: { token: rw }, expiresAt: new Date(Date.now() + 60_000), release() {} }, { http });
+    // Lease with surrounding whitespace — must still send Authorization: Bearer <trimmed token>.
+    const client = squashProvider.create({ baseUrl: mock.baseUrl }, { value: { token: `  ${rw}\n` }, expiresAt: new Date(Date.now() + 60_000), release() {} }, { http });
     const first = await call(client, 'tm.testcase.upsert', { reference: 'QAP-qa-1-1', name: 'Saved card is listed', steps: [{ action: 'Open checkout', expected: 'The card is listed' }] });
     expect(first).toEqual({ id: '1004', created: true, projectId: '1' });
     const again = await call(client, 'tm.testcase.upsert', { reference: 'QAP-qa-1-1', name: 'Saved card is listed' });
@@ -257,6 +272,9 @@ describe('Squash provider against the documentation-based mock', () => {
       expect.stringMatching(/\/projects\/1\/test-cases$/),
       expect.stringMatching(/\/projects\/2\/test-cases$/),
     ]));
+    // Upsert POST must use Bearer only (same header as GET) — never Token, Basic, or bare token.
+    expect(posts.every((item) => item.authorization === `Bearer ${rw}`)).toBe(true);
+    expect(mock.requests.filter((item) => item.method === 'GET').every((item) => item.authorization === `Bearer ${rw}`)).toBe(true);
   });
 
   it('explains that a READ token can Test Connection but not store cases (Squash answers 401 on write)', async () => {

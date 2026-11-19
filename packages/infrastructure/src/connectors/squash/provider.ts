@@ -12,7 +12,7 @@ import type {
   PermissionReport,
 } from '@qa/connector-sdk';
 import { htmlToText } from './html';
-import { readTokenClaims } from './token';
+import { normalizeSquashToken, readTokenClaims } from './token';
 
 const blankToUndef = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
 
@@ -28,7 +28,10 @@ const ConfigSchema = z.object({
   maxItems: z.number().int().min(1).max(10_000).default(1_000),
   expiryWarnDays: z.number().int().min(1).max(90).default(14),
 });
-const SecretSchema = z.object({ token: z.string().min(20) });
+/** Trim on save (and again on lease via create). Squash 15.x needs a non-empty personal API token. */
+const SecretSchema = z.object({
+  token: z.string().trim().min(20, 'API token is required'),
+});
 
 type SquashConfig = Omit<z.infer<typeof ConfigSchema>, 'project'> & { projectId?: string };
 
@@ -113,18 +116,22 @@ export const squashProvider: ConnectorProvider = {
     if (!secrets) throw new PlatformError('auth', 'SquashTM needs an API token');
     const { project: legacyProject, ...parsed } = ConfigSchema.parse(config);
     const cfg: SquashConfig = { ...parsed, projectId: parsed.projectId ?? legacyProject };
-    return new SquashClient(cfg, SecretSchema.parse(secrets.value).token, deps);
+    // Lease path: trim again so whitespace saved before this fix, or pasted with newlines, still works.
+    const token = normalizeSquashToken(SecretSchema.parse(secrets.value).token);
+    return new SquashClient(cfg, token, deps);
   },
 };
 
 class SquashClient implements ConnectorClient {
   private readonly api: string;
+  private readonly token: string;
 
   constructor(
     private readonly cfg: SquashConfig,
-    private readonly token: string,
+    token: string,
     private readonly deps: AdapterDeps,
   ) {
+    this.token = normalizeSquashToken(token);
     this.api = `${cfg.baseUrl.replace(/\/+$/, '')}/api/rest/latest`;
   }
 
@@ -527,10 +534,12 @@ class SquashClient implements ConnectorClient {
 
   private async send(method: 'GET' | 'POST' | 'PATCH', path: string, body: unknown, signal?: AbortSignal, query: Record<string, string | number> = {}): Promise<Json> {
     const qs = new URLSearchParams(Object.entries(query).map(([k, v]): [string, string] => [k, String(v)])).toString();
+    // SquashTM 15.0.4 accepts only Bearer — never Token, Basic, X-Api-Key, or a bare token.
+    const authorization = `Bearer ${this.token.trim()}`;
     const res = await this.deps.http.request({
       method,
       url: `${this.api}${path}${qs ? `?${qs}` : ''}`,
-      headers: { accept: 'application/json', authorization: `Bearer ${this.token}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+      headers: { accept: 'application/json', Authorization: authorization, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
     });
@@ -546,26 +555,44 @@ class SquashClient implements ConnectorClient {
     const where = path.split('?')[0];
     if (res.status === 401) {
       // Squash returns 401 for a READ token on POST/PATCH/DELETE (Test Connection only GETs, so it still succeeds).
+      const snippet = this.authFailureSnippet(res);
+      const withSnippet = (msg: string) => (snippet ? `${msg} Squash said: ${snippet}` : msg);
       const claims = readTokenClaims(this.token);
       if (method !== 'GET' && claims.permissions && !/WRITE/i.test(claims.permissions)) {
         throw new PlatformError(
           'auth',
-          'SquashTM refused the write because this token is READ-only. Create a READ_WRITE personal token, replace credentials on the same Squash connector, Test Connection, Switch on, restart the worker if it was already running, and run again.',
+          withSnippet(
+            'SquashTM refused the write because this token is READ-only. Create a READ_WRITE personal token, replace credentials on the same Squash connector, Test Connection, Switch on, restart the worker if it was already running, and run again.',
+          ),
         );
       }
       if (method !== 'GET') {
         throw new PlatformError(
           'auth',
-          'SquashTM rejected the API token for a write (expired, revoked, READ-only, or not a token). Test Connection only checks read; storing cases needs a READ_WRITE token on this connector.',
+          withSnippet(
+            'SquashTM rejected the API token for a write (expired, revoked, READ-only, or not a token). Test Connection only checks read; storing cases needs a READ_WRITE token on this connector.',
+          ),
         );
       }
-      throw new PlatformError('auth', 'SquashTM rejected the API token (expired, revoked, or not a token)');
+      throw new PlatformError('auth', withSnippet('SquashTM rejected the API token (expired, revoked, or not a token)'));
     }
     if (res.status === 403) throw new PlatformError('denied', method === 'GET' ? `The token owner cannot read ${where}` : `The token cannot change ${where}. Store generated test cases with a READ_WRITE token.`);
     if (res.status === 404) throw new PlatformError('not-found', `SquashTM has nothing at ${where}`);
     if (res.status === 429) throw new PlatformError('rate-limited', 'SquashTM is rate limiting requests');
     if (res.status >= 500) throw new PlatformError('transient', `SquashTM answered ${res.status}`);
     throw new PlatformError('validation', `SquashTM answered ${res.status} for ${where}`);
+  }
+
+  /** Short Squash error body for diagnosis; never includes the API token. */
+  private authFailureSnippet(res: HttpResponse): string {
+    let text = '';
+    try {
+      text = res.text();
+    } catch {
+      return '';
+    }
+    if (this.token) text = text.split(this.token).join('[redacted]');
+    return text.replace(/\s+/g, ' ').trim().slice(0, 180);
   }
 }
 

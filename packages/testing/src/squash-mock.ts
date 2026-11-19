@@ -126,7 +126,9 @@ export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock>
     req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
     req.on('end', () => {
       const url = new URL(req.url ?? '/', 'http://mock');
-      const rec: SquashMockRequest = { method: req.method ?? 'GET', path: url.pathname + url.search, authorization: req.headers.authorization ? '(present)' : undefined };
+      // Keep the real Authorization so tests can prove Squash 15.x Bearer-only (never Token / Basic / bare).
+      const authHeader = typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined;
+      const rec: SquashMockRequest = { method: req.method ?? 'GET', path: url.pathname + url.search, authorization: authHeader };
       requests.push(rec);
       const send = (status: number, body: unknown, contentType = 'application/json') => {
         res.statusCode = status;
@@ -136,8 +138,13 @@ export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock>
       const forced = o.override?.(rec);
       if (forced) return send(forced.status, forced.body ?? {}, forced.contentType);
       if (!url.pathname.startsWith(root)) return send(404, '<html>not found</html>', 'text/html');
-      const auth = req.headers.authorization ?? '';
+      const auth = authHeader ?? '';
+      // SquashTM 15.0.4: only Authorization: Bearer <token> is accepted.
       if (auth.startsWith('Basic ')) return send(401, { message: 'Basic authentication is not allowed for REST API.' });
+      if (auth.startsWith('Token ') || auth.startsWith('token ')) {
+        return send(401, { message: 'Token authentication is not allowed for REST API.' });
+      }
+      if (!auth.startsWith('Bearer ')) return send(401, { message: 'Unauthorized' });
       if (auth !== `Bearer ${o.token}`) return send(401, { message: 'Unauthorized' });
       const path = url.pathname.slice(root.length);
       if (req.method !== 'GET') {
