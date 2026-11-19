@@ -1,6 +1,6 @@
 # Requirement validation: implementation plan
 
-Written 19 Nov 2026. This is the order for finishing the workflow. Each slice is built on the one before it. A slice is finished only when a published run shows that stage as Done and the result is visible where the slice says.
+Written 19 Nov 2026. This is the order for finishing the workflow. Each slice is built on the one before it. A slice is finished only when a published run shows that stage as Done and the result is visible where the slice says. The slices are grouped into phases in [requirement-validation-phases.md](requirement-validation-phases.md).
 
 ## Already in a run
 The run lists every stage on the workflow page and on Executions. The story is the text typed on the Run tab. `playwright-test-planner` writes a positive, a negative, and an edge scenario for each acceptance criterion. `playwright-test-generator` writes one Playwright test for each scenario. Publish stores those cases in Test Cases under the work item and in Squash when the connector has a READ_WRITE token. The same reference is not created twice.

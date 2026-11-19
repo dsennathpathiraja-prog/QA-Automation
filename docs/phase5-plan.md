@@ -16,4 +16,4 @@ Slice 4 stays a no-op, as planned. This runner only checks one address. It does 
 4. **Execute steps.** `rv.execute-tests` and `rg.execute-tests` stay no-ops. There is no test bundle for a runner to execute yet.
 
 ## Not in this phase
-Kubernetes. That is Phase 11. The Executions and Test Cases screens the menu used to label Phase 5 are Phase 6. See [`phase6-plan.md`](phase6-plan.md). Creating test cases in Squash, reading a story, and driving the browser stay later as well.
+Kubernetes. That is Phase 12. The Executions and Test Cases screens the menu used to label Phase 5 are Phase 6. See [`phase6-plan.md`](phase6-plan.md). Creating test cases in Squash, reading a story, and driving the browser stay later as well.

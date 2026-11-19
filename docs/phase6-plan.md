@@ -14,4 +14,4 @@ A requirement-validation run records each stage. playwright-test-planner writes 
 2. **Test case library.** Cases kept by this platform, with versions and a collection a regression workflow can name. A requirement-validation publish also stores the generated cases in Squash.
 
 ## Not in this phase
-A test suite inside the runner, driving the browser, and pushing execution results back to Squash. The order for that remaining work is [requirement-validation-implementation.md](requirement-validation-implementation.md).
+A test suite inside the runner, driving the browser, and pushing execution results back to Squash. The order for that remaining work is [requirement-validation-implementation.md](requirement-validation-implementation.md). The phases that carry it are [requirement-validation-phases.md](requirement-validation-phases.md).

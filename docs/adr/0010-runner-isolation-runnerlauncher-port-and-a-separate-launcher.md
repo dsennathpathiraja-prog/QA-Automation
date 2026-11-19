@@ -8,7 +8,7 @@ Generated tests run browsers against real environments. Giving the worker the co
 
 ## Decision
 
-Runners are ephemeral containers started through a `RunnerLauncher` port. The worker talks to a separate `runner-launcher` service with a short bearer token. That service is the only holder of the container engine socket; it validates every request (image pinned by digest and from an approved registry, bounded CPU, memory, processes and time, explicit host allowlist), applies fixed hardening (no privileges, all capabilities dropped, read-only root filesystem, no mounts), refuses to touch containers it did not create, stops runners that exceed their time limit, and limits how many run at once. The Kubernetes adapter (Job plus NetworkPolicy) follows in Phase 11.
+Runners are ephemeral containers started through a `RunnerLauncher` port. The worker talks to a separate `runner-launcher` service with a short bearer token. That service is the only holder of the container engine socket; it validates every request (image pinned by digest and from an approved registry, bounded CPU, memory, processes and time, explicit host allowlist), applies fixed hardening (no privileges, all capabilities dropped, read-only root filesystem, no mounts), refuses to touch containers it did not create, stops runners that exceed their time limit, and limits how many run at once. The Kubernetes adapter (Job plus NetworkPolicy) follows in Phase 12.
 
 ## Consequences
 
