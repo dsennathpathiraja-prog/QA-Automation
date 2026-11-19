@@ -116,10 +116,20 @@ const loop = new WorkerLoop({
         }
         const result = runFlowStep({ ...step, params });
         if (step.type !== 'rv.publish-testcases' || !testCases) return result;
-        const cases = (Array.isArray(result.outputs.cases) ? result.outputs.cases : []).flatMap((item) => {
+        const cases: GeneratedCase[] = (Array.isArray(result.outputs.cases) ? result.outputs.cases : []).flatMap((item) => {
           const row = item as Partial<GeneratedCase>;
           if (typeof row.name !== 'string' || typeof row.steps !== 'string' || typeof row.expected !== 'string' || typeof row.reference !== 'string') return [];
-          return [{ name: row.name, steps: row.steps, expected: row.expected, workItem: typeof row.workItem === 'string' ? row.workItem : '', reference: row.reference }];
+          const kind: GeneratedCase['kind'] = row.kind === 'negative' || row.kind === 'edge' || row.kind === 'positive' ? row.kind : undefined;
+          const priority: GeneratedCase['priority'] = row.priority === 'high' || row.priority === 'medium' || row.priority === 'low' ? row.priority : undefined;
+          return [{
+            name: row.name,
+            steps: row.steps,
+            expected: row.expected,
+            workItem: typeof row.workItem === 'string' ? row.workItem : '',
+            reference: row.reference,
+            kind,
+            priority,
+          }];
         });
         const published = await publishGeneratedCases({
           workItem: typeof result.outputs.workItem === 'string' ? result.outputs.workItem : '',

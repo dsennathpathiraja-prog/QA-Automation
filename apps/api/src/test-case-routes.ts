@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import {
-  AddCollectionCaseRequest, CreateTestCaseRequest, CreateTestCollectionRequest, ReviseTestCaseRequest, StartWorkItemExecutionRequest, TestCaseListResponse, TestCaseSchema, TestCaseVersionList, TestCollectionListResponse, TestCollectionSchema, WorkItemCaseScreenshot, WorkItemExecutionBoard, WorkItemExecutionSchema,
+  AddCollectionCaseRequest, CreateTestCaseRequest, CreateTestCollectionRequest, ResetTestCasesRequest, ResetTestCasesResponse, ReviseTestCaseRequest, StartWorkItemExecutionRequest, TestCaseListResponse, TestCaseSchema, TestCaseVersionList, TestCollectionListResponse, TestCollectionSchema, WorkItemCaseScreenshot, WorkItemExecutionBoard, WorkItemExecutionSchema,
 } from '@qa/contracts';
 import { PlatformError } from '@qa/domain';
 import type { EnvironmentService, TestCaseService } from '@qa/application';
@@ -26,6 +26,12 @@ export function registerTestCaseRoutes(app: FastifyInstance, cases: TestCaseServ
   app.post('/api/v1/test-cases', { config: { access: requires('testcase.edit') } }, async (req, reply) => {
     const created = await cases.create({ id: req.principal!.id }, body(CreateTestCaseRequest, req.body, 'create test case'));
     return reply.code(201).send(TestCaseSchema.parse(created));
+  });
+
+  /** Soft-clears every platform collection and case. Squash is never wiped here. */
+  app.post('/api/v1/test-cases/reset', { config: { access: requires('testcase.edit') } }, async (req) => {
+    const input = body(ResetTestCasesRequest, req.body, 'reset test cases');
+    return ResetTestCasesResponse.parse(await cases.resetPlatform({ id: req.principal!.id }, input));
   });
 
   app.get('/api/v1/test-cases/:id', { config: { access: requires('testcase.view') } }, async (req) => TestCaseSchema.parse(await cases.get(idOf((req.params as { id: string }).id, 'Test case'))));

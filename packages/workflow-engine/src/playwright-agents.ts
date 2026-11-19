@@ -2,9 +2,13 @@
 export const PLAYWRIGHT_TEST_PLANNER = 'playwright-test-planner';
 export const PLAYWRIGHT_TEST_GENERATOR = 'playwright-test-generator';
 
+export type ScenarioKind = 'positive' | 'negative' | 'edge';
+export type ScenarioPriority = 'high' | 'medium' | 'low';
+
 export interface PlannerScenario {
   name: string;
-  kind: 'positive' | 'negative' | 'edge';
+  kind: ScenarioKind;
+  priority: ScenarioPriority;
   criterion: string;
   steps: string;
   expected: string;
@@ -12,6 +16,8 @@ export interface PlannerScenario {
 
 export interface GeneratedPlaywrightCase {
   name: string;
+  kind: ScenarioKind;
+  priority: ScenarioPriority;
   steps: string;
   expected: string;
   workItem: string;
@@ -24,8 +30,14 @@ const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '-').
 
 const clip = (value: string, max: number) => value.trim().slice(0, max);
 
-/** Short label a senior QA would put on a case name. */
-const caseTitle = (kind: PlannerScenario['kind'], criterion: string): string => {
+const priorityFor = (kind: ScenarioKind): ScenarioPriority => {
+  if (kind === 'negative') return 'high';
+  if (kind === 'edge') return 'low';
+  return 'medium';
+};
+
+/** Short label a senior QA would put on a case name (PR #9 naming). */
+const caseTitle = (kind: ScenarioKind, criterion: string): string => {
   const line = clip(criterion, 90);
   if (kind === 'negative') return clip(`Negative: reject invalid path for ${line}`, 120);
   if (kind === 'edge') return clip(`Edge: boundary / alternate path for ${line}`, 120);
@@ -41,29 +53,25 @@ export function planWithPlaywrightPlanner(input: { workItem: string; application
   const scenarios: PlannerScenario[] = [];
   for (const criterion of criteria) {
     const line = clip(criterion, 100);
-    scenarios.push(
-      {
-        name: caseTitle('positive', line),
-        kind: 'positive',
+    for (const kind of ['positive', 'negative', 'edge'] as const) {
+      scenarios.push({
+        name: caseTitle(kind, line),
+        kind,
+        priority: priorityFor(kind),
         criterion: line,
-        steps: `Open ${input.application} and complete the happy path for: ${line}`,
-        expected: `${line} succeeds with the expected result`,
-      },
-      {
-        name: caseTitle('negative', line),
-        kind: 'negative',
-        criterion: line,
-        steps: `Open ${input.application} and attempt an invalid or unauthorized path for: ${line}`,
-        expected: `${line} is refused and the user sees a clear error or blocked state`,
-      },
-      {
-        name: caseTitle('edge', line),
-        kind: 'edge',
-        criterion: line,
-        steps: `Open ${input.application} and exercise a boundary or alternate path for: ${line}`,
-        expected: `${line} still holds at the boundary`,
-      },
-    );
+        steps: kind === 'negative'
+          ? `Open ${input.application} and attempt an invalid or unauthorized path for: ${line}`
+          : kind === 'edge'
+            ? `Open ${input.application} and exercise a boundary or alternate path for: ${line}`
+            : `Open ${input.application} and complete the happy path for: ${line}`,
+        expected: kind === 'negative'
+          ? `${line} is refused and the user sees a clear error or blocked state`
+          : kind === 'edge'
+            ? `${line} still holds at the boundary`
+            : `${line} succeeds with the expected result`,
+      });
+      if (scenarios.length >= 40) break;
+    }
     if (scenarios.length >= 40) break;
   }
   return {
@@ -86,13 +94,15 @@ export function generateWithPlaywrightGenerator(input: { workItem: string; appli
       '',
       `test('${scenario.name.replace(/'/g, "\\'")}', async ({ page }) => {`,
       "  await page.goto('/');",
-      `  // ${scenario.kind}: ${scenario.criterion}`,
+      `  // ${scenario.kind} (${scenario.priority}): ${scenario.criterion}`,
       `  await expect(page.locator('body')).toBeVisible();`,
       '});',
       '',
     ].join('\n');
     return {
       name: scenario.name,
+      kind: scenario.kind,
+      priority: scenario.priority,
       steps: source,
       expected: scenario.expected,
       workItem: input.workItem,

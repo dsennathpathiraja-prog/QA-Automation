@@ -52,6 +52,41 @@ docker compose -f deploy/compose/local/docker-compose.local.yml down        # st
 docker compose -f deploy/compose/local/docker-compose.local.yml down -v     # stop and delete the database
 ```
 
+### Clear platform Test Cases only (keep the rest of the database)
+
+After a rebuild, engineers/leads can empty the platform case library without wiping Squash:
+
+1. **UI:** Test Cases → **Clear platform test cases** (confirms; soft-deletes collections and cases).
+2. **API** (signed-in engineer/lead session cookie):
+
+```
+POST /api/v1/test-cases/reset
+Content-Type: application/json
+
+{ "confirm": "RESET_PLATFORM_CASES" }
+```
+
+3. **SQL soft-delete** (local Docker Postgres; Squash untouched):
+
+```
+docker compose -f deploy/compose/local/docker-compose.local.yml exec -T postgres \
+  psql -U qa_platform -d qa_platform -c "
+    DELETE FROM test_collection_case;
+    UPDATE test_case SET deleted_at = now(), updated_at = now() WHERE deleted_at IS NULL;
+    UPDATE test_collection SET deleted_at = now(), updated_at = now() WHERE deleted_at IS NULL;
+  "
+```
+
+Hard wipe of only those tables (optional; still does not touch Squash):
+
+```
+docker compose -f deploy/compose/local/docker-compose.local.yml exec -T postgres \
+  psql -U qa_platform -d qa_platform -c "
+    TRUNCATE test_collection_case, test_case_version, work_item_case_result,
+             work_item_execution, test_case, test_collection;
+  "
+```
+
 ## If something fails
 
 Send the output of `docker compose -f deploy/compose/local/docker-compose.local.yml ps` and

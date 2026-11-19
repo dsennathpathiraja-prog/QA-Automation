@@ -18,7 +18,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', to: '/', group: 'main', phase: 9, summary: 'Overview of runs, approvals and connector health.' },
   { id: 'workflows', label: 'Workflows', to: '/workflows', group: 'main', anyOf: ['workflow.view_published', 'workflow.create'], phase: 4, summary: 'Templates, the builder, publish, and the run wizard.' },
   { id: 'executions', label: 'Executions', to: '/executions', group: 'main', anyOf: ['execution.start', 'execution.control'], phase: 7, summary: 'Prepare and run the cases of one work item against an environment.' },
-  { id: 'test-cases', label: 'Test Cases', to: '/test-cases', group: 'main', anyOf: ['testcase.view'], phase: 6, summary: 'Generated cases kept under each work item.' },
+  { id: 'test-cases', label: 'Test Cases', to: '/test-cases', group: 'main', anyOf: ['testcase.view'], phase: 6, summary: 'Collections of generated cases, grouped by kind and priority.' },
   { id: 'automation', label: 'Automation Mapping', to: '/automation', group: 'main', anyOf: ['automation.view'], phase: 8, summary: 'Link test cases to automated tests and review generated scripts.' },
   { id: 'evidence', label: 'Evidence', to: '/evidence', group: 'main', anyOf: ['evidence.view'], phase: 8, summary: 'Screenshots, traces and upload state per execution.' },
   { id: 'reports', label: 'Reports & Analytics', to: '/reports', group: 'main', anyOf: ['report.view'], phase: 9, summary: 'Rendered reports and quality trends.' },

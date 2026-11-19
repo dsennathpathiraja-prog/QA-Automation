@@ -447,12 +447,18 @@ export const testCase = pgTable(
     name: text('name').notNull(),
     summary: text('summary').notNull().default(''),
     workItem: text('work_item').notNull().default(''),
+    kind: text('kind').notNull().default('positive'),
+    priority: text('priority').notNull().default('medium'),
     currentVersion: integer('current_version').notNull().default(1),
     deletedAt: ts('deleted_at'),
     createdAt: ts('created_at').notNull().defaultNow(),
     updatedAt: ts('updated_at').notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('test_case_key_uq').on(t.key).where(sql`${t.deletedAt} is null`)],
+  (t) => [
+    uniqueIndex('test_case_key_uq').on(t.key).where(sql`${t.deletedAt} is null`),
+    check('test_case_kind_ck', sql`${t.kind} in ('positive','negative','edge')`),
+    check('test_case_priority_ck', sql`${t.priority} in ('high','medium','low')`),
+  ],
 );
 
 export const testCaseVersion = pgTable(
