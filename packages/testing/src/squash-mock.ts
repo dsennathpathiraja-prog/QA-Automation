@@ -186,6 +186,15 @@ export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock>
           cases.push(row);
           return send(201, row);
         }
+        // SquashTM 15.0.4: PATCH /test-cases/{id} updates name / automated_test_reference / description (no parent).
+        if (req.method === 'PATCH' && (created = path.match(/^\/test-cases\/(\d+)$/))) {
+          const row = cases.find((item) => item.id === Number(created![1]));
+          if (!row) return send(404, { message: 'not found' });
+          if (typeof payload.name === 'string') row.name = payload.name;
+          if (typeof payload.automated_test_reference === 'string') row.automated_test_reference = payload.automated_test_reference;
+          if (typeof payload.description === 'string') row.description = payload.description;
+          return send(200, row);
+        }
         if (req.method === 'POST' && (created = path.match(/^\/test-cases\/(\d+)\/steps$/))) {
           const row = cases.find((item) => item.id === Number(created![1]));
           if (!row) return send(404, { message: 'not found' });
