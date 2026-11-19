@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
  * A fake SquashTM 15.0.4 REST API that follows the vendor documentation (paths, HAL `_embedded`
  * keys, `page` object, snake_case fields, authentication behaviour). Used for contract tests
  * so adapter code never needs the real instance. It records every request so tests can prove
- * that nothing but GET was ever sent.
+ * that a READ token never receives a write, and a READ_WRITE token can create a test case.
  */
 export interface SquashMockRequest {
   method: string;
@@ -85,6 +85,7 @@ export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock>
   const permissions = o.permissions ?? 'READ';
   const context = o.contextPath ?? '/squash';
   const root = `${context}/api/rest/latest`;
+  const cases: Record<string, any>[] = TEST_CASES.map((item) => ({ ...item, steps: Array.isArray(item.steps) ? [...item.steps] : [] }));
 
   const page = (items: unknown[], key: string, url: URL) => {
     const size = Math.max(1, Number(url.searchParams.get('size') ?? 20));
@@ -96,10 +97,10 @@ export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock>
   const route = (path: string, url: URL): { status: number; body: unknown } => {
     let m: RegExpMatchArray | null;
     if (path === '/projects') return { status: 200, body: page([project(1), project(2)], 'projects', url) };
-    if ((m = path.match(/^\/projects\/(\d+)\/test-cases$/))) return { status: 200, body: page(TEST_CASES.filter((t) => t.project.id === Number(m![1])).map(summaryOf), 'test-cases', url) };
-    if (path === '/test-cases') return { status: 200, body: page(TEST_CASES.map(summaryOf), 'test-cases', url) };
+    if ((m = path.match(/^\/projects\/(\d+)\/test-cases$/))) return { status: 200, body: page(cases.filter((t) => t.project.id === Number(m![1])).map(summaryOf), 'test-cases', url) };
+    if (path === '/test-cases') return { status: 200, body: page(cases.map(summaryOf), 'test-cases', url) };
     if ((m = path.match(/^\/test-cases\/(\d+)$/))) {
-      const t = TEST_CASES.find((x) => x.id === Number(m![1]));
+      const t = cases.find((x) => x.id === Number(m![1]));
       return t ? { status: 200, body: t } : { status: 404, body: { message: 'not found' } };
     }
     if ((m = path.match(/^\/test-cases\/(\d+)\/executions$/))) return { status: 200, body: page(m[1] === '238' ? EXECUTIONS : [], 'executions', url) };
@@ -115,23 +116,51 @@ export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock>
   };
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    const url = new URL(req.url ?? '/', 'http://mock');
-    const rec: SquashMockRequest = { method: req.method ?? 'GET', path: url.pathname + url.search, authorization: req.headers.authorization ? '(present)' : undefined };
-    requests.push(rec);
-    const send = (status: number, body: unknown, contentType = 'application/json') => {
-      res.statusCode = status;
-      res.setHeader('content-type', contentType);
-      res.end(typeof body === 'string' ? body : JSON.stringify(body));
-    };
-    const forced = o.override?.(rec);
-    if (forced) return send(forced.status, forced.body ?? {}, forced.contentType);
-    if (!url.pathname.startsWith(root)) return send(404, '<html>not found</html>', 'text/html');
-    const auth = req.headers.authorization ?? '';
-    if (auth.startsWith('Basic ')) return send(401, { message: 'Basic authentication is not allowed for REST API.' });
-    if (auth !== `Bearer ${o.token}`) return send(401, { message: 'Unauthorized' });
-    if (req.method !== 'GET') return send(permissions === 'READ' ? 403 : 405, { message: 'write not available in the mock' });
-    const r = route(url.pathname.slice(root.length), url);
-    return send(r.status, r.body);
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    req.on('end', () => {
+      const url = new URL(req.url ?? '/', 'http://mock');
+      const rec: SquashMockRequest = { method: req.method ?? 'GET', path: url.pathname + url.search, authorization: req.headers.authorization ? '(present)' : undefined };
+      requests.push(rec);
+      const send = (status: number, body: unknown, contentType = 'application/json') => {
+        res.statusCode = status;
+        res.setHeader('content-type', contentType);
+        res.end(typeof body === 'string' ? body : JSON.stringify(body));
+      };
+      const forced = o.override?.(rec);
+      if (forced) return send(forced.status, forced.body ?? {}, forced.contentType);
+      if (!url.pathname.startsWith(root)) return send(404, '<html>not found</html>', 'text/html');
+      const auth = req.headers.authorization ?? '';
+      if (auth.startsWith('Basic ')) return send(401, { message: 'Basic authentication is not allowed for REST API.' });
+      if (auth !== `Bearer ${o.token}`) return send(401, { message: 'Unauthorized' });
+      const path = url.pathname.slice(root.length);
+      if (req.method !== 'GET') {
+        if (permissions !== 'READ_WRITE') return send(403, { message: 'write refused' });
+        let payload: Record<string, unknown> = {};
+        try {
+          payload = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as Record<string, unknown>;
+        } catch {
+          return send(400, { message: 'invalid json' });
+        }
+        let created: RegExpMatchArray | null;
+        if (req.method === 'POST' && (created = path.match(/^\/projects\/(\d+)\/test-cases$/))) {
+          const id = 1000 + cases.length;
+          const row = { _type: 'test-case', id, name: String(payload.name ?? ''), reference: String(payload.reference ?? ''), project: project(Number(created[1])), steps: [] as Record<string, unknown>[] };
+          cases.push(row);
+          return send(201, row);
+        }
+        if (req.method === 'POST' && (created = path.match(/^\/test-cases\/(\d+)\/steps$/))) {
+          const row = cases.find((item) => item.id === Number(created![1]));
+          if (!row) return send(404, { message: 'not found' });
+          const step = { _type: 'action-step', id: row.steps.length + 1, action: String(payload.action ?? ''), expected_result: String(payload.expected_result ?? '') };
+          row.steps.push(step);
+          return send(201, step);
+        }
+        return send(405, { message: 'write not available in the mock' });
+      }
+      const r = route(path, url);
+      return send(r.status, r.body);
+    });
   });
 
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

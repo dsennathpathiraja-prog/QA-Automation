@@ -25,7 +25,7 @@ afterEach(async () => {
 describe('Squash provider against the documentation-based mock', () => {
   it('declares only capabilities that exist in the catalog and that Squash documents', () => {
     expect(squashProvider.manifest.capabilities).toEqual([...SQUASH_SUPPORTED_CAPABILITIES]);
-    for (const id of squashProvider.manifest.capabilities) expect(caps.get(id).access).toBe('read');
+    expect(squashProvider.manifest.capabilities.filter((id) => caps.get(id).access === 'write')).toEqual(['tm.testcase.upsert']);
     expect(squashProvider.manifest.authMethods.map((a) => a.key)).toEqual(['api_token']);
   });
 
@@ -165,6 +165,25 @@ describe('Squash provider against the documentation-based mock', () => {
 
   it('refuses capabilities Squash cannot provide', async () => {
     await expect(call(connect(), 'tm.tag.list')).rejects.toMatchObject({ errorClass: 'unsupported' });
+  });
+
+  it('stores a generated case once and finds it again by reference', async () => {
+    const rw = makeSquashToken({ permissions: 'READ_WRITE' });
+    await mock.close();
+    mock = await startSquashMock({ token: rw, permissions: 'READ_WRITE' });
+    const rules: EgressRule[] = [{ hostPattern: '127.0.0.1', purpose: 'application', internal: true, allowHttp: true, allowLoopback: true }];
+    const http = new HardenedHttpClient({
+      egress: new EgressPolicy({ rules, profile: 'standard', platformEnv: 'development' }),
+      allowedMethods: ['GET'],
+      allowOther: (req) => req.method === 'POST' && /\/api\/rest\/[^/]+\/(projects\/\d+\/test-cases|test-cases\/\d+\/steps)$/.test(new URL(req.url).pathname),
+    });
+    const client = squashProvider.create({ baseUrl: mock.baseUrl }, { value: { token: rw }, expiresAt: new Date(Date.now() + 60_000), release() {} }, { http });
+    const first = await call(client, 'tm.testcase.upsert', { reference: 'QAP-qa-1-1', name: 'Saved card is listed', steps: [{ action: 'Open checkout', expected: 'The card is listed' }] });
+    expect(first).toEqual({ id: '1004', created: true });
+    const again = await call(client, 'tm.testcase.upsert', { reference: 'QAP-qa-1-1', name: 'Saved card is listed' });
+    expect(again).toEqual({ id: '1004', created: false });
+    const posts = mock.nonGetRequests().filter((item) => item.method === 'POST' && item.path.includes('/test-cases') && !item.path.includes('/steps'));
+    expect(posts).toHaveLength(1);
   });
 
   it('never sends anything but GET, whatever was called', async () => {

@@ -1,9 +1,12 @@
 import { buildProviders, buildSecretStore, connectDatabase } from '@qa/bootstrap';
+import { ConnectorExecutionManager } from '@qa/connector-sdk';
 import { PlatformError, type DeploymentProfile, type PlatformEnv } from '@qa/domain';
 import { EgressPolicy, HardenedHttpClient, RemoteRunnerLauncher, initTelemetry, readSecretFile, type EgressRule } from '@qa/infrastructure';
+import { SecretRedactor } from '@qa/security';
 import { runFlowStep, tick as engineTick } from '@qa/workflow-engine';
 import { TestCaseService } from '@qa/application';
-import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgEnvironmentRepository, PgExecutionRepository, PgTestCaseRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
+import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgEnvironmentRepository, PgExecutionRepository, PgInstanceResolver, PgOperationLogSink, PgRunPolicyStore, PgTestCaseRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
+import { publishGeneratedCases, type GeneratedCase } from './publish-cases';
 import { buildWorkerApp } from './app';
 import { ConnectorTester } from './connector-tester';
 import { ConnectorHealthScheduler } from './health-scheduler';
@@ -30,30 +33,62 @@ const secrets = buildSecretStore(env, platformEnv, conn?.db);
 const hosts = conn ? new PgApprovedHostRepository(conn.db) : undefined;
 let tester: ConnectorTester | undefined;
 let scheduler: ConnectorHealthScheduler | undefined;
-if (conn && secrets && hosts) {
-  const { providers, capabilities } = buildProviders(env, platformEnv);
+let squash: ConnectorExecutionManager | undefined;
+const built = conn && secrets && hosts ? buildProviders(env, platformEnv) : undefined;
+if (conn && secrets && hosts && built) {
   tester = new ConnectorTester({
     connectors: new PgConnectorRepository(conn.db),
     tests: new PgTestRequestQueue(conn.db),
     secrets: secrets.store,
-    providers,
-    capabilities,
+    providers: built.providers,
+    capabilities: built.capabilities,
     audit: new PgAuditSink(new PgAuditLog(conn.db)),
     http: async () => {
       const rules: EgressRule[] = (await hosts.list('connector')).map((h) => ({ hostPattern: h.hostPattern, purpose: 'connector', internal: h.internal, allowHttp: h.allowHttp }));
       return new HardenedHttpClient({
         egress: new EgressPolicy({ rules, profile, platformEnv }),
         allowedMethods: ['GET', 'HEAD'],
-        // Work-item search on Azure Boards and the managed Playwright server are the only POSTs a connector may send.
-        allowOther: (req) => req.method === 'POST' && /\/(_apis\/wit\/wiql|mcp)$/.test(new URL(req.url).pathname),
+        // Work-item search, the Playwright server, and storing a generated Squash test case are the only writes a connector may send.
+        allowOther: (req) => {
+          const path = new URL(req.url).pathname;
+          if (req.method === 'POST' && /\/(_apis\/wit\/wiql|mcp)$/.test(path)) return true;
+          return req.method === 'POST' && /\/api\/rest\/[^/]+\/(projects\/\d+\/test-cases|test-cases\/\d+\/steps)$/.test(path);
+        },
         timeoutMs: 20_000,
         maxBodyBytes: 8 * 1024 * 1024,
       });
     },
   });
   scheduler = new ConnectorHealthScheduler({ connectors: new PgConnectorRepository(conn.db), tests: new PgTestRequestQueue(conn.db), intervalMs: env.CONNECTOR_HEALTH_MS ? Number(env.CONNECTOR_HEALTH_MS) : undefined });
+  squash = new ConnectorExecutionManager({
+      capabilities: built.capabilities,
+      providers: built.providers,
+      instances: new PgInstanceResolver(conn.db, (locator) => secrets.store.exists(locator)),
+      policies: new PgRunPolicyStore(conn.db),
+      secrets: secrets.store,
+      log: new PgOperationLogSink(conn.db),
+      redactor: new SecretRedactor(),
+      adapterDeps: {
+        http: {
+          request: async (req) => {
+            const rules: EgressRule[] = (await hosts.list('connector')).map((h) => ({ hostPattern: h.hostPattern, purpose: 'connector' as const, internal: h.internal, allowHttp: h.allowHttp }));
+            const http = new HardenedHttpClient({
+              egress: new EgressPolicy({ rules, profile, platformEnv }),
+              allowedMethods: ['GET', 'HEAD'],
+              allowOther: (item) => {
+                const path = new URL(item.url).pathname;
+                if (item.method === 'POST' && /\/(_apis\/wit\/wiql|mcp)$/.test(path)) return true;
+                return item.method === 'POST' && /\/api\/rest\/[^/]+\/(projects\/\d+\/test-cases|test-cases\/\d+\/steps)$/.test(path);
+              },
+              timeoutMs: 20_000,
+              maxBodyBytes: 8 * 1024 * 1024,
+            });
+            return http.request(req);
+          },
+        },
+      },
+    });
 }
-
 const executions = conn ? new PgExecutionRepository(conn.db) : undefined;
 const testCases = conn ? new TestCaseService({ cases: new PgTestCaseRepository(conn.db), audit: new PgAuditSink(new PgAuditLog(conn.db)) }) : undefined;
 const environments = conn ? new PgEnvironmentRepository(conn.db) : undefined;
@@ -69,19 +104,27 @@ const loop = new WorkerLoop({
       now: new Date(),
       perform: async (step) => {
         const result = runFlowStep(step);
-        if (step.type === 'rv.publish-testcases' && testCases) {
-          const cases = Array.isArray(result.outputs.cases) ? result.outputs.cases : [];
-          for (const item of cases) {
-            const row = item as { name?: unknown; steps?: unknown; expected?: unknown; workItem?: unknown };
-            if (typeof row.name !== 'string' || typeof row.steps !== 'string' || typeof row.expected !== 'string') continue;
-            try {
-              await testCases.create({ id: 'worker' }, { name: row.name, steps: row.steps, expected: row.expected, summary: typeof row.workItem === 'string' && row.workItem ? `Work item ${row.workItem}` : '', workItem: typeof row.workItem === 'string' ? row.workItem : '' });
-            } catch (e) {
-              if (!(e instanceof PlatformError) || e.errorClass !== 'conflict') throw e;
-            }
-          }
-        }
-        return result;
+        if (step.type !== 'rv.publish-testcases' || !testCases) return result;
+        const cases = (Array.isArray(result.outputs.cases) ? result.outputs.cases : []).flatMap((item) => {
+          const row = item as Partial<GeneratedCase>;
+          if (typeof row.name !== 'string' || typeof row.steps !== 'string' || typeof row.expected !== 'string' || typeof row.reference !== 'string') return [];
+          return [{ name: row.name, steps: row.steps, expected: row.expected, workItem: typeof row.workItem === 'string' ? row.workItem : '', reference: row.reference }];
+        });
+        const published = await publishGeneratedCases({
+          workItem: typeof result.outputs.workItem === 'string' ? result.outputs.workItem : '',
+          cases,
+          testCases,
+          squash: squash
+            ? async (item) => squash.invoke<{ id: string; created: boolean }>({
+                role: 'testManagement',
+                capability: 'tm.testcase.upsert',
+                input: { reference: item.reference, name: item.name, steps: [{ action: item.steps, expected: item.expected }] },
+                idempotencyKey: item.reference,
+                actor: { type: 'step', id: step.id, executionId: step.runId, stepId: step.id },
+              })
+            : undefined,
+        });
+        return { summary: published.summary, outputs: { ...result.outputs, squash: 'read-write' } };
       },
     })) === 'busy') busy = true;
     if (environments && hosts && (await checkReachability(environments, async (target) => {

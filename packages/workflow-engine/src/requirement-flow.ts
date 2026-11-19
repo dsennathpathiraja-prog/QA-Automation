@@ -1,3 +1,5 @@
+import { generateWithPlaywrightGenerator, planWithPlaywrightPlanner, type PlannerScenario } from './playwright-agents';
+
 export interface FlowStep {
   id: string;
   type: string;
@@ -10,6 +12,9 @@ export interface FlowCase {
   steps: string;
   expected: string;
   workItem: string;
+  reference: string;
+  file: string;
+  testId: string;
 }
 
 export interface FlowResult {
@@ -34,6 +39,20 @@ export function acceptanceLines(raw: string): string[] {
 
 const list = (value: unknown): string[] => (Array.isArray(value) ? value.map((item) => text(item)).filter(Boolean) : []);
 
+const scenariosOf = (value: unknown): PlannerScenario[] => {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const row = item as Partial<PlannerScenario>;
+    const name = text(row.name);
+    const kind = row.kind === 'negative' || row.kind === 'edge' ? row.kind : 'positive';
+    const criterion = text(row.criterion) || name;
+    const steps = text(row.steps);
+    const expected = text(row.expected);
+    if (!name || !steps || !expected) return [];
+    return [{ name, kind, criterion, steps, expected }];
+  });
+};
+
 const casesOf = (value: unknown): FlowCase[] => {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
@@ -42,7 +61,7 @@ const casesOf = (value: unknown): FlowCase[] => {
     const steps = text(row.steps);
     const expected = text(row.expected);
     if (!name || !steps || !expected) return [];
-    return [{ name, steps, expected, workItem: text(row.workItem) }];
+    return [{ name, steps, expected, workItem: text(row.workItem), reference: text(row.reference), file: text(row.file), testId: text(row.testId) }];
   });
 };
 
@@ -57,7 +76,7 @@ export function runFlowStep(step: FlowStep): FlowResult {
   const storyOut = step.prior.read_story ?? {};
   const criteria = list(storyOut.acceptanceCriteria);
   const workItem = text(storyOut.workItem) || story.split(/\r?\n/)[0]?.slice(0, 80) || 'work-item';
-  const scenarios = list(step.prior.plan?.scenarios);
+  const scenarios = scenariosOf(step.prior.plan?.scenarios);
   const cases = casesOf(step.prior.generate_tests?.cases);
 
   switch (step.type) {
@@ -73,10 +92,10 @@ export function runFlowStep(step: FlowStep): FlowResult {
       };
     }
     case 'rv.generate-test-plan': {
-      const source = criteria.length > 0 ? criteria : [workItem ? `Verify ${application} for ${workItem}` : `Verify ${application}`];
+      const planned = planWithPlaywrightPlanner({ workItem, application, criteria });
       return {
-        summary: `Test plan has ${source.length} scenario${source.length === 1 ? '' : 's'} from the story.`,
-        outputs: { scenarios: source, workItem, applicationName: application, environment },
+        summary: planned.summary,
+        outputs: { scenarios: planned.scenarios, workItem, applicationName: application, environment, agent: 'playwright-test-planner' },
       };
     }
     case 'rv.explore-ui':
@@ -97,24 +116,19 @@ export function runFlowStep(step: FlowStep): FlowResult {
         outputs: { scenarios: scenarios.length > 0 ? scenarios : criteria, workItem },
       };
     case 'rv.generate-tests': {
-      const source = scenarios.length > 0 ? scenarios : criteria.length > 0 ? criteria : [`Verify ${application} for ${workItem}`];
-      const generated: FlowCase[] = source.slice(0, 40).map((line) => ({
-        name: line.slice(0, 120),
-        steps: `1. Open ${application}.\n2. Follow the requirement: ${line}`,
-        expected: line,
-        workItem,
-      }));
+      const source = scenarios.length > 0 ? scenarios : planWithPlaywrightPlanner({ workItem, application, criteria }).scenarios;
+      const generated = generateWithPlaywrightGenerator({ workItem, application, scenarios: source });
       return {
-        summary: `Generated ${generated.length} test case${generated.length === 1 ? '' : 's'} for ${workItem}.`,
-        outputs: { cases: generated, workItem },
+        summary: generated.summary,
+        outputs: { cases: generated.cases, workItem, agent: 'playwright-test-generator' },
       };
     }
     case 'rv.publish-testcases':
       return {
         summary: cases.length > 0
-          ? `Stored ${cases.length} test case${cases.length === 1 ? '' : 's'} for ${workItem} in Test Cases. This Squash connection is read-only, so they were not added in Squash.`
+          ? `Ready to store ${cases.length} test case${cases.length === 1 ? '' : 's'} for ${workItem} in Test Cases and in Squash.`
           : `No test cases were generated for ${workItem}. Nothing was sent to Squash.`,
-        outputs: { cases, workItem, squash: 'read-only' },
+        outputs: { cases, workItem, squash: 'read-write' },
       };
     case 'rv.execute-tests':
       return {
@@ -125,8 +139,8 @@ export function runFlowStep(step: FlowStep): FlowResult {
       };
     case 'rv.sync-results':
       return {
-        summary: 'Results stay on this execution. Squash was not updated because this connection is read-only.',
-        outputs: { squash: 'read-only' },
+        summary: 'Execution results stay on this run. The generated test cases are stored in Squash when the publish step runs.',
+        outputs: { squash: 'read-write' },
       };
     case 'rv.qa-report':
       return {

@@ -58,7 +58,7 @@ function Detail({ detail, provider }: { detail: ConnectorDetail; provider?: Prov
 
   return (
     <>
-      <PageHeader title={detail.name} description={detail.category === 'browser-automation' ? `${detail.providerName}. The browser may open only the addresses listed on this connector.` : `${detail.providerName}. Read-only: the platform never changes anything in this system.`} />
+      <PageHeader title={detail.name} description={detail.category === 'browser-automation' ? `${detail.providerName}. The browser may open only the addresses listed on this connector.` : detail.category === 'test-management' ? `${detail.providerName}. Read and write: generated test cases are stored in Squash.` : `${detail.providerName}. Read-only: the platform never changes anything in this system.`} />
       {provider?.verification === 'fixtures-only' && (
         <p role="status" className="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">Not verified against a live instance. The checks for this connector type used recorded responses.</p>
       )}

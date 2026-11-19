@@ -39,7 +39,10 @@ export class PgInstanceResolver implements InstanceResolver {
       config: r.config,
       scope: scopeOf(r.config),
       secretLocator: (await this.secretExists(locator)) ? locator : undefined,
-      effectiveCapabilities: new Set(states.filter((s) => s.granted && s.support !== 'unsupported').map((s) => s.capabilityId as CapabilityId)),
+      effectiveCapabilities: new Set([
+        ...states.filter((s) => s.granted && s.support !== 'unsupported').map((s) => s.capabilityId as CapabilityId),
+        ...(r.category === 'test-management' && r.accessMode === 'read_write' ? ['tm.testcase.upsert' as CapabilityId] : []),
+      ]),
     };
   }
 }

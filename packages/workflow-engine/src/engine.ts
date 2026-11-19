@@ -36,7 +36,7 @@ export interface TickOptions {
   /** Commit the side effect, then die before the step is marked complete. */
   crashAfterEffect?: boolean;
   /** Runs after a new effect is recorded. A repeated effect skips this so the work happens once. */
-  perform?(step: { id: string; type: string; params: Record<string, unknown>; prior: Record<string, Record<string, unknown>> }): Promise<{ summary: string; outputs?: Record<string, unknown> }>;
+  perform?(step: { id: string; type: string; runId: string; params: Record<string, unknown>; prior: Record<string, Record<string, unknown>> }): Promise<{ summary: string; outputs?: Record<string, unknown> }>;
 }
 
 const enabledSteps = (definition: unknown): { id: string; type: string }[] => {
@@ -77,7 +77,7 @@ export async function tick(store: EngineStore, opts: TickOptions): Promise<'busy
     const doneSteps = store.stepsDone ? await store.stepsDone(run.id) : [];
     const prior = Object.fromEntries(doneSteps.map((item) => [item.stepId, item.outputs]));
     try {
-      const result = await opts.perform({ id: step.id, type: step.type, params: run.params ?? {}, prior });
+      const result = await opts.perform({ id: step.id, type: step.type, runId: run.id, params: run.params ?? {}, prior });
       summary = result.summary;
       outputs = result.outputs ?? {};
     } catch (e) {

@@ -158,7 +158,7 @@ describe('Squash through Test Connection (documentation-based mock)', () => {
     expect(JSON.stringify(d)).not.toContain(token);
   });
 
-  it('flags a read-write token as degraded with a clear warning', async () => {
+  it('accepts a read-write token so generated cases can be stored', async () => {
     const token = makeSquashToken({ permissions: 'READ_WRITE', expiresAt: new Date(Date.now() + 100 * 86_400_000) });
     mock = await startSquashMock({ token, permissions: 'READ_WRITE' });
     const s = setup({ hosts: [{ hostPattern: '127.0.0.1', purpose: 'connector', internal: true, allowHttp: true, allowLoopback: true }] });
@@ -166,9 +166,9 @@ describe('Squash through Test Connection (documentation-based mock)', () => {
     await s.service.requestTest(actor, c.id);
     await s.tester.runOnce();
     const d = await s.service.get(c.id, { includeConfig: true });
-    expect(d.status).toBe('degraded');
+    expect(d.status).toBe('connected');
     expect(d.permissionReport?.writePermissionsDetected).toEqual(['token:READ_WRITE']);
-    expect(d.latestTest?.result?.message).toMatch(/This Squash connector is read-only/);
+    expect(d.latestTest?.result?.message).toMatch(/Connected to SquashTM/);
     expect(d.canEnable).toBe(true);
   });
 

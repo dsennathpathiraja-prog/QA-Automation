@@ -10,14 +10,18 @@ describe('requirement validation stages', () => {
     const read = runFlowStep({ id: 'read_story', type: 'rv.read-user-story', params, prior: {} });
     expect(read.outputs.acceptanceCriteria).toEqual(['The saved card is listed', 'The total includes tax']);
     const plan = runFlowStep({ id: 'plan', type: 'rv.generate-test-plan', params, prior: { read_story: read.outputs } });
+    expect(plan.summary).toMatch(/playwright-test-planner/);
+    expect(plan.outputs.scenarios).toHaveLength(6);
     const generated = runFlowStep({ id: 'generate_tests', type: 'rv.generate-tests', params, prior: { read_story: read.outputs, plan: plan.outputs } });
-    const cases = generated.outputs.cases as { name: string; workItem: string }[];
-    expect(cases.map((item) => item.name)).toEqual(['The saved card is listed', 'The total includes tax']);
+    expect(generated.summary).toMatch(/playwright-test-generator/);
+    const cases = generated.outputs.cases as { name: string; workItem: string; steps: string; reference: string }[];
+    expect(cases).toHaveLength(6);
     expect(cases[0]?.workItem).toBe('QA-1');
+    expect(cases[0]?.steps).toMatch(/@playwright\/test/);
+    expect(cases[0]?.reference).toMatch(/^QAP-/);
     const published = runFlowStep({ id: 'publish_testcases', type: 'rv.publish-testcases', params, prior: { generate_tests: generated.outputs } });
-    expect(published.summary).toMatch(/Test Cases/);
-    expect(published.summary).toMatch(/read-only/);
-    expect(published.outputs.squash).toBe('read-only');
+    expect(published.summary).toMatch(/Squash/);
+    expect(published.outputs.squash).toBe('read-write');
   });
 });
 

@@ -1,5 +1,6 @@
 import { desc, eq, sql } from 'drizzle-orm';
 import { PlatformError } from '@qa/domain';
+import type { ExecutionPolicy } from '@qa/connector-sdk';
 import type { ExecutionEvent, ExecutionRecord, ExecutionRepository, ExecutionStatus, NewExecution } from '@qa/application';
 import type { Db } from './db';
 import { workflowEvent, workflowExecution } from './schema';
@@ -114,5 +115,22 @@ export class PgExecutionRepository implements ExecutionRepository {
       stepId: typeof row.payload.stepId === 'string' ? row.payload.stepId : '',
       outputs: row.payload.outputs && typeof row.payload.outputs === 'object' ? row.payload.outputs as Record<string, unknown> : {},
     }));
+  }
+}
+
+/** The connector roles bound on the run, so a step can store a generated case in Squash. */
+export class PgRunPolicyStore {
+  constructor(private readonly db: Db) {}
+
+  async get(executionId: string): Promise<ExecutionPolicy | undefined> {
+    const [row] = await this.db.select({ definition: workflowExecution.definition }).from(workflowExecution).where(eq(workflowExecution.id, executionId)).limit(1);
+    if (!row) return undefined;
+    const spec = (row.definition as { spec?: { connectors?: { role?: string; binding?: { connectorInstanceId?: string | null } }[]; policy?: { capabilityDeny?: string[] } } } | null)?.spec;
+    const boundRoles: Record<string, string> = {};
+    for (const connector of spec?.connectors ?? []) {
+      const id = connector.binding?.connectorInstanceId;
+      if (connector.role && id) boundRoles[connector.role] = id;
+    }
+    return { capabilityDeny: spec?.policy?.capabilityDeny ?? ['scm.write.*'], boundRoles, agentGrants: {} };
   }
 }

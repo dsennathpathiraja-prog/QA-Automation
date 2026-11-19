@@ -20,6 +20,10 @@ Basic authentication is not used: this instance disables it, and the vendor is r
 
 A READ_WRITE token on this read-only connector is tolerated and reported as a warning, because the instance still refuses writes. The recommended token for this instance is READ. Switching on writes here still needs the owner's approval and the separate writable connector above.
 
+## Update (19 Nov 2026)
+
+The owner asked for generated test cases to be stored in this Squash. The Squash connector is now read and write. `tm.testcase.upsert` creates a test case when the reference is new and keeps the existing case when the same reference is published again. Source repositories stay read-only. A READ token can still connect, and Squash itself refuses the store until the token is READ_WRITE.
+
 ## Evidence
 
 `packages/infrastructure/src/connectors/squash`, `packages/testing/src/squash-mock.ts` and its tests. Tests of this instance prove that no request other than GET is sent to it.

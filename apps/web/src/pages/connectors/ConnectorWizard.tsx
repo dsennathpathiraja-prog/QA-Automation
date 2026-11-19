@@ -125,7 +125,7 @@ export function ConnectorWizard() {
           <dl className="mt-2 grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-sm">
             <dt className="font-medium">Name</dt><dd>{detail.data.name}</dd>
             <dt className="font-medium">Type</dt><dd>{detail.data.providerName}</dd>
-            <dt className="font-medium">Access</dt><dd>{detail.data.accessMode === 'read_only' ? 'Read only' : 'Can operate the browser'}</dd>
+            <dt className="font-medium">Access</dt><dd>{detail.data.accessMode === 'read_only' ? 'Read only' : detail.data.category === 'browser-automation' ? 'Can operate the browser' : 'Read and write'}</dd>
             <dt className="font-medium">Usable capabilities</dt><dd>{detail.data.capabilities.filter((c) => c.granted).length} of {detail.data.capabilities.length}</dd>
           </dl>
           <div className="mt-4 flex gap-2">

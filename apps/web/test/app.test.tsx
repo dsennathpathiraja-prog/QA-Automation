@@ -74,7 +74,7 @@ describe('route guard', () => {
     });
     expect(await screen.findByText('Login')).toBeTruthy();
     expect(screen.getByText(/QA-1/)).toBeTruthy();
-    expect(screen.getByText(/not written to Squash/)).toBeTruthy();
+    expect(screen.getByText(/stores them here and in Squash/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Save test case' })).toBeNull();
   });
 

@@ -29,6 +29,7 @@ export const SQUASH_SUPPORTED_CAPABILITIES = [
   'tm.testcase.list',
   'tm.testcase.read',
   'tm.testcase.search',
+  'tm.testcase.upsert',
   'tm.requirement.list',
   'tm.requirement.read',
   'tm.execution.history',
@@ -68,17 +69,17 @@ export const squashProvider: ConnectorProvider = {
     providerKey: SQUASH_PROVIDER_KEY,
     category: 'test-management',
     displayName: 'SquashTM',
-    description: 'Reads projects, test cases, requirements, campaigns and execution history from SquashTM through its REST API with a personal API token.',
+    description: 'Reads and stores test cases in SquashTM through its REST API. A READ_WRITE personal token stores the cases the Playwright test generator creates. A READ token can only list them.',
     authMethods: [
       {
         key: 'api_token',
-        label: 'Personal API token (create it with READ permission)',
+        label: 'Personal API token (READ_WRITE stores generated test cases)',
         recommended: true,
         fields: [{ name: 'token', label: 'API token', secret: true, required: true }],
       },
     ],
     capabilities: [...SQUASH_SUPPORTED_CAPABILITIES],
-    requiredPermissions: ['API token with READ permission', 'Project read access for the token owner'],
+    requiredPermissions: ['API token with READ_WRITE permission', 'Permission to create test cases in the Squash project'],
     accessModePolicy: 'read_write',
     requiresInternet: false,
     verification: 'fixtures-only',
@@ -162,6 +163,17 @@ class SquashClient implements ConnectorClient {
       support: supported.has('tm.testcase.list') ? 'partial' : 'unsupported',
       reason: 'Squash has no search endpoint; the platform lists test cases and filters them itself, up to the configured item limit',
     });
+    const claims = readTokenClaims(this.token);
+    const canWrite = !!claims.permissions && /WRITE/i.test(claims.permissions);
+    out.push({
+      capability: 'tm.testcase.upsert',
+      support: supported.has('tm.testcase.list') ? 'supported' : 'unsupported',
+      reason: !supported.has('tm.testcase.list')
+        ? 'Follows tm.testcase.list'
+        : canWrite
+          ? 'POST /test-cases stores a generated case, and a later run with the same reference updates nothing'
+          : 'The token does not show WRITE. Squash will refuse the store until the token is READ_WRITE.',
+    });
     out.push({
       capability: 'tm.requirement.read',
       support: supported.has('tm.requirement.list') ? 'supported' : 'unsupported',
@@ -183,7 +195,9 @@ class SquashClient implements ConnectorClient {
       writePermissionsDetected: perm && /WRITE/i.test(perm) ? [`token:${perm}`] : [],
       notes: [
         perm ? undefined : 'The token permission could not be read from the token; Squash still enforces it.',
-        'Use a READ token on this instance. A READ_WRITE token is reported here because this connector refuses writes. Publishing test cases and pushing results uses a separate writable connector.',
+        perm && /WRITE/i.test(perm)
+          ? 'This token can store generated test cases in Squash.'
+          : 'This token can read Squash. Storing generated test cases needs a READ_WRITE token.',
       ].filter((n): n is string => !!n),
     };
   }
@@ -213,6 +227,8 @@ class SquashClient implements ConnectorClient {
       }
       case 'tm.testcase.read':
         return this.testCase(await this.get(`/test-cases/${idOf(i.id, 'id')}`, {}, signal));
+      case 'tm.testcase.upsert':
+        return this.upsert(i, project, signal);
       case 'tm.requirement.list':
         return this.list(project ? `/projects/${idOf(project, 'project')}/requirements` : '/requirements', 'requirements', i, signal, (r) => ({
           id: String(r.id),
@@ -322,18 +338,67 @@ class SquashClient implements ConnectorClient {
     return out.slice(0, this.cfg.maxItems);
   }
 
-  private async get(path: string, query: Record<string, string | number>, signal?: AbortSignal): Promise<Json> {
-    const qs = new URLSearchParams(Object.entries(query).map(([k, v]): [string, string] => [k, String(v)])).toString();
-    const res = await this.deps.http.request({
-      method: 'GET',
-      url: `${this.api}${path}${qs ? `?${qs}` : ''}`,
-      headers: { accept: 'application/json', authorization: `Bearer ${this.token}` },
-      signal,
-    });
-    return this.parse(res, path);
+  private async upsert(i: Record<string, any>, project: unknown, signal?: AbortSignal): Promise<{ id: string; created: boolean }> {
+    const reference = String(i.reference ?? '').trim();
+    const name = String(i.name ?? '').trim();
+    if (!reference || !name) throw new PlatformError('validation', 'A Squash test case needs a name and a reference.');
+    const scoped = typeof project === 'string' && project ? idOf(project, 'project') : undefined;
+    const existing = await this.findByReference(reference, scoped, signal);
+    if (existing) return { id: String(existing.id), created: false };
+    const projectId = scoped ?? await this.onlyProject(signal);
+    const created = await this.send('POST', `/projects/${projectId}/test-cases`, {
+      _type: 'test-case',
+      name: name.slice(0, 255),
+      reference: reference.slice(0, 50),
+      description: '<p>Generated by playwright-test-generator.</p>',
+    }, signal);
+    const id = String(created.id ?? '');
+    if (!/^\d+$/.test(id)) throw new PlatformError('internal', 'Squash did not return a test case id.');
+    const steps = Array.isArray(i.steps) ? i.steps : [];
+    for (const step of steps) {
+      const action = typeof step?.action === 'string' ? step.action.trim() : '';
+      if (!action) continue;
+      const expected = typeof step?.expected === 'string' ? step.expected.trim() : '';
+      await this.send('POST', `/test-cases/${id}/steps`, {
+        _type: 'action-step',
+        action: `<p>${escapeHtml(action).slice(0, 4000)}</p>`,
+        expected_result: expected ? `<p>${escapeHtml(expected).slice(0, 4000)}</p>` : '',
+      }, signal);
+    }
+    return { id, created: true };
   }
 
-  private parse(res: HttpResponse, path: string): Json {
+  private async findByReference(reference: string, project: string | undefined, signal?: AbortSignal): Promise<Json | undefined> {
+    const path = project ? `/projects/${project}/test-cases` : '/test-cases';
+    const all = await this.collect(path, 'test-cases', signal);
+    return all.find((item) => String(item.reference ?? '').toLowerCase() === reference.toLowerCase());
+  }
+
+  private async onlyProject(signal?: AbortSignal): Promise<string> {
+    const body = await this.get('/projects', { size: 50 }, signal);
+    const projects = (body._embedded?.projects ?? []) as Json[];
+    const first = projects[0];
+    if (!first || !/^\d+$/.test(String(first.id ?? ''))) throw new PlatformError('validation', 'Squash has no project this token can use, so the test case was not stored.');
+    return String(first.id);
+  }
+
+  private async get(path: string, query: Record<string, string | number>, signal?: AbortSignal): Promise<Json> {
+    return this.send('GET', path, undefined, signal, query);
+  }
+
+  private async send(method: 'GET' | 'POST', path: string, body: unknown, signal?: AbortSignal, query: Record<string, string | number> = {}): Promise<Json> {
+    const qs = new URLSearchParams(Object.entries(query).map(([k, v]): [string, string] => [k, String(v)])).toString();
+    const res = await this.deps.http.request({
+      method,
+      url: `${this.api}${path}${qs ? `?${qs}` : ''}`,
+      headers: { accept: 'application/json', authorization: `Bearer ${this.token}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
+    });
+    return this.parse(res, path, method);
+  }
+
+  private parse(res: HttpResponse, path: string, method = 'GET'): Json {
     if (res.status >= 200 && res.status < 300) {
       const type = res.headers['content-type'] ?? '';
       if (!type.includes('json')) throw new PlatformError('auth', 'SquashTM answered with a web page instead of data; the address or the token is wrong');
@@ -341,10 +406,12 @@ class SquashClient implements ConnectorClient {
     }
     const where = path.split('?')[0];
     if (res.status === 401) throw new PlatformError('auth', 'SquashTM rejected the API token (expired, revoked, or not a token)');
-    if (res.status === 403) throw new PlatformError('denied', `The token owner may not read ${where}`);
+    if (res.status === 403) throw new PlatformError('denied', method === 'GET' ? `The token owner cannot read ${where}` : `The token cannot change ${where}. Store generated test cases with a READ_WRITE token.`);
     if (res.status === 404) throw new PlatformError('not-found', `SquashTM has nothing at ${where}`);
     if (res.status === 429) throw new PlatformError('rate-limited', 'SquashTM is rate limiting requests');
     if (res.status >= 500) throw new PlatformError('transient', `SquashTM answered ${res.status}`);
     throw new PlatformError('validation', `SquashTM answered ${res.status} for ${where}`);
   }
 }
+
+const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

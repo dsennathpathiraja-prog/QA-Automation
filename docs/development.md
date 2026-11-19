@@ -65,4 +65,4 @@ TEST_OPENBAO_ADDR=http://127.0.0.1:8200 pnpm test        # in another
 - Only the composition roots (`apps/*/src/server.ts`, `apps/*/src/main.ts`) may import `@qa/infrastructure` and `@qa/persistence`.
 - `api`, `web`, `agents` and other upper layers must never call `.lease()` on a secret store.
 - Do not add git or repository-hosting write libraries anywhere; the architecture test refuses them.
-- Do not add or change anything in the current SquashTM (D20). That connector stays read-only and uses a READ token. Publishing test cases and pushing results belongs on a separate writable Squash connector, and those steps stay in preview until it is enabled.
+- Squash stores generated test cases (owner request, 19 Nov 2026). The connector is read and write and uses a READ_WRITE token. Source repositories stay read-only.

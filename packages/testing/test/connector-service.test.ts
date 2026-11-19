@@ -28,9 +28,9 @@ describe('provider descriptors drive the wizard', () => {
   it('lists providers with config fields, credential fields, steps and capability access', () => {
     const squash = setup().service.providers().find((p) => p.providerKey === 'squash-tm')!;
     expect(squash.configFields).toEqual([{ name: 'baseUrl', label: expect.stringContaining('SquashTM address'), type: 'url', required: true }]);
-    expect(squash.authMethods).toEqual([{ key: 'api_token', label: expect.stringContaining('READ permission'), recommended: true, fields: [{ name: 'token', label: 'API token', type: 'secret', required: true }] }]);
+    expect(squash.authMethods).toEqual([{ key: 'api_token', label: expect.stringContaining('READ_WRITE'), recommended: true, fields: [{ name: 'token', label: 'API token', type: 'secret', required: true }] }]);
     expect(squash.steps.map((x) => x.key)).toEqual(['connection', 'credentials', 'test', 'probe', 'review']);
-    expect(squash.capabilities.every((c) => c.access === 'read')).toBe(true);
+    expect(squash.capabilities.find((c) => c.id === 'tm.testcase.upsert')?.access).toBe('write');
   });
 });
 

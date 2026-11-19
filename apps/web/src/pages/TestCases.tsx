@@ -46,7 +46,7 @@ export function TestCases() {
   });
   return (
     <>
-      <PageHeader title="Test Cases" description="Cases and collections kept in this platform. They are not written to Squash." />
+      <PageHeader title="Test Cases" description="Cases written by the Playwright test generator. A requirement-validation run stores them here and in Squash under the work item." />
       <div className="space-y-4">
         {canEdit && (
           <Card label="New test case">
