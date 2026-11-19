@@ -64,7 +64,7 @@ Common first-run snags: another program on the port (use `WEB_PORT`, see step 4)
 ## Deferred by design (not Phase 1 work)
 - **S3 object store adapter:** the roadmap says "S3 adapter in Phase 2+ if chosen"; `local-fs` is the Phase 1 adapter. Decide with the Q16 host sizing answer.
 - **Kubernetes runner adapter** (Job + NetworkPolicy, Helm): Phase 11.
-- **Worker wiring of `RemoteRunnerLauncher`** and a real runner image: Phase 5. The local runners profile places the reachability check in that image. Workflow execute steps stay no-ops until a later phase has a test bundle.
+- **Worker wiring of `RemoteRunnerLauncher`** and a real runner image: done in Phase 5 (19 Nov 2026). The user saw "The runner finished. The application answered 200." Workflow execute steps stay no-ops until a later phase has a test bundle.
 - **Workflow engine:** Phase 4. Environment management is Phase 3.
 
 ## Known limits to remember

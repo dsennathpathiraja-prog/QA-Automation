@@ -22,7 +22,7 @@ A person can configure an environment from the UI (acceptance criterion 3). A se
 4. **Production authorization.** An Administrator records a justification and a validity window. One active authorization per production environment. Expired or revoked authorizations make production unselectable again.
 5. **Resolver and validation.** `ResolvedEnvironment` for a later run, and a validation call the workflow builder will use. Errors stay specific.
 6. **Environments UI.** List, create, and the edit tabs (General, Browser, Test data, Authentication, Connectors, Restrictions), including the production authorization dialog.
-7. **Connectivity check.** Reachability of the application URL, reported on the environment. Phase 5 places this check. The worker asks the application address through the approved-host list and records the answer.
+7. **Connectivity check.** Reachability of the application URL, reported on the environment. Done in Phase 5. The user saw "The application answered 200." from the worker, and "The runner finished. The application answered 200." when the runners profile was up.
 
 ## Not in Phase 3
 The workflow engine, the visual builder, and starting a run. Those are Phase 4.

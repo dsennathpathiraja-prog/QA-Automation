@@ -43,7 +43,7 @@ The reachability button checks the address from the worker unless you also start
 docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser --profile runners up --build -d
 ```
 
-`runner-image` exits on purpose after the image `qa-runner:local` exists. `runner-launcher` is the service that starts a new container for each check. It is the only service that uses the Docker socket. Open the environment again and press Check reachability. The line should start with "The runner finished."
+`runner-image` exits on purpose after the image `qa-runner:local` exists. `runner-launcher` is the service that starts a new container for each check. It is the only service that uses the Docker socket. Open the environment again and press Check reachability. The line starts with "The runner finished." On 19 Nov 2026 that check showed "The runner finished. The application answered 200."
 
 ## Stop or reset
 
