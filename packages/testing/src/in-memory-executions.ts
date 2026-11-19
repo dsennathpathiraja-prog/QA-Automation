@@ -22,6 +22,10 @@ export class InMemoryExecutionRepository implements ExecutionRepository {
     return [...this.rows.values()].filter((r) => r.workflowId === workflowId).map((r) => structuredClone(r));
   }
 
+  async listRecent(limit: number) {
+    return [...this.rows.values()].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, limit).map((r) => structuredClone(r));
+  }
+
   async events(id: string) {
     return structuredClone(this.log.get(id) ?? []);
   }

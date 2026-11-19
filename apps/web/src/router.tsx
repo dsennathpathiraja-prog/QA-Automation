@@ -10,6 +10,7 @@ import { Connectors } from './pages/Connectors';
 import { ConnectorDetailPage } from './pages/connectors/ConnectorDetailPage';
 import { ConnectorWizard } from './pages/connectors/ConnectorWizard';
 import { Dashboard } from './pages/Dashboard';
+import { Executions } from './pages/Executions';
 import { EnvironmentPage } from './pages/environments/EnvironmentPage';
 import { Environments } from './pages/Environments';
 import { Workflows } from './pages/Workflows';
@@ -32,7 +33,7 @@ const NotFound = () => (
   </>
 );
 
-const real: Record<string, () => ReactNode> = { dashboard: () => <Dashboard />, workflows: () => <Workflows />, connectors: () => <Connectors />, environments: () => <Environments />, identity: () => <IdentityMapping />, hosts: () => <ApprovedHosts />, models: () => <AiModels /> };
+const real: Record<string, () => ReactNode> = { dashboard: () => <Dashboard />, workflows: () => <Workflows />, executions: () => <Executions />, connectors: () => <Connectors />, environments: () => <Environments />, identity: () => <IdentityMapping />, hosts: () => <ApprovedHosts />, models: () => <AiModels /> };
 
 export interface RouterOptions {
   history?: Parameters<typeof createRouter>[0]['history'];

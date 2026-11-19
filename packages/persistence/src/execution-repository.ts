@@ -36,6 +36,11 @@ export class PgExecutionRepository implements ExecutionRepository {
     return rows.map(toRecord);
   }
 
+  async listRecent(limit: number) {
+    const rows = await this.db.select().from(workflowExecution).orderBy(desc(workflowExecution.createdAt)).limit(limit);
+    return rows.map(toRecord);
+  }
+
   async events(id: string): Promise<ExecutionEvent[]> {
     const rows = await this.db.select().from(workflowEvent).where(eq(workflowEvent.executionId, id)).orderBy(workflowEvent.seq);
     return rows.map((r) => ({ seq: r.seq, kind: r.kind, payload: r.payload, at: r.at.toISOString() }));

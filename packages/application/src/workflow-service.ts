@@ -95,6 +95,7 @@ export interface ExecutionRepository {
   insert(rec: NewExecution): Promise<ExecutionRecord>;
   get(id: string): Promise<ExecutionRecord | undefined>;
   listForWorkflow(workflowId: string): Promise<ExecutionRecord[]>;
+  listRecent(limit: number): Promise<ExecutionRecord[]>;
   events(id: string): Promise<ExecutionEvent[]>;
   apply(id: string, patch: { status?: ExecutionStatus; control?: ExecutionRecord['control']; leaseOwner?: string | null; leaseUntil?: Date | null }): Promise<ExecutionRecord>;
 }
@@ -114,6 +115,7 @@ export interface WorkflowView {
 export interface ExecutionView {
   id: string;
   workflowId: string;
+  workflowName: string;
   status: ExecutionStatus;
   stepIndex: number;
   createdAt: string;
@@ -130,8 +132,8 @@ const viewOf = (r: WorkflowRecord, publishedVersion: number | null): WorkflowVie
   id: r.id, key: r.key, name: r.name, description: r.description, type: r.type, status: r.status, enabled: r.enabled, updatedAt: r.updatedAt.toISOString(), publishedVersion,
 });
 
-const runOf = (r: ExecutionRecord): ExecutionView => ({
-  id: r.id, workflowId: r.workflowId, status: r.status, stepIndex: r.stepIndex, createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
+const runOf = (r: ExecutionRecord, workflowName = ''): ExecutionView => ({
+  id: r.id, workflowId: r.workflowId, workflowName, status: r.status, stepIndex: r.stepIndex, createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
 });
 
 const asDef = (value: Record<string, unknown>) => value as unknown as WfDef;
@@ -290,18 +292,24 @@ export class WorkflowService {
     }
     const run = await this.executions().insert({ id: randomUUID(), workflowId: id, versionId: version.id, definition: version.definition, params });
     await this.d.audit.append({ actorId: actor.id, action: 'execution.start', subjectType: 'workflow_execution', subjectId: run.id, detail: { workflowId: id, versionId: version.id } });
-    return runOf(run);
+    return runOf(run, current.name);
   }
 
   async runs(workflowId: string): Promise<ExecutionView[]> {
-    await this.require(workflowId);
-    return (await this.executions().listForWorkflow(workflowId)).map(runOf);
+    const workflow = await this.require(workflowId);
+    return (await this.executions().listForWorkflow(workflowId)).map((r) => runOf(r, workflow.name));
+  }
+
+  async history(): Promise<ExecutionView[]> {
+    const runs = await this.executions().listRecent(100);
+    const names = new Map((await this.d.workflows.list()).map((w) => [w.id, w.name]));
+    return runs.map((r) => runOf(r, names.get(r.workflowId) ?? 'Removed workflow'));
   }
 
   async run(id: string): Promise<ExecutionView> {
     const row = await this.executions().get(id);
     if (!row) throw new PlatformError('not-found', 'Run not found');
-    return runOf(row);
+    return runOf(row, await this.workflowName(row.workflowId));
   }
 
   async events(id: string): Promise<ExecutionEvent[]> {
@@ -314,12 +322,16 @@ export class WorkflowService {
     const current = await repo.get(id);
     if (!current) throw new PlatformError('not-found', 'Run not found');
     const next = commandOf(current, command);
-    if (next.status === current.status && next.control === current.control) return runOf(current);
+    if (next.status === current.status && next.control === current.control) return runOf(current, await this.workflowName(current.workflowId));
     const saved = await repo.apply(id, next.status === 'running'
       ? { status: next.status, control: next.control }
       : { status: next.status, control: next.control, leaseOwner: null, leaseUntil: null });
     await this.d.audit.append({ actorId: actor.id, action: `execution.${command}`, subjectType: 'workflow_execution', subjectId: id });
-    return runOf(saved);
+    return runOf(saved, await this.workflowName(saved.workflowId));
+  }
+
+  private async workflowName(id: string): Promise<string> {
+    return (await this.d.workflows.get(id))?.name ?? 'Removed workflow';
   }
 
   private async present(row: WorkflowRecord): Promise<WorkflowView> {

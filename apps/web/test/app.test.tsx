@@ -60,8 +60,23 @@ describe('route guard', () => {
   });
 
   it('placeholder pages say which phase delivers them', async () => {
-    renderApp('/executions', { me: { status: 200, body: meFor('qa_lead') } });
-    expect(await screen.findByText(/Phase 5/)).toBeTruthy();
+    renderApp('/test-cases', { me: { status: 200, body: meFor('qa_lead') } });
+    expect(await screen.findByText(/Phase 6/)).toBeTruthy();
+  });
+
+  it('lists workflow runs on Executions', async () => {
+    const user = userEvent.setup();
+    renderApp('/executions', {
+      me: { status: 200, body: meFor('qa_engineer') },
+      routes: {
+        '/api/v1/executions': { status: 200, body: { items: [{ id: '1436518e-0000-4000-8000-000000000001', workflowId: '11111111-1111-4111-8111-111111111111', workflowName: 'Checkout', status: 'succeeded', stepIndex: 10, createdAt: '2026-11-18T10:00:00.000Z', updatedAt: '2026-11-18T10:05:00.000Z' }] } },
+        '/api/v1/executions/1436518e-0000-4000-8000-000000000001/events': { status: 200, body: { items: [{ seq: 1, kind: 'started', at: '2026-11-18T10:00:00.000Z', payload: {} }] } },
+      },
+    });
+    expect(await screen.findByText('Checkout')).toBeTruthy();
+    expect(screen.getByText(/Succeeded/)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Checkout' }));
+    expect((await screen.findByRole('region', { name: 'Selected run' })).textContent).toMatch(/started/);
   });
 });
 

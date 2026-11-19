@@ -83,6 +83,10 @@ export function registerWorkflowRoutes(app: FastifyInstance, workflows: Workflow
     return ExecutionListResponse.parse({ items: await workflows.runs(idOf(req)) });
   });
 
+  app.get('/api/v1/executions', { config: { access: requires('execution.start') } }, async () => {
+    return ExecutionListResponse.parse({ items: await workflows.history() });
+  });
+
   app.get('/api/v1/executions/:id', { config: { access: requires('execution.start') } }, async (req) => {
     return ExecutionSchema.parse(await workflows.run(idOf(req)));
   });
