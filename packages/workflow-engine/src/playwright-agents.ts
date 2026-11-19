@@ -24,6 +24,14 @@ const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '-').
 
 const clip = (value: string, max: number) => value.trim().slice(0, max);
 
+/** Short label a senior QA would put on a case name. */
+const caseTitle = (kind: PlannerScenario['kind'], criterion: string): string => {
+  const line = clip(criterion, 90);
+  if (kind === 'negative') return clip(`Negative: reject invalid path for ${line}`, 120);
+  if (kind === 'edge') return clip(`Edge: boundary / alternate path for ${line}`, 120);
+  return clip(`Positive: ${line}`, 120);
+};
+
 /**
  * playwright-test-planner. One positive, one negative and one edge scenario per acceptance criterion.
  * The story text is the only input. This function does not call a model or a browser.
@@ -34,9 +42,27 @@ export function planWithPlaywrightPlanner(input: { workItem: string; application
   for (const criterion of criteria) {
     const line = clip(criterion, 100);
     scenarios.push(
-      { name: clip(line, 120), kind: 'positive', criterion: line, steps: `Open ${input.application} and follow: ${line}`, expected: line },
-      { name: clip(`${line} is refused when the input is invalid`, 120), kind: 'negative', criterion: line, steps: `Open ${input.application} and submit an invalid value for: ${line}`, expected: `${line} is not accepted` },
-      { name: clip(`${line} at the boundary`, 120), kind: 'edge', criterion: line, steps: `Open ${input.application} and use a boundary value for: ${line}`, expected: `${line} still holds at the boundary` },
+      {
+        name: caseTitle('positive', line),
+        kind: 'positive',
+        criterion: line,
+        steps: `Open ${input.application} and complete the happy path for: ${line}`,
+        expected: `${line} succeeds with the expected result`,
+      },
+      {
+        name: caseTitle('negative', line),
+        kind: 'negative',
+        criterion: line,
+        steps: `Open ${input.application} and attempt an invalid or unauthorized path for: ${line}`,
+        expected: `${line} is refused and the user sees a clear error or blocked state`,
+      },
+      {
+        name: caseTitle('edge', line),
+        kind: 'edge',
+        criterion: line,
+        steps: `Open ${input.application} and exercise a boundary or alternate path for: ${line}`,
+        expected: `${line} still holds at the boundary`,
+      },
     );
     if (scenarios.length >= 40) break;
   }

@@ -8,7 +8,7 @@ The story is the text typed on the Run tab. `playwright-test-planner` writes a p
 The UI stage and the source stage do not drive a browser or read a repository yet. The planner and the generator do not call a model yet. Executing the stored cases, with a screenshot and a Squash result, is the execution of the work item. It is not another step of this workflow.
 
 ## 1. Read the work item
-The Run tab takes the work item id. The worker calls the bound Azure Boards or Jira connector and reads the description, the acceptance criteria, and the attachments. Those criteria become the planner input. When no work-item connector is selected, the typed story stays the input, so a run without Azure or Jira still completes.
+The Run tab takes the work item id. The worker calls the bound Azure Boards or Jira connector and reads the title, description, and acceptance criteria. Azure Boards turns Description HTML into text, reads the Acceptance Criteria field when set, and otherwise parses Acceptance Criteria / bullets / Given-When-Then from the Description (and Repro Steps when present). Those criteria become the planner input. When no work-item connector is selected, or the read is denied, the typed story stays the input, so a run without Azure or Jira still completes.
 
 Done when a run of a real work item id shows the criteria from that work item in the Read stage, and the cases in Test Cases use that id.
 

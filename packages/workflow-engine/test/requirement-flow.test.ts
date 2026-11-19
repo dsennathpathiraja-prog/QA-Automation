@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { tick, type EngineStore } from '../src';
-import { runFlowStep } from '../src/requirement-flow';
+import { acceptanceLines, runFlowStep } from '../src/requirement-flow';
 
 const story = 'QA-1\n\nAcceptance criteria\nThe saved card is listed\nThe total includes tax';
 
@@ -12,6 +12,10 @@ describe('requirement validation stages', () => {
     const plan = runFlowStep({ id: 'plan', type: 'rv.generate-test-plan', params, prior: { read_story: read.outputs } });
     expect(plan.summary).toMatch(/playwright-test-planner/);
     expect(plan.outputs.scenarios).toHaveLength(6);
+    const scenarios = plan.outputs.scenarios as { name: string; kind: string }[];
+    expect(scenarios.map((s) => s.kind)).toEqual(['positive', 'negative', 'edge', 'positive', 'negative', 'edge']);
+    expect(scenarios[0]?.name).toMatch(/^Positive:/);
+    expect(scenarios[1]?.name).toMatch(/^Negative:/);
     const generated = runFlowStep({ id: 'generate_tests', type: 'rv.generate-tests', params, prior: { read_story: read.outputs, plan: plan.outputs } });
     expect(generated.summary).toMatch(/playwright-test-generator/);
     const cases = generated.outputs.cases as { name: string; workItem: string; steps: string; reference: string }[];
@@ -22,6 +26,37 @@ describe('requirement validation stages', () => {
     const published = runFlowStep({ id: 'publish_testcases', type: 'rv.publish-testcases', params, prior: { generate_tests: generated.outputs } });
     expect(published.summary).toMatch(/Squash/);
     expect(published.outputs.squash).toBe('read-write');
+  });
+
+  it('parses bullets and Given/When/Then from a work-item description blob', () => {
+    const azureStyle = [
+      '7189',
+      'PayNSure checkout',
+      '',
+      'User can pay with a saved card.',
+      '',
+      'Acceptance Criteria',
+      '- The saved card is listed on the payment page',
+      '- The total includes tax',
+      'Given a saved card',
+      'When the shopper pays',
+      'Then the receipt shows the card',
+    ].join('\n');
+    expect(acceptanceLines(azureStyle)).toEqual([
+      'The saved card is listed on the payment page',
+      'The total includes tax',
+      'Given a saved card When the shopper pays Then the receipt shows the card',
+    ]);
+    const read = runFlowStep({ id: 'read_story', type: 'rv.read-user-story', params: { story: azureStyle, applicationName: 'PayNSure' }, prior: {} });
+    expect(read.summary).toMatch(/3 acceptance criteria/);
+    const plan = runFlowStep({ id: 'plan', type: 'rv.generate-test-plan', params: { story: azureStyle, applicationName: 'PayNSure' }, prior: { read_story: read.outputs } });
+    expect(plan.outputs.scenarios).toHaveLength(9);
+  });
+
+  it('does not treat a bare work item id as acceptance criteria', () => {
+    const read = runFlowStep({ id: 'read_story', type: 'rv.read-user-story', params: { story: '7189', applicationName: 'PayNSure' }, prior: {} });
+    expect(read.outputs.acceptanceCriteria).toEqual([]);
+    expect(read.summary).toMatch(/no separate acceptance criteria/);
   });
 });
 

@@ -156,9 +156,9 @@ export function WorkflowPage() {
                 <form onSubmit={(e) => { e.preventDefault(); start.mutate(); }}>
                   {generation && <p className="mb-3">Starting this run creates the test cases. Choose the environment on Executions when you run the work item.</p>}
                   {(def.spec?.parameters ?? []).filter((p) => p.required && (p.pinned === undefined || p.pinned === null) && !(generation && p.name === 'environment')).map((p) => (
-                    <Field key={p.name} id={`param-${p.name}`} label={`${p.name} (${p.type})`} hint={p.type === 'work-item-ref' ? 'First line is the work item id. Add a heading Acceptance criteria, then one criterion on each line. Each line becomes a test case.' : undefined}>
+                    <Field key={p.name} id={`param-${p.name}`} label={`${p.name} (${p.type})`} hint={p.type === 'work-item-ref' ? 'Enter the work item id (for example 7189). When Azure Boards or Jira is bound, the run loads the title, description, and acceptance criteria from that work item. Optional: paste extra Acceptance criteria lines under the id as a fallback.' : undefined}>
                       {p.type === 'work-item-ref'
-                        ? <textarea id={`param-${p.name}`} rows={6} className={fieldClass} value={params[p.name] ?? ''} onChange={(e) => setParams({ ...params, [p.name]: e.target.value })} />
+                        ? <textarea id={`param-${p.name}`} rows={4} className={fieldClass} value={params[p.name] ?? ''} onChange={(e) => setParams({ ...params, [p.name]: e.target.value })} placeholder="7189" />
                         : <input id={`param-${p.name}`} className={fieldClass} value={params[p.name] ?? ''} onChange={(e) => setParams({ ...params, [p.name]: e.target.value })} />}
                     </Field>
                   ))}
