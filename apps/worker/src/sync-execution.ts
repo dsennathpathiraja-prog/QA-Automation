@@ -8,9 +8,13 @@ const SQUASH_STATUS: Record<CaseOutcome['status'], string> = {
   Skipped: 'UNTESTABLE',
 };
 
+const TOKEN_FIX =
+  'Replace credentials with a READ_WRITE personal API token (Authorization: Bearer only — not username/password), Test Connection, Switch on, and restart the worker so it picks up the new secret lease.';
+
 /**
  * Writes each case result to Squash when the connector can create executions.
  * Uses project name resolution already configured on the Squash connector (for example ToolKit-AgenFlow).
+ * Auth must match the create/publish path: Bearer token from the same leased secret bag.
  */
 export async function syncCaseResultsToSquash(o: {
   results: CaseOutcome[];
@@ -40,10 +44,7 @@ export async function syncCaseResultsToSquash(o: {
       out.push({ ...row, squashExecutionId: execution.id });
       synced += 1;
     } catch (e) {
-      error = e instanceof PlatformError ? e.message : 'Squash did not accept the execution status.';
-      if (/read-only|cannot change|WRITE/i.test(error)) {
-        error = 'The Squash connector cannot write execution status. Use a READ_WRITE token and Switch on.';
-      }
+      error = clarifySquashSyncError(e);
       out.push(row);
     }
   }
@@ -56,4 +57,16 @@ export async function syncCaseResultsToSquash(o: {
 export function squashIdFromSummary(summary: string): string | undefined {
   const m = /^Squash (\d+)$/.exec(summary.trim());
   return m?.[1];
+}
+
+export function clarifySquashSyncError(e: unknown): string {
+  const raw = e instanceof PlatformError ? e.message : 'Squash did not accept the execution status.';
+  if (/read-only|cannot change|WRITE/i.test(raw) && !/READ_WRITE|personal API token/i.test(raw)) {
+    return `The Squash connector cannot write execution status. ${TOKEN_FIX}`;
+  }
+  if (/rejected the API token|expired, revoked|not a token|Basic authentication|secret lease|Unauthorized/i.test(raw)) {
+    if (/Test Connection|Switch on|restart the worker/i.test(raw)) return raw;
+    return `${raw} ${TOKEN_FIX}`;
+  }
+  return raw;
 }

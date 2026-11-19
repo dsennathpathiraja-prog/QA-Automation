@@ -43,7 +43,15 @@ The reachability button checks the address from the worker unless you also start
 docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser --profile runners up --build -d
 ```
 
-`runner-image` exits on purpose after the image `qa-runner:local` exists. `runner-launcher` is the service that starts a new container for each check. It is the only service that uses the Docker socket. Open the environment again and press Check reachability. The line starts with "The runner finished." On 19 Nov 2026 that check showed "The runner finished. The application answered 200."
+`runner-image` exits on purpose after the image `qa-runner:local` exists. Rebuild that profile whenever `apps/runner/` or `deploy/images/runner.Dockerfile` changes — a stale image is a common cause of Executions showing every case **Blocked** with “without case results.” `runner-launcher` is the service that starts a new container for each check. It is the only service that uses the Docker socket. Open the environment again and press Check reachability. The line starts with "The runner finished." On 19 Nov 2026 that check showed "The runner finished. The application answered 200."
+
+### Run a prepared work item (Executions)
+
+1. Rebuild runners (Playwright-capable `qa-runner:local`):  
+   `docker compose -f deploy/compose/local/docker-compose.local.yml --profile runners up --build -d`
+2. Confirm the environment Check reachability still ends with “The runner finished.”
+3. On Executions, prepare work item **7259** (or your PayNSure item) and press **Run**.
+4. Expect per-case **Passed** / **Failed** (not all Blocked) with screenshots. Squash sync needs a **READ_WRITE** personal API token on the switched-on Squash connector (project name e.g. ToolKit-AgenFlow): Test Connection → Switch on → **restart the worker** after replacing the token.
 
 ## Stop or reset
 

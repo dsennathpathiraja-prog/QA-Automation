@@ -2,17 +2,20 @@
  * Runs prepared work-item cases against QA_TARGET_URL.
  * Prefers Playwright when installed; otherwise opens the URL over HTTP (same allowlist as reachability).
  * Prints one RESULT_JSON line per case for the worker to parse.
+ * Screenshots are kept small (JPEG viewport) so Docker log tail/JSON transport cannot drop results.
  */
 import { request as httpRequest } from 'node:http';
 import { connect as tlsConnect } from 'node:tls';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 
 const timeoutMs = 15_000;
 const target = process.env.QA_TARGET_URL ?? '';
 const allowed = (process.env.QA_ALLOWED_HOSTS ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy || '';
-/** Tiny 1×1 PNG used when Playwright is not in the image. */
+/** Tiny 1×1 PNG used when a real screenshot cannot be taken. */
 const STUB_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+/** Keep RESULT_JSON lines well under Docker/HTTP limits. */
+const MAX_SCREENSHOT_B64 = 120_000;
 
 const finish = (code) => process.exit(code);
 
@@ -53,15 +56,26 @@ if (cases.length === 0) {
 
 const playwright = await loadPlaywright();
 for (const item of cases) {
-  const result = playwright
-    ? await runWithPlaywright(playwright, url, item)
-    : await runWithHttp(url, item);
-  emit(result);
+  try {
+    const result = playwright
+      ? await runWithPlaywright(playwright, url, item)
+      : await runWithHttp(url, item);
+    emit(result);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : 'did not answer';
+    emit({ testCaseId: item.id, name: item.name, status: 'Blocked', message, screenshotPng: STUB_PNG });
+  }
 }
 finish(0);
 
 function emit(row) {
-  console.log(`RESULT_JSON ${JSON.stringify(row)}`);
+  const screenshotPng = shrinkScreenshot(typeof row.screenshotPng === 'string' ? row.screenshotPng : STUB_PNG);
+  console.log(`RESULT_JSON ${JSON.stringify({ ...row, screenshotPng })}`);
+}
+
+function shrinkScreenshot(b64) {
+  if (!b64 || b64.length <= MAX_SCREENSHOT_B64) return b64 || STUB_PNG;
+  return STUB_PNG;
 }
 
 async function loadPlaywright() {
@@ -73,17 +87,21 @@ async function loadPlaywright() {
 }
 
 async function runWithPlaywright(pw, u, item) {
-  const browser = await pw.chromium.launch({ headless: true });
+  const browser = await pw.chromium.launch({
+    headless: true,
+    args: ['--disable-dev-shm-usage', '--no-sandbox'],
+  });
   try {
-    const page = await browser.newPage();
+    const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
     const res = await page.goto(u.href, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-    const path = `/tmp/case-${String(item.id).replace(/[^a-zA-Z0-9_-]/g, '')}.png`;
-    await page.screenshot({ path, fullPage: true });
-    const png = Buffer.from(await (await import('node:fs/promises')).readFile(path)).toString('base64');
+    const path = `/tmp/case-${String(item.id).replace(/[^a-zA-Z0-9_-]/g, '')}.jpg`;
+    await page.screenshot({ path, type: 'jpeg', quality: 42, fullPage: false });
+    const png = Buffer.from(await readFile(path)).toString('base64');
     const statusCode = res?.status() ?? 0;
     if (!res) return { testCaseId: item.id, name: item.name, status: 'Blocked', message: 'did not answer', screenshotPng: png };
     if (statusCode >= 500) return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${statusCode}`, screenshotPng: png };
-    return { testCaseId: item.id, name: item.name, status: 'Passed', message: `answered ${statusCode}`, screenshotPng: png };
+    if (statusCode >= 200) return { testCaseId: item.id, name: item.name, status: 'Passed', message: `answered ${statusCode}`, screenshotPng: png };
+    return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${statusCode}`, screenshotPng: png };
   } catch (e) {
     const message = e instanceof Error ? e.message : 'did not answer';
     return { testCaseId: item.id, name: item.name, status: 'Blocked', message, screenshotPng: STUB_PNG };

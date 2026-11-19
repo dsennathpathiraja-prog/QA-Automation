@@ -10,16 +10,28 @@ interface Fake { id: string; name: string; body: any; status: string; exit: numb
 
 /** A small Docker Engine API double on a real unix socket, so the socket code path is exercised. */
 describe('docker log frames', () => {
+  const frame = (text: string, stream = 1) => {
+    const payload = Buffer.from(text);
+    const head = Buffer.alloc(8);
+    head[0] = stream;
+    head.writeUInt32BE(payload.length, 4);
+    return Buffer.concat([head, payload]);
+  };
+
   it('joins framed stdout and leaves plain text alone', () => {
-    const frame = (text: string) => {
-      const payload = Buffer.from(text);
-      const head = Buffer.alloc(8);
-      head[0] = 1;
-      head.writeUInt32BE(payload.length, 4);
-      return Buffer.concat([head, payload]);
-    };
     expect(dockerLogText(Buffer.concat([frame('answered '), frame('200\n')]))).toBe('answered 200\n');
     expect(dockerLogText(Buffer.from('answered 200\n'))).toBe('answered 200\n');
+  });
+
+  it('keeps earlier frames when the last frame is truncated', () => {
+    const first = frame('RESULT_JSON {"testCaseId":"a","status":"Passed"}\n');
+    const partialHead = Buffer.alloc(8);
+    partialHead[0] = 1;
+    partialHead.writeUInt32BE(100, 4);
+    const truncated = Buffer.concat([first, partialHead, Buffer.from('RESULT_JSON ')]);
+    const text = dockerLogText(truncated);
+    expect(text).toContain('RESULT_JSON {"testCaseId":"a"');
+    expect(text).toContain('RESULT_JSON ');
   });
 });
 

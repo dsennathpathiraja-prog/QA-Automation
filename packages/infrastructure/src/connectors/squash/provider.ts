@@ -622,11 +622,16 @@ class SquashClient implements ConnectorClient {
         throw new PlatformError(
           'auth',
           withSnippet(
-            'SquashTM rejected the API token for a write (expired, revoked, READ-only, or not a token). Test Connection only checks read; storing cases needs a READ_WRITE token on this connector.',
+            'SquashTM rejected the API token for a write (expired, revoked, READ-only, or not a token). Test Connection only checks read; storing cases and execution status need a READ_WRITE token on this connector. Replace the token, Test Connection, Switch on, and restart the worker so it picks up the new secret lease.',
           ),
         );
       }
-      throw new PlatformError('auth', withSnippet('SquashTM rejected the API token (expired, revoked, or not a token)'));
+      throw new PlatformError(
+        'auth',
+        withSnippet(
+          'SquashTM rejected the API token (expired, revoked, wrong lease, or not a token). Replace credentials with a READ_WRITE personal API token (Authorization: Bearer only), Test Connection, Switch on, and restart the worker so it picks up the new secret lease.',
+        ),
+      );
     }
     if (res.status === 403) throw new PlatformError('denied', method === 'GET' ? `The token owner cannot read ${where}` : `The token cannot change ${where}. Store generated test cases with a READ_WRITE token.`);
     if (res.status === 404) throw new PlatformError('not-found', `SquashTM has nothing at ${where}`);

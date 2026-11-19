@@ -20,6 +20,26 @@ describe('work-item Playwright run', () => {
     ]);
   });
 
+  it('finds RESULT_JSON after docker noise on the same line', () => {
+    const text = '\x01noise RESULT_JSON {"testCaseId":"a","name":"Login","status":"Passed","message":"answered 200","screenshotPng":"x"}\n';
+    expect(parseCaseResults(text, [])[0]).toMatchObject({ testCaseId: 'a', status: 'Passed' });
+  });
+
+  it('maps legacy answered N logs to per-case Passed when RESULT_JSON is missing', () => {
+    const out = parseCaseResults('answered 200\n', [{ id: 'a', name: 'Positive PayNSure' }, { id: 'b', name: 'Edge ToolKit-AgenFlow' }]);
+    expect(out).toEqual([
+      { testCaseId: 'a', name: 'Positive PayNSure', status: 'Passed', message: 'answered 200', screenshotPng: expect.any(String) },
+      { testCaseId: 'b', name: 'Edge ToolKit-AgenFlow', status: 'Passed', message: 'answered 200', screenshotPng: expect.any(String) },
+    ]);
+  });
+
+  it('explains a rebuild when the runner log has no results', () => {
+    const out = parseCaseResults('chromium spawn failed\n', [{ id: 'a', name: 'Login' }]);
+    expect(out[0]?.status).toBe('Blocked');
+    expect(out[0]?.message).toMatch(/without case results/);
+    expect(out[0]?.message).toMatch(/Rebuild qa-runner:local/);
+  });
+
   it('runs through the launcher with bundleRef work-item', async () => {
     const launcher = new FakeRunnerLauncher();
     const realLaunch = launcher.launch.bind(launcher);
@@ -52,6 +72,40 @@ describe('work-item Playwright run', () => {
     expect(out.results[0]).toMatchObject({ status: 'Passed', name: 'Login' });
     expect(launcher.specOf('runner-1').bundleRef).toBe('work-item');
     expect(launcher.specOf('runner-1').env?.QA_TARGET_URL).toBe('https://qa.shop.example/app');
+    expect(launcher.specOf('runner-1').limits.pids).toBeGreaterThanOrEqual(512);
+  });
+
+  it('falls back to a direct probe when the runner returns no RESULT_JSON', async () => {
+    const launcher = new FakeRunnerLauncher();
+    const realLaunch = launcher.launch.bind(launcher);
+    launcher.launch = async (spec, opts) => {
+      const handle = await realLaunch(spec, opts);
+      launcher.finish(handle.id, 0);
+      return handle;
+    };
+    const run = {
+      id: '11111111-1111-4111-8111-111111111111',
+      workItem: '7259',
+      environmentId: '22222222-2222-4222-8222-222222222222',
+      environmentName: 'QA',
+      caseCount: 1,
+      status: 'running' as const,
+      createdAt: new Date(),
+    };
+    const out = await runWorkItemCases({
+      run,
+      cases: [{ id: '33333333-3333-4333-8333-333333333333', name: 'Positive PayNSure' }],
+      url: 'https://qa.shop.example/app',
+      launcher: {
+        launcher,
+        image,
+        logs: async () => 'no useful output\n',
+      },
+      probe: async () => ({ status: 200 }),
+      now: 1,
+    });
+    expect(out.viaRunner).toBe(true);
+    expect(out.results[0]).toMatchObject({ status: 'Passed', message: 'answered 200', name: 'Positive PayNSure' });
   });
 
   it('queues, claims, completes a prepared work item with per-case status', async () => {
@@ -96,5 +150,20 @@ describe('Squash execution sync', () => {
     });
     expect(out.results[0]?.squashExecutionId).toBe('77');
     expect(out.summary).toMatch(/Squash recorded 1/);
+  });
+
+  it('clarifies Squash token rejection with Bearer lease repair steps', async () => {
+    const { PlatformError } = await import('@qa/domain');
+    const out = await syncCaseResultsToSquash({
+      workItem: '7259',
+      results: [{ testCaseId: 'a', name: 'Positive PayNSure', status: 'Passed', message: 'ok', screenshotPng: png }],
+      squashIdForCase: async () => '238',
+      upsert: async () => {
+        throw new PlatformError('auth', 'SquashTM rejected the API token (expired, revoked, or not a token)');
+      },
+      updateStatus: async () => undefined,
+    });
+    expect(out.summary).toMatch(/Squash was not updated/);
+    expect(out.summary).toMatch(/Bearer|READ_WRITE|restart the worker|secret lease/i);
   });
 });
