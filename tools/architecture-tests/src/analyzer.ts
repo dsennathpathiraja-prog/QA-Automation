@@ -58,6 +58,8 @@ export const ALLOWED_WORKSPACE_DEPS: Record<string, readonly string[]> = {
   persistence: ['domain', 'security', 'connector-sdk', 'llm', 'application'],
   bootstrap: ['domain', 'connector-sdk', 'security', 'infrastructure', 'persistence', 'llm', 'telemetry', 'application'],
   'runner-launcher': ['domain', 'infrastructure', 'telemetry', 'testing', 'connector-sdk'],
+  // Container image only (mjs + Playwright); no @qa workspace imports.
+  runner: [],
   worker: ['domain', 'connector-sdk', 'security', 'infrastructure', 'persistence', 'llm', 'telemetry', 'application', 'bootstrap', 'workflow-engine'],
 };
 

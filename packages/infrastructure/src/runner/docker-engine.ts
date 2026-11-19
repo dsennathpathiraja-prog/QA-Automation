@@ -69,11 +69,13 @@ export class DockerEngine implements ContainerEngine {
   }
 
   async logs(id: string): Promise<string> {
-    const res = await request(`${this.base}/containers/${encodeURIComponent(id)}/logs?stdout=1&stderr=1&tail=20`, {
+    // Work-item runs emit one RESULT_JSON line per case (plus browser noise). tail=20 dropped those lines
+    // and left the worker with "The runner finished without case results."
+    const res = await request(`${this.base}/containers/${encodeURIComponent(id)}/logs?stdout=1&stderr=1&tail=5000`, {
       method: 'GET',
       dispatcher: this.dispatcher,
       headersTimeout: 30_000,
-      bodyTimeout: 30_000,
+      bodyTimeout: 120_000,
     });
     const buf = Buffer.from(await res.body.arrayBuffer());
     if (res.statusCode === 404) return '';
@@ -123,7 +125,11 @@ export class DockerEngine implements ContainerEngine {
   }
 }
 
-/** Docker's log stream frames each chunk with an 8-byte header. A raw body is returned unchanged. */
+/**
+ * Docker's log stream frames each chunk with an 8-byte header.
+ * Keep already-decoded frames when the last frame is truncated — falling back to the whole raw
+ * buffer embeds binary headers and breaks RESULT_JSON parsing.
+ */
 export function dockerLogText(buf: Buffer): string {
   if (buf.length < 8) return buf.toString('utf8');
   const parts: string[] = [];
@@ -131,9 +137,17 @@ export function dockerLogText(buf: Buffer): string {
   while (i + 8 <= buf.length) {
     const stream = buf[i];
     const size = buf.readUInt32BE(i + 4);
-    if ((stream !== 1 && stream !== 2) || i + 8 + size > buf.length) return buf.toString('utf8');
+    if (stream !== 1 && stream !== 2) {
+      if (parts.length === 0) return buf.toString('utf8');
+      parts.push(buf.subarray(i).toString('utf8'));
+      break;
+    }
+    if (i + 8 + size > buf.length) {
+      parts.push(buf.subarray(i + 8).toString('utf8'));
+      break;
+    }
     parts.push(buf.subarray(i + 8, i + 8 + size).toString('utf8'));
     i += 8 + size;
   }
-  return i === buf.length ? parts.join('') : buf.toString('utf8');
+  return parts.join('');
 }

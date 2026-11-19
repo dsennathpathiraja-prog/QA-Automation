@@ -3,6 +3,7 @@ import type { CaseRunStatus, TestCaseService, WorkItemRunRecord } from '@qa/appl
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const STUB_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const NO_RESULTS = 'The runner finished without case results.';
 
 export interface CaseOutcome {
   testCaseId: string;
@@ -27,7 +28,12 @@ export async function runWorkItemCases(o: {
   if (o.cases.length === 0) return { viaRunner: false, results: [] };
   if (o.launcher) {
     try {
-      return { viaRunner: true, results: await viaRunner(o) };
+      const results = await viaRunner(o);
+      if (!isEmptyRunnerResult(results) || !o.probe) return { viaRunner: true, results };
+      // Runner container finished but emitted no RESULT_JSON (stale image, truncated logs, crash).
+      // Fall back to a direct probe so the board still shows Passed/Failed instead of all Blocked.
+      const probed = await viaDirect(o);
+      return { viaRunner: true, results: probed };
     } catch (e) {
       if (!launcherDown(e)) throw e;
     }
@@ -37,8 +43,10 @@ export async function runWorkItemCases(o: {
 
 export function parseCaseResults(text: string, fallback: Array<{ id: string; name: string }>): CaseOutcome[] {
   const found: CaseOutcome[] = [];
-  for (const line of text.split('\n')) {
-    const raw = line.trim().startsWith('RESULT_JSON ') ? line.trim().slice('RESULT_JSON '.length) : '';
+  for (const line of text.split(/\r?\n/)) {
+    const idx = line.indexOf('RESULT_JSON ');
+    if (idx < 0) continue;
+    const raw = line.slice(idx + 'RESULT_JSON '.length).trim();
     if (!raw) continue;
     try {
       const row = JSON.parse(raw) as Partial<CaseOutcome>;
@@ -57,11 +65,33 @@ export function parseCaseResults(text: string, fallback: Array<{ id: string; nam
     }
   }
   if (found.length > 0) return found;
-  return fallback.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message: 'The runner finished without case results.', screenshotPng: STUB_PNG }));
+
+  // Older runner images only printed reachability-style "answered N" with no RESULT_JSON.
+  const answered = Number(/answered (\d{3})\b/.exec(text)?.[1]);
+  if (Number.isInteger(answered) && answered > 0) {
+    const status: CaseRunStatus = answered >= 500 ? 'Failed' : answered >= 200 ? 'Passed' : 'Failed';
+    return fallback.map((c) => ({
+      testCaseId: c.id,
+      name: c.name,
+      status,
+      message: `answered ${answered}`,
+      screenshotPng: STUB_PNG,
+    }));
+  }
+
+  const excerpt = text.replace(/\s+/g, ' ').trim().slice(0, 240);
+  const message = excerpt
+    ? `${NO_RESULTS} Rebuild qa-runner:local with the runners compose profile if the image predates work-item execute. Log: ${excerpt}`
+    : `${NO_RESULTS} Rebuild qa-runner:local with the runners compose profile if the image predates work-item execute.`;
+  return fallback.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message, screenshotPng: STUB_PNG }));
 }
 
 export function launcherDown(e: unknown): boolean {
   return e instanceof PlatformError && e.errorClass === 'transient' && /could not resolve|network error|timed out|not reachable/.test(e.message);
+}
+
+function isEmptyRunnerResult(results: CaseOutcome[]): boolean {
+  return results.length > 0 && results.every((r) => r.status === 'Blocked' && r.message.startsWith(NO_RESULTS));
 }
 
 async function viaRunner(o: {
@@ -80,7 +110,8 @@ async function viaRunner(o: {
     image: launcher.image,
     bundleRef: 'work-item',
     environmentId: o.run.environmentId.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 128) || 'environment',
-    limits: { cpus: 1, memoryMb: 1024, timeoutSeconds: 120, pids: 128 },
+    // Chromium needs headroom; the old 128 pid cap could kill the browser before RESULT_JSON was printed.
+    limits: { cpus: 1, memoryMb: 2048, timeoutSeconds: 180, pids: 512 },
     allowedHosts: [target.port ? `${host}:${target.port}` : host],
     env: {
       QA_TARGET_URL: o.url,

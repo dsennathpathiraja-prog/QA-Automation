@@ -209,7 +209,9 @@ const loop = new WorkerLoop({
               platformEnv,
             }),
             allowedMethods: ['GET', 'POST'],
-            timeoutMs: 30_000,
+            timeoutMs: 60_000,
+            // RESULT_JSON lines include compact JPEG screenshots for every case.
+            maxBodyBytes: 32 * 1024 * 1024,
           });
           const launcher = new RemoteRunnerLauncher({ baseUrl: launcherUrl, token: () => launcherToken, http });
           const image = await launcher.image();
