@@ -196,11 +196,17 @@ describe('Squash provider against the documentation-based mock', () => {
     });
     const client = squashProvider.create({ baseUrl: mock.baseUrl }, { value: { token: rw }, expiresAt: new Date(Date.now() + 60_000), release() {} }, { http });
     const first = await call(client, 'tm.testcase.upsert', { reference: 'QAP-qa-1-1', name: 'Saved card is listed', steps: [{ action: 'Open checkout', expected: 'The card is listed' }] });
-    expect(first).toEqual({ id: '1004', created: true });
+    expect(first).toEqual({ id: '1004', created: true, projectId: '1' });
     const again = await call(client, 'tm.testcase.upsert', { reference: 'QAP-qa-1-1', name: 'Saved card is listed' });
-    expect(again).toEqual({ id: '1004', created: false });
+    expect(again).toEqual({ id: '1004', created: false, projectId: '1' });
+    const pinned = await call(client, 'tm.testcase.upsert', { project: '2', reference: 'QAP-qa-1-2', name: 'Pinned project case', steps: [{ action: 'Open', expected: 'Ok' }] });
+    expect(pinned).toEqual({ id: '1005', created: true, projectId: '2' });
     const posts = mock.nonGetRequests().filter((item) => item.method === 'POST' && item.path.includes('/test-cases') && !item.path.includes('/steps'));
-    expect(posts).toHaveLength(1);
+    expect(posts).toHaveLength(2);
+    expect(posts.map((item) => item.path)).toEqual(expect.arrayContaining([
+      expect.stringMatching(/\/projects\/1\/test-cases$/),
+      expect.stringMatching(/\/projects\/2\/test-cases$/),
+    ]));
   });
 
   it('never sends anything but GET, whatever was called', async () => {

@@ -16,6 +16,8 @@ import { readTokenClaims } from './token';
 
 const ConfigSchema = z.object({
   baseUrl: z.string().url(),
+  /** Squash project id. When set, generated cases are stored in that project. When omitted, the first project the token can see is used. */
+  project: z.string().regex(/^\d+$/).optional(),
   pageSize: z.number().int().min(1).max(200).default(50),
   maxItems: z.number().int().min(1).max(10_000).default(1_000),
   expiryWarnDays: z.number().int().min(1).max(90).default(14),
@@ -84,7 +86,10 @@ export const squashProvider: ConnectorProvider = {
     requiresInternet: false,
     verification: 'fixtures-only',
     wizard: [
-      { key: 'connection', title: 'Connection', fields: [{ name: 'baseUrl', label: 'SquashTM address (for example http://host/squash)', type: 'url', required: true }] },
+      { key: 'connection', title: 'Connection', fields: [
+        { name: 'baseUrl', label: 'SquashTM address (for example http://host/squash)', type: 'url', required: true },
+        { name: 'project', label: 'Squash project id (optional; leave blank to use the first project the token can see)', type: 'text', required: false },
+      ] },
       { key: 'credentials', title: 'API token', fields: [{ name: 'token', label: 'API token', type: 'secret', required: true }] },
       { key: 'test', title: 'Test connection', action: 'test-connection' },
       { key: 'probe', title: 'Check what this Squash supports', action: 'probe-capabilities' },
@@ -347,13 +352,16 @@ class SquashClient implements ConnectorClient {
     return out.slice(0, this.cfg.maxItems);
   }
 
-  private async upsert(i: Record<string, any>, project: unknown, signal?: AbortSignal): Promise<{ id: string; created: boolean }> {
+  private async upsert(i: Record<string, any>, project: unknown, signal?: AbortSignal): Promise<{ id: string; created: boolean; projectId: string }> {
     const reference = String(i.reference ?? '').trim();
     const name = String(i.name ?? '').trim();
     if (!reference || !name) throw new PlatformError('validation', 'A Squash test case needs a name and a reference.');
-    const scoped = typeof project === 'string' && project ? idOf(project, 'project') : undefined;
+    const scoped = typeof project === 'string' && project ? idOf(project, 'project') : (this.cfg.project ? idOf(this.cfg.project, 'project') : undefined);
     const existing = await this.findByReference(reference, scoped, signal);
-    if (existing) return { id: String(existing.id), created: false };
+    if (existing) {
+      const fromCase = existing.project && typeof existing.project === 'object' ? String((existing.project as Json).id ?? '') : '';
+      return { id: String(existing.id), created: false, projectId: scoped ?? (/^\d+$/.test(fromCase) ? fromCase : await this.onlyProject(signal)) };
+    }
     const projectId = scoped ?? await this.onlyProject(signal);
     const created = await this.send('POST', `/projects/${projectId}/test-cases`, {
       _type: 'test-case',
@@ -374,7 +382,7 @@ class SquashClient implements ConnectorClient {
         expected_result: expected ? `<p>${escapeHtml(expected).slice(0, 4000)}</p>` : '',
       }, signal);
     }
-    return { id, created: true };
+    return { id, created: true, projectId };
   }
 
   private async findByReference(reference: string, project: string | undefined, signal?: AbortSignal): Promise<Json | undefined> {
