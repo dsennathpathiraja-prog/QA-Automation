@@ -69,6 +69,25 @@ describe('HardenedHttpClient', () => {
     expect(calls).toEqual(['GET https://api.github.com/repos/x/y']);
   });
 
+  it('strips URL userinfo before fetch so clients cannot emit Authorization: Basic', async () => {
+    const calls: string[] = [];
+    const headersSeen: Array<Record<string, string> | undefined> = [];
+    const fetchImpl: FetchLike = async (url, init) => {
+      calls.push(`${String(init.method)} ${url}`);
+      headersSeen.push(init.headers as Record<string, string> | undefined);
+      return { status: 200, headers: { forEach: (cb) => cb('application/json', 'content-type') }, arrayBuffer: async () => new TextEncoder().encode('{"ok":true}').buffer as ArrayBuffer };
+    };
+    const c = new HardenedHttpClient({ egress: policy(), resolve: async () => ['140.82.112.5'], fetchImpl });
+    await c.request({
+      method: 'GET',
+      url: 'https://user:pass@api.github.com/repos/x/y',
+      headers: { Authorization: 'Bearer tok-from-header' },
+    });
+    expect(calls).toEqual(['GET https://api.github.com/repos/x/y']);
+    expect(calls[0]).not.toMatch(/user:pass@/);
+    expect(headersSeen[0]?.Authorization ?? headersSeen[0]?.authorization).toBe('Bearer tok-from-header');
+  });
+
   it('enforces the method allowlist (read-only providers)', async () => {
     const calls: string[] = [];
     const c = mk({ allowedMethods: ['GET', 'HEAD'] }, calls);

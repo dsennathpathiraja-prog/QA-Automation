@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PlatformError } from '@qa/domain';
+import { PlatformError, isPlatformError } from '@qa/domain';
 import type {
   AdapterDeps,
   CallContext,
@@ -12,12 +12,16 @@ import type {
   PermissionReport,
 } from '@qa/connector-sdk';
 import { htmlToText } from './html';
-import { normalizeSquashToken, readTokenClaims } from './token';
+import { normalizeSquashToken, parseSquashSecrets, readTokenClaims, scrubSquashBaseUrl } from './token';
 
 const blankToUndef = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
 
 const ConfigSchema = z.object({
-  baseUrl: z.string().url(),
+  /** Squash address without userinfo — URL credentials would become Basic auth and Squash 15.x rejects that. */
+  baseUrl: z
+    .string()
+    .url()
+    .transform((raw) => scrubSquashBaseUrl(raw)),
   /** Squash project name (preferred). Resolved to an id via GET /projects before list or upsert. */
   projectName: z.preprocess(blankToUndef, z.string().min(1).max(255).optional()),
   /** Numeric Squash project id. Kept for back-compat when the name is not used. */
@@ -28,9 +32,17 @@ const ConfigSchema = z.object({
   maxItems: z.number().int().min(1).max(10_000).default(1_000),
   expiryWarnDays: z.number().int().min(1).max(90).default(14),
 });
-/** Trim on save (and again on lease via create). Squash 15.x needs a non-empty personal API token. */
-const SecretSchema = z.object({
-  token: z.string().trim().min(20, 'API token is required'),
+/**
+ * Personal API token only. Username/password are ignored when a token is present;
+ * if the token is missing and a password is present, save/lease fail fast with a clear message.
+ */
+const SecretSchema = z.unknown().transform((raw, ctx) => {
+  try {
+    return parseSquashSecrets(raw);
+  } catch (e) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: isPlatformError(e) ? e.message : 'API token is required', path: ['token'] });
+    return z.NEVER;
+  }
 });
 
 type SquashConfig = Omit<z.infer<typeof ConfigSchema>, 'project'> & { projectId?: string };
@@ -116,8 +128,8 @@ export const squashProvider: ConnectorProvider = {
     if (!secrets) throw new PlatformError('auth', 'SquashTM needs an API token');
     const { project: legacyProject, ...parsed } = ConfigSchema.parse(config);
     const cfg: SquashConfig = { ...parsed, projectId: parsed.projectId ?? legacyProject };
-    // Lease path: trim again so whitespace saved before this fix, or pasted with newlines, still works.
-    const token = normalizeSquashToken(SecretSchema.parse(secrets.value).token);
+    // Lease path (Test Connection and upsert): same secret bag → Bearer token only; never Basic.
+    const token = normalizeSquashToken(parseSquashSecrets(secrets.value).token);
     return new SquashClient(cfg, token, deps);
   },
 };
@@ -535,7 +547,7 @@ class SquashClient implements ConnectorClient {
   private async send(method: 'GET' | 'POST' | 'PATCH', path: string, body: unknown, signal?: AbortSignal, query: Record<string, string | number> = {}): Promise<Json> {
     const qs = new URLSearchParams(Object.entries(query).map(([k, v]): [string, string] => [k, String(v)])).toString();
     // SquashTM 15.0.4 accepts only Bearer — never Token, Basic, X-Api-Key, or a bare token.
-    const authorization = `Bearer ${this.token.trim()}`;
+    const authorization = this.bearerAuthorization();
     const res = await this.deps.http.request({
       method,
       url: `${this.api}${path}${qs ? `?${qs}` : ''}`,
@@ -544,6 +556,16 @@ class SquashClient implements ConnectorClient {
       signal,
     });
     return this.parse(res, path, method);
+  }
+
+  /** Single place that builds the Authorization header — always Bearer, never Basic. */
+  private bearerAuthorization(): string {
+    const token = this.token.trim();
+    const authorization = `Bearer ${token}`;
+    if (/^Basic\s/i.test(authorization) || !authorization.startsWith('Bearer ') || !token) {
+      throw new PlatformError('internal', 'SquashTM auth header must be Bearer with a token; Basic is not allowed.');
+    }
+    return authorization;
   }
 
   private parse(res: HttpResponse, path: string, method = 'GET'): Json {
@@ -557,6 +579,14 @@ class SquashClient implements ConnectorClient {
       // Squash returns 401 for a READ token on POST/PATCH/DELETE (Test Connection only GETs, so it still succeeds).
       const snippet = this.authFailureSnippet(res);
       const withSnippet = (msg: string) => (snippet ? `${msg} Squash said: ${snippet}` : msg);
+      if (/Basic authentication is not allowed/i.test(snippet)) {
+        throw new PlatformError(
+          'auth',
+          withSnippet(
+            'SquashTM rejected Basic authentication. This connector must send Authorization: Bearer with a personal API token only — replace credentials with a token (not username/password), Test Connection, Switch on, and restart the worker.',
+          ),
+        );
+      }
       const claims = readTokenClaims(this.token);
       if (method !== 'GET' && claims.permissions && !/WRITE/i.test(claims.permissions)) {
         throw new PlatformError(
