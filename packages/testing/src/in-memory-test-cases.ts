@@ -1,5 +1,16 @@
 import { PlatformError } from '@qa/domain';
-import type { CaseRunStatus, TestCaseRecord, TestCaseRepository, TestCaseVersionRecord, WorkItemCaseResultRecord, WorkItemRunRecord, WorkItemRunStatus } from '@qa/application';
+import type {
+  CaseRunStatus,
+  TestCaseInsert,
+  TestCaseKind,
+  TestCasePriority,
+  TestCaseRecord,
+  TestCaseRepository,
+  TestCaseVersionRecord,
+  WorkItemCaseResultRecord,
+  WorkItemRunRecord,
+  WorkItemRunStatus,
+} from '@qa/application';
 
 export class InMemoryTestCaseRepository implements TestCaseRepository {
   readonly cases = new Map<string, TestCaseRecord>();
@@ -29,12 +40,25 @@ export class InMemoryTestCaseRepository implements TestCaseRepository {
     return row ? structuredClone(row) : undefined;
   }
 
-  async insert(row: { id: string; key: string; name: string; summary: string; workItem: string; steps: string; expected: string }) {
-    if ([...this.cases.values()].some((r) => r.key === row.key)) throw new PlatformError('conflict', 'A test case with that name already exists.');
+  async insert(row: TestCaseInsert) {
+    if ([...this.cases.values()].some((r) => r.key === row.key && !this.deletedCaseIds.has(r.id))) {
+      throw new PlatformError('conflict', 'A test case with that name already exists.');
+    }
     const now = new Date();
-    const saved: TestCaseRecord = { id: row.id, key: row.key, name: row.name, summary: row.summary, workItem: row.workItem, currentVersion: 1, updatedAt: now };
+    const saved: TestCaseRecord = {
+      id: row.id,
+      key: row.key,
+      name: row.name,
+      summary: row.summary,
+      workItem: row.workItem,
+      kind: row.kind,
+      priority: row.priority,
+      currentVersion: 1,
+      updatedAt: now,
+    };
     this.cases.set(saved.id, saved);
     this.versionRows.set(saved.id, [{ version: 1, steps: row.steps, expected: row.expected, createdAt: now }]);
+    this.deletedCaseIds.delete(saved.id);
     return structuredClone(saved);
   }
 
@@ -67,7 +91,7 @@ export class InMemoryTestCaseRepository implements TestCaseRepository {
     return structuredClone(row);
   }
 
-  async saveIdentity(id: string, patch: { name?: string; key?: string }) {
+  async saveIdentity(id: string, patch: { name?: string; key?: string; kind?: TestCaseKind; priority?: TestCasePriority }) {
     const row = this.cases.get(id);
     if (!row || this.deletedCaseIds.has(id)) throw new PlatformError('not-found', 'Test case not found');
     if (patch.key !== undefined && [...this.cases.values()].some((r) => r.key === patch.key && r.id !== id && !this.deletedCaseIds.has(r.id))) {
@@ -75,6 +99,8 @@ export class InMemoryTestCaseRepository implements TestCaseRepository {
     }
     if (patch.name !== undefined) row.name = patch.name;
     if (patch.key !== undefined) row.key = patch.key;
+    if (patch.kind !== undefined) row.kind = patch.kind;
+    if (patch.priority !== undefined) row.priority = patch.priority;
     row.updatedAt = new Date();
     return structuredClone(row);
   }
@@ -86,6 +112,23 @@ export class InMemoryTestCaseRepository implements TestCaseRepository {
       this.members.set(collectionId, members.filter((m) => m.testCaseId !== id));
     }
     return true;
+  }
+
+  async softDeleteAllPlatform() {
+    let cases = 0;
+    let collections = 0;
+    for (const id of this.cases.keys()) {
+      if (this.deletedCaseIds.has(id)) continue;
+      this.deletedCaseIds.add(id);
+      cases += 1;
+    }
+    for (const id of this.collections.keys()) {
+      if (this.deletedCollectionIds.has(id)) continue;
+      this.deletedCollectionIds.add(id);
+      collections += 1;
+    }
+    for (const collectionId of this.members.keys()) this.members.set(collectionId, []);
+    return { cases, collections };
   }
 
   async listCollections() {
@@ -101,7 +144,9 @@ export class InMemoryTestCaseRepository implements TestCaseRepository {
     const cases = (this.members.get(id) ?? []).flatMap((m) => {
       if (this.deletedCaseIds.has(m.testCaseId)) return [];
       const item = this.cases.get(m.testCaseId);
-      return item ? [{ id: item.id, name: item.name, version: item.currentVersion, position: m.position }] : [];
+      return item
+        ? [{ id: item.id, name: item.name, version: item.currentVersion, position: m.position, kind: item.kind, priority: item.priority }]
+        : [];
     });
     return { ...row, cases };
   }

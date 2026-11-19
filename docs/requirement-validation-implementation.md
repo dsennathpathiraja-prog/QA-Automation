@@ -3,7 +3,7 @@
 Written 19 Nov 2026. Updated the same day. The requirement-validation workflow ends when the cases are stored. Execution of a work item, with the environment chosen at that time, is a separate action. The phase split is [requirement-validation-phases.md](requirement-validation-phases.md).
 
 ## Already in a run
-The story is the text typed on the Run tab. `playwright-test-planner` writes a positive, a negative, and an edge scenario for each acceptance criterion. `playwright-test-generator` writes one Playwright test for each scenario. Publish stores those cases in Test Cases under the work item, in a collection of that name, and in Squash when the connector has a READ_WRITE token. The same reference is not created twice. The run stops there.
+The story is the text typed on the Run tab. `playwright-test-planner` writes a positive, a negative, and an edge scenario for each acceptance criterion (with priority high/medium/low by kind). `playwright-test-generator` writes one Playwright test for each scenario. Publish stores those cases in Test Cases under the work item, in a collection of that name, and in Squash when the connector has a READ_WRITE token. The same reference is not created twice. The run stops there. Engineers can clear platform cases via Test Cases → Clear platform test cases or `POST /api/v1/test-cases/reset` (Squash is not wiped).
 
 The UI stage and the source stage do not drive a browser or read a repository yet. The planner and the generator do not call a model yet. Executing the stored cases, with a screenshot and a Squash result, is the execution of the work item. It is not another step of this workflow.
 

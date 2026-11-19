@@ -5,6 +5,8 @@ import type { AuditSink } from './ports';
 
 export type WorkItemRunStatus = 'prepared' | 'queued' | 'running' | 'completed' | 'failed';
 export type CaseRunStatus = 'Passed' | 'Failed' | 'Blocked' | 'Skipped';
+export type TestCaseKind = 'positive' | 'negative' | 'edge';
+export type TestCasePriority = 'high' | 'medium' | 'low';
 
 export interface TestCaseRecord {
   id: string;
@@ -12,6 +14,8 @@ export interface TestCaseRecord {
   name: string;
   summary: string;
   workItem: string;
+  kind: TestCaseKind;
+  priority: TestCasePriority;
   currentVersion: number;
   updatedAt: Date;
 }
@@ -35,6 +39,8 @@ export interface CollectionCaseRecord {
   name: string;
   version: number;
   position: number;
+  kind: TestCaseKind;
+  priority: TestCasePriority;
 }
 
 export interface WorkItemCaseResultRecord {
@@ -47,18 +53,32 @@ export interface WorkItemCaseResultRecord {
   squashExecutionId?: string;
 }
 
+export interface TestCaseInsert {
+  id: string;
+  key: string;
+  name: string;
+  summary: string;
+  workItem: string;
+  steps: string;
+  expected: string;
+  kind: TestCaseKind;
+  priority: TestCasePriority;
+}
+
 export interface TestCaseRepository {
   list(): Promise<TestCaseRecord[]>;
   get(id: string): Promise<TestCaseRecord | undefined>;
   findKey(key: string): Promise<TestCaseRecord | undefined>;
-  insert(row: { id: string; key: string; name: string; summary: string; workItem: string; steps: string; expected: string }): Promise<TestCaseRecord>;
+  insert(row: TestCaseInsert): Promise<TestCaseRecord>;
   current(id: string): Promise<TestCaseVersionRecord | undefined>;
   versions(id: string): Promise<TestCaseVersionRecord[]>;
   saveVersion(id: string, version: number, steps: string, expected: string, summary: string): Promise<TestCaseRecord>;
   saveSummary(id: string, summary: string): Promise<TestCaseRecord>;
-  /** Updates name and/or stable key without bumping the case version. */
-  saveIdentity(id: string, patch: { name?: string; key?: string }): Promise<TestCaseRecord>;
+  /** Updates name, key, kind, and/or priority without bumping the case version. */
+  saveIdentity(id: string, patch: { name?: string; key?: string; kind?: TestCaseKind; priority?: TestCasePriority }): Promise<TestCaseRecord>;
   softDelete(id: string): Promise<boolean>;
+  /** Soft-deletes every active collection and case on the platform. Squash is not touched. */
+  softDeleteAllPlatform(): Promise<{ cases: number; collections: number }>;
   listCollections(): Promise<TestCollectionRecord[]>;
   getCollection(id: string): Promise<{ id: string; name: string; description: string; cases: CollectionCaseRecord[] } | undefined>;
   insertCollection(row: { id: string; name: string; description: string }): Promise<TestCollectionRecord>;
@@ -93,6 +113,8 @@ export interface TestCaseView {
   name: string;
   summary: string;
   workItem: string;
+  kind: TestCaseKind;
+  priority: TestCasePriority;
   version: number;
   steps: string;
   expected: string;
@@ -105,12 +127,35 @@ export interface TestCaseListItem {
   name: string;
   summary: string;
   workItem: string;
+  kind: TestCaseKind;
+  priority: TestCasePriority;
   version: number;
   updatedAt: string;
 }
 
+/** Infer kind from PR #9-style case titles when the planner did not send one. */
+export function kindFromName(name: string): TestCaseKind {
+  if (/^negative\s*:/i.test(name)) return 'negative';
+  if (/^edge\s*:/i.test(name)) return 'edge';
+  return 'positive';
+}
+
+export function priorityForKind(kind: TestCaseKind): TestCasePriority {
+  if (kind === 'negative') return 'high';
+  if (kind === 'edge') return 'low';
+  return 'medium';
+}
+
 const itemOf = (r: TestCaseRecord): TestCaseListItem => ({
-  id: r.id, key: r.key, name: r.name, summary: r.summary, workItem: r.workItem, version: r.currentVersion, updatedAt: r.updatedAt.toISOString(),
+  id: r.id,
+  key: r.key,
+  name: r.name,
+  summary: r.summary,
+  workItem: r.workItem,
+  kind: r.kind,
+  priority: r.priority,
+  version: r.currentVersion,
+  updatedAt: r.updatedAt.toISOString(),
 });
 
 const runOf = (row: WorkItemRunRecord, results?: WorkItemCaseResultRecord[]) => ({
@@ -153,7 +198,7 @@ export class TestCaseService {
     return (await this.d.cases.versions(id)).map((r) => ({ version: r.version, steps: r.steps, expected: r.expected, createdAt: r.createdAt.toISOString() }));
   }
 
-  async create(actor: ActorRef, input: { name: string; summary?: string; steps: string; expected: string; workItem?: string }): Promise<TestCaseView> {
+  async create(actor: ActorRef, input: { name: string; summary?: string; steps: string; expected: string; workItem?: string; kind?: TestCaseKind; priority?: TestCasePriority }): Promise<TestCaseView> {
     const name = this.name(input.name);
     const workItem = this.summary(input.workItem ?? '');
     const key = this.key(workItem ? `${workItem} ${name}` : name);
@@ -161,7 +206,9 @@ export class TestCaseService {
     const summary = this.summary(input.summary ?? '');
     const steps = this.steps(input.steps);
     const expected = this.expected(input.expected);
-    const row = await this.d.cases.insert({ id: randomUUID(), key, name, summary, workItem, steps, expected });
+    const kind = this.kind(input.kind ?? kindFromName(name));
+    const priority = this.priority(input.priority ?? priorityForKind(kind));
+    const row = await this.d.cases.insert({ id: randomUUID(), key, name, summary, workItem, steps, expected, kind, priority });
     await this.d.audit.append({ actorId: actor.id, action: 'testcase.create', subjectType: 'test_case', subjectId: row.id, detail: { key } });
     return this.get(row.id);
   }
@@ -187,6 +234,28 @@ export class TestCaseService {
     const deleted = await this.d.cases.softDelete(id);
     if (!deleted) throw new PlatformError('not-found', 'Test case not found');
     await this.d.audit.append({ actorId: actor.id, action: 'testcase.delete', subjectType: 'test_case', subjectId: id });
+  }
+
+  /**
+   * Soft-deletes every platform collection and case so a local rebuild can start empty.
+   * Squash copies are never wiped by this call (wipeSquash is rejected if true).
+   */
+  async resetPlatform(actor: ActorRef, input: { confirm: string; wipeSquash?: boolean }): Promise<{ collectionsCleared: number; casesCleared: number; squashWiped: false }> {
+    if (input.confirm !== 'RESET_PLATFORM_CASES') {
+      throw new PlatformError('validation', 'Confirm with RESET_PLATFORM_CASES to clear platform test cases.');
+    }
+    if (input.wipeSquash) {
+      throw new PlatformError('validation', 'Squash wipe is not supported from this endpoint. Clear Squash manually if you need that.');
+    }
+    const result = await this.d.cases.softDeleteAllPlatform();
+    await this.d.audit.append({
+      actorId: actor.id,
+      action: 'testcase.reset',
+      subjectType: 'test_case',
+      subjectId: 'platform',
+      detail: { collectionsCleared: result.collections, casesCleared: result.cases, squashWiped: false },
+    });
+    return { collectionsCleared: result.collections, casesCleared: result.cases, squashWiped: false };
   }
 
   async collections() {
@@ -234,35 +303,54 @@ export class TestCaseService {
    * Scenario identity is `reference` (same key Squash uses as automated_test_reference).
    * Re-running the same work item with the same reference updates the existing case instead of inserting a duplicate.
    */
-  async fileUnderWorkItem(actor: ActorRef, input: { name: string; summary?: string; steps: string; expected: string; workItem?: string; reference?: string }): Promise<void> {
+  async fileUnderWorkItem(actor: ActorRef, input: {
+    name: string;
+    summary?: string;
+    steps: string;
+    expected: string;
+    workItem?: string;
+    reference?: string;
+    kind?: TestCaseKind;
+    priority?: TestCasePriority;
+  }): Promise<void> {
     const workItem = this.summary(input.workItem ?? '');
     if (!workItem) throw new PlatformError('validation', 'A generated case needs a work item.');
     const name = this.name(input.name);
     const reference = this.reference(input.reference ?? '');
     const scenarioKey = reference ? this.key(reference) : this.key(`${workItem} ${name}`);
     const legacyKey = this.key(`${workItem} ${name}`);
+    const kind = this.kind(input.kind ?? kindFromName(name));
+    const priority = this.priority(input.priority ?? priorityForKind(kind));
     const existing = (await this.d.cases.findKey(scenarioKey)) ?? (reference && scenarioKey !== legacyKey ? await this.d.cases.findKey(legacyKey) : undefined);
     let id: string;
     if (existing) {
       id = existing.id;
-      if (existing.name !== name || existing.key !== scenarioKey) {
-        await this.d.cases.saveIdentity(id, { name, key: scenarioKey });
-      }
+      const identity: { name?: string; key?: string; kind?: TestCaseKind; priority?: TestCasePriority } = {};
+      if (existing.name !== name) identity.name = name;
+      if (existing.key !== scenarioKey) identity.key = scenarioKey;
+      if (existing.kind !== kind) identity.kind = kind;
+      if (existing.priority !== priority) identity.priority = priority;
+      if (Object.keys(identity).length > 0) await this.d.cases.saveIdentity(id, identity);
       await this.revise(actor, id, { summary: input.summary, steps: input.steps, expected: input.expected });
     } else {
       const summary = this.summary(input.summary ?? '');
       const steps = this.steps(input.steps);
       const expected = this.expected(input.expected);
       try {
-        const row = await this.d.cases.insert({ id: randomUUID(), key: scenarioKey, name, summary, workItem, steps, expected });
+        const row = await this.d.cases.insert({ id: randomUUID(), key: scenarioKey, name, summary, workItem, steps, expected, kind, priority });
         id = row.id;
-        await this.d.audit.append({ actorId: actor.id, action: 'testcase.create', subjectType: 'test_case', subjectId: id, detail: { key: scenarioKey, reference: reference || undefined } });
+        await this.d.audit.append({ actorId: actor.id, action: 'testcase.create', subjectType: 'test_case', subjectId: id, detail: { key: scenarioKey, reference: reference || undefined, kind, priority } });
       } catch (e) {
         if (!(e instanceof PlatformError) || e.errorClass !== 'conflict') throw e;
         const raced = (await this.d.cases.findKey(scenarioKey)) ?? (await this.d.cases.findKey(legacyKey));
         if (!raced) throw e;
         id = raced.id;
-        if (raced.name !== name || raced.key !== scenarioKey) await this.d.cases.saveIdentity(id, { name, key: scenarioKey });
+        const identity: { name?: string; key?: string; kind?: TestCaseKind; priority?: TestCasePriority } = {};
+        if (raced.name !== name) identity.name = name;
+        if (raced.key !== scenarioKey) identity.key = scenarioKey;
+        if (raced.kind !== kind) identity.kind = kind;
+        if (raced.priority !== priority) identity.priority = priority;
+        if (Object.keys(identity).length > 0) await this.d.cases.saveIdentity(id, identity);
         await this.revise(actor, id, { summary: input.summary, steps: input.steps, expected: input.expected });
       }
     }
@@ -394,5 +482,15 @@ export class TestCaseService {
     const reference = raw.trim();
     if (reference.length > 50) throw new PlatformError('validation', 'Reference must be 50 characters or fewer.');
     return reference;
+  }
+
+  private kind(raw: TestCaseKind): TestCaseKind {
+    if (raw === 'negative' || raw === 'edge' || raw === 'positive') return raw;
+    throw new PlatformError('validation', 'Kind must be positive, negative, or edge.');
+  }
+
+  private priority(raw: TestCasePriority): TestCasePriority {
+    if (raw === 'high' || raw === 'medium' || raw === 'low') return raw;
+    throw new PlatformError('validation', 'Priority must be high, medium, or low.');
   }
 }

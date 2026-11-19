@@ -64,18 +64,20 @@ describe('route guard', () => {
     expect(await screen.findByText(/Phase 8/)).toBeTruthy();
   });
 
-  it('lists test cases kept in this platform', async () => {
+  it('lists test case collections kept in this platform', async () => {
     renderApp('/test-cases', {
       me: { status: 200, body: meFor('business_user') },
       routes: {
-        '/api/v1/test-cases': { status: 200, body: { items: [{ id: '22222222-2222-4222-8222-222222222222', key: 'login', name: 'Login', summary: 'A customer signs in', workItem: 'QA-1', version: 1, updatedAt: '2026-11-19T09:00:00.000Z' }] } },
-        '/api/v1/test-collections': { status: 200, body: { items: [] } },
+        '/api/v1/test-collections': {
+          status: 200,
+          body: { items: [{ id: '33333333-3333-4333-8333-333333333333', name: 'QA-1', description: 'Cases generated for QA-1', size: 1 }] },
+        },
       },
     });
-    expect(await screen.findByText('Login')).toBeTruthy();
-    expect(screen.getByText(/QA-1/)).toBeTruthy();
-    expect(screen.getByText(/stores them here and in Squash/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Save test case' })).toBeNull();
+    expect(await screen.findByRole('link', { name: 'QA-1' })).toBeTruthy();
+    expect(screen.getByText(/1 case/)).toBeTruthy();
+    expect(screen.getByText(/Open a collection to see positive, negative, and edge cases/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Clear platform test cases' })).toBeNull();
   });
 
   it('lists workflow runs on Executions', async () => {

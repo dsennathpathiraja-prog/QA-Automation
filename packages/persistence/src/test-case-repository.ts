@@ -1,8 +1,11 @@
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { PlatformError } from '@qa/domain';
-import type { CaseRunStatus, CollectionCaseRecord, TestCaseRecord, TestCaseRepository, TestCaseVersionRecord, TestCollectionRecord, WorkItemCaseResultRecord, WorkItemRunRecord, WorkItemRunStatus } from '@qa/application';
+import type { CaseRunStatus, CollectionCaseRecord, TestCaseInsert, TestCaseKind, TestCasePriority, TestCaseRecord, TestCaseRepository, TestCaseVersionRecord, TestCollectionRecord, WorkItemCaseResultRecord, WorkItemRunRecord, WorkItemRunStatus } from '@qa/application';
 import type { Db } from './db';
 import { testCase, testCaseVersion, testCollection, testCollectionCase, workItemCaseResult, workItemExecution } from './schema';
+
+const asKind = (value: string): TestCaseKind => (value === 'negative' || value === 'edge' ? value : 'positive');
+const asPriority = (value: string): TestCasePriority => (value === 'high' || value === 'low' ? value : 'medium');
 
 const caseOf = (r: typeof testCase.$inferSelect): TestCaseRecord => ({
   id: r.id,
@@ -10,6 +13,8 @@ const caseOf = (r: typeof testCase.$inferSelect): TestCaseRecord => ({
   name: r.name,
   summary: r.summary,
   workItem: r.workItem,
+  kind: asKind(r.kind),
+  priority: asPriority(r.priority),
   currentVersion: r.currentVersion,
   updatedAt: r.updatedAt,
 });
@@ -44,10 +49,18 @@ export class PgTestCaseRepository implements TestCaseRepository {
     return row && caseOf(row);
   }
 
-  async insert(row: { id: string; key: string; name: string; summary: string; workItem: string; steps: string; expected: string }) {
+  async insert(row: TestCaseInsert) {
     try {
       return await this.db.transaction(async (tx) => {
-        const [saved] = await tx.insert(testCase).values({ id: row.id, key: row.key, name: row.name, summary: row.summary, workItem: row.workItem }).returning();
+        const [saved] = await tx.insert(testCase).values({
+          id: row.id,
+          key: row.key,
+          name: row.name,
+          summary: row.summary,
+          workItem: row.workItem,
+          kind: row.kind,
+          priority: row.priority,
+        }).returning();
         await tx.insert(testCaseVersion).values({ testCaseId: row.id, version: 1, steps: row.steps, expected: row.expected });
         return caseOf(saved!);
       });
@@ -83,10 +96,12 @@ export class PgTestCaseRepository implements TestCaseRepository {
     return caseOf(saved);
   }
 
-  async saveIdentity(id: string, patch: { name?: string; key?: string }) {
+  async saveIdentity(id: string, patch: { name?: string; key?: string; kind?: TestCaseKind; priority?: TestCasePriority }) {
     const set: Partial<typeof testCase.$inferInsert> = { updatedAt: new Date() };
     if (patch.name !== undefined) set.name = patch.name;
     if (patch.key !== undefined) set.key = patch.key;
+    if (patch.kind !== undefined) set.kind = patch.kind;
+    if (patch.priority !== undefined) set.priority = patch.priority;
     try {
       const [saved] = await this.db.update(testCase).set(set).where(and(eq(testCase.id, id), sql`${testCase.deletedAt} is null`)).returning();
       if (!saved) throw new PlatformError('not-found', 'Test case not found');
@@ -109,6 +124,24 @@ export class PgTestCaseRepository implements TestCaseRepository {
     });
   }
 
+  async softDeleteAllPlatform() {
+    return this.db.transaction(async (tx) => {
+      const now = new Date();
+      await tx.delete(testCollectionCase);
+      const cases = await tx
+        .update(testCase)
+        .set({ deletedAt: now, updatedAt: now })
+        .where(sql`${testCase.deletedAt} is null`)
+        .returning({ id: testCase.id });
+      const collections = await tx
+        .update(testCollection)
+        .set({ deletedAt: now, updatedAt: now })
+        .where(sql`${testCollection.deletedAt} is null`)
+        .returning({ id: testCollection.id });
+      return { cases: cases.length, collections: collections.length };
+    });
+  }
+
   async listCollections() {
     const rows = await this.db.select().from(testCollection).where(sql`${testCollection.deletedAt} is null`).orderBy(desc(testCollection.updatedAt));
     const counts = await this.db.select({ collectionId: testCollectionCase.collectionId, n: sql<number>`count(*)::int` }).from(testCollectionCase).groupBy(testCollectionCase.collectionId);
@@ -120,12 +153,27 @@ export class PgTestCaseRepository implements TestCaseRepository {
     const [row] = await this.db.select().from(testCollection).where(and(eq(testCollection.id, id), sql`${testCollection.deletedAt} is null`)).limit(1);
     if (!row) return undefined;
     const cases = await this.db
-      .select({ id: testCase.id, name: testCase.name, version: testCase.currentVersion, position: testCollectionCase.position })
+      .select({
+        id: testCase.id,
+        name: testCase.name,
+        version: testCase.currentVersion,
+        position: testCollectionCase.position,
+        kind: testCase.kind,
+        priority: testCase.priority,
+      })
       .from(testCollectionCase)
       .innerJoin(testCase, eq(testCase.id, testCollectionCase.testCaseId))
       .where(and(eq(testCollectionCase.collectionId, id), sql`${testCase.deletedAt} is null`))
       .orderBy(asc(testCollectionCase.position));
-    return { id: row.id, name: row.name, description: row.description, cases: cases satisfies CollectionCaseRecord[] };
+    const mapped: CollectionCaseRecord[] = cases.map((c) => ({
+      id: c.id,
+      name: c.name,
+      version: c.version,
+      position: c.position,
+      kind: asKind(c.kind),
+      priority: asPriority(c.priority),
+    }));
+    return { id: row.id, name: row.name, description: row.description, cases: mapped };
   }
 
   async insertCollection(row: { id: string; name: string; description: string }) {

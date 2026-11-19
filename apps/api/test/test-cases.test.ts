@@ -35,8 +35,9 @@ describe('test case library', () => {
     const collection = await call('POST', '/api/v1/test-collections', engineer, { name: 'Checkout smoke' });
     expect(collection.statusCode).toBe(201);
     const added = await call('POST', `/api/v1/test-collections/${collection.json().id}/cases`, engineer, { testCaseId: id });
-    expect(added.json().cases).toEqual([{ id, name: 'Login', version: 2, position: 1 }]);
+    expect(added.json().cases).toEqual([{ id, name: 'Login', version: 2, position: 1, kind: 'positive', priority: 'medium' }]);
     expect((await call('GET', '/api/v1/test-cases', business)).json().items).toHaveLength(1);
+    expect((await call('GET', '/api/v1/test-cases', business)).json().items[0]).toMatchObject({ kind: 'positive', priority: 'medium' });
   });
 
   it('keeps generated cases under the work item', async () => {
@@ -44,15 +45,30 @@ describe('test case library', () => {
     const local = buildApp({ sessions: new DevHeaderSessionResolver('test'), profile: 'standard', testCases: cases });
     const input = { name: 'Saved card is listed', steps: 'Open the page', expected: 'The card is listed', workItem: 'QA-1', summary: 'Squash 9', reference: 'QAP-qa-1-1' };
     await cases.fileUnderWorkItem({ id: 'worker' }, input);
-    await cases.fileUnderWorkItem({ id: 'worker' }, { ...input, name: 'Positive: Saved card is listed', steps: 'Open the page again', expected: 'The card is still listed' });
+    await cases.fileUnderWorkItem({ id: 'worker' }, { ...input, name: 'Positive: Saved card is listed', steps: 'Open the page again', expected: 'The card is still listed', kind: 'positive', priority: 'medium' });
     const board = await local.inject({ method: 'GET', url: '/api/v1/work-item-executions', headers: engineer });
     expect(board.json()).toMatchObject({ workItems: [{ workItem: 'QA-1', caseCount: 1 }], environments: [], items: [] });
     const listed = await local.inject({ method: 'GET', url: '/api/v1/test-cases', headers: engineer });
-    expect(listed.json().items).toEqual([expect.objectContaining({ name: 'Positive: Saved card is listed', version: 2, summary: 'Squash 9' })]);
+    expect(listed.json().items).toEqual([expect.objectContaining({ name: 'Positive: Saved card is listed', version: 2, summary: 'Squash 9', kind: 'positive', priority: 'medium' })]);
     const collections = await local.inject({ method: 'GET', url: '/api/v1/test-collections', headers: engineer });
     expect(collections.json().items).toEqual([expect.objectContaining({ name: 'QA-1', size: 1 })]);
     const missing = await local.inject({ method: 'POST', url: '/api/v1/work-item-executions', headers: engineer, payload: { workItem: 'QA-1', environmentId: '11111111-1111-4111-8111-111111111111' } });
     expect(missing.statusCode).toBe(400);
+    await local.close();
+  });
+
+  it('resets all platform cases without touching Squash', async () => {
+    const cases = new TestCaseService({ cases: new InMemoryTestCaseRepository(), audit: new InMemoryAuditSink() });
+    const local = buildApp({ sessions: new DevHeaderSessionResolver('test'), profile: 'standard', testCases: cases });
+    await cases.fileUnderWorkItem({ id: 'worker' }, { name: 'Negative: bad login', steps: 'Open', expected: 'Blocked', workItem: 'QA-1', reference: 'QAP-qa-1-1', kind: 'negative', priority: 'high' });
+    expect((await local.inject({ method: 'POST', url: '/api/v1/test-cases/reset', headers: business, payload: { confirm: 'RESET_PLATFORM_CASES' } })).statusCode).toBe(403);
+    expect((await local.inject({ method: 'POST', url: '/api/v1/test-cases/reset', headers: engineer, payload: { confirm: 'YES' } })).statusCode).toBe(400);
+    expect((await local.inject({ method: 'POST', url: '/api/v1/test-cases/reset', headers: engineer, payload: { confirm: 'RESET_PLATFORM_CASES', wipeSquash: true } })).statusCode).toBe(400);
+    const cleared = await local.inject({ method: 'POST', url: '/api/v1/test-cases/reset', headers: engineer, payload: { confirm: 'RESET_PLATFORM_CASES' } });
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.json()).toEqual({ collectionsCleared: 1, casesCleared: 1, squashWiped: false });
+    expect((await local.inject({ method: 'GET', url: '/api/v1/test-cases', headers: engineer })).json().items).toHaveLength(0);
+    expect((await local.inject({ method: 'GET', url: '/api/v1/test-collections', headers: engineer })).json().items).toHaveLength(0);
     await local.close();
   });
 

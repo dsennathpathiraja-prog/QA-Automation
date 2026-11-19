@@ -7,6 +7,8 @@ export interface GeneratedCase {
   expected: string;
   workItem: string;
   reference: string;
+  kind?: 'positive' | 'negative' | 'edge';
+  priority?: 'high' | 'medium' | 'low';
 }
 
 interface SquashResult {
@@ -58,6 +60,8 @@ export async function publishGeneratedCases(input: {
         workItem: item.workItem || workItem,
         reference: item.reference,
         summary: squashId ? `Squash ${squashId}` : item.reference,
+        kind: item.kind,
+        priority: item.priority,
       },
     );
   }

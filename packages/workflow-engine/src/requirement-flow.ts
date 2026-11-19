@@ -9,6 +9,8 @@ export interface FlowStep {
 
 export interface FlowCase {
   name: string;
+  kind: PlannerScenario['kind'];
+  priority: PlannerScenario['priority'];
   steps: string;
   expected: string;
   workItem: string;
@@ -114,6 +116,13 @@ export function acceptanceLines(raw: string): string[] {
 
 const list = (value: unknown): string[] => (Array.isArray(value) ? value.map((item) => text(item)).filter(Boolean) : []);
 
+const priorityOf = (kind: PlannerScenario['kind'], raw: unknown): PlannerScenario['priority'] => {
+  if (raw === 'high' || raw === 'medium' || raw === 'low') return raw;
+  if (kind === 'negative') return 'high';
+  if (kind === 'edge') return 'low';
+  return 'medium';
+};
+
 const scenariosOf = (value: unknown): PlannerScenario[] => {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
@@ -124,7 +133,7 @@ const scenariosOf = (value: unknown): PlannerScenario[] => {
     const steps = text(row.steps);
     const expected = text(row.expected);
     if (!name || !steps || !expected) return [];
-    return [{ name, kind, criterion, steps, expected }];
+    return [{ name, kind, priority: priorityOf(kind, row.priority), criterion, steps, expected }];
   });
 };
 
@@ -136,7 +145,18 @@ const casesOf = (value: unknown): FlowCase[] => {
     const steps = text(row.steps);
     const expected = text(row.expected);
     if (!name || !steps || !expected) return [];
-    return [{ name, steps, expected, workItem: text(row.workItem), reference: text(row.reference), file: text(row.file), testId: text(row.testId) }];
+    const kind = row.kind === 'negative' || row.kind === 'edge' ? row.kind : 'positive';
+    return [{
+      name,
+      kind,
+      priority: priorityOf(kind, row.priority),
+      steps,
+      expected,
+      workItem: text(row.workItem),
+      reference: text(row.reference),
+      file: text(row.file),
+      testId: text(row.testId),
+    }];
   });
 };
 
