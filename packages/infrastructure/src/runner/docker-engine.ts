@@ -60,6 +60,27 @@ export class DockerEngine implements ContainerEngine {
     if (r.status !== 304 && r.status !== 404) this.ok(r, 'stop');
   }
 
+  async inspectImage(ref: string) {
+    const r = await this.call('GET', `/images/${encodeURIComponent(ref)}/json`);
+    if (r.status === 404) return undefined;
+    this.ok(r, 'inspect image');
+    const id = (r.json as { Id?: string }).Id;
+    return id ? { id } : undefined;
+  }
+
+  async logs(id: string): Promise<string> {
+    const res = await request(`${this.base}/containers/${encodeURIComponent(id)}/logs?stdout=1&stderr=1&tail=20`, {
+      method: 'GET',
+      dispatcher: this.dispatcher,
+      headersTimeout: 30_000,
+      bodyTimeout: 30_000,
+    });
+    const buf = Buffer.from(await res.body.arrayBuffer());
+    if (res.statusCode === 404) return '';
+    if (res.statusCode < 200 || res.statusCode >= 300) throw new PlatformError(res.statusCode >= 500 ? 'transient' : 'validation', `container engine refused logs (${res.statusCode})`);
+    return dockerLogText(buf);
+  }
+
   async list(labels: Record<string, string>) {
     const filters = encodeURIComponent(JSON.stringify({ label: Object.entries(labels).map(([k, v]) => `${k}=${v}`) }));
     const r = await this.call('GET', `/containers/json?all=true&filters=${filters}`);
@@ -100,4 +121,19 @@ export class DockerEngine implements ContainerEngine {
     if (r.status >= 200 && r.status < 300) return;
     throw new PlatformError(r.status >= 500 ? 'transient' : 'validation', `container engine refused ${what} (${r.status})`);
   }
+}
+
+/** Docker's log stream frames each chunk with an 8-byte header. A raw body is returned unchanged. */
+export function dockerLogText(buf: Buffer): string {
+  if (buf.length < 8) return buf.toString('utf8');
+  const parts: string[] = [];
+  let i = 0;
+  while (i + 8 <= buf.length) {
+    const stream = buf[i];
+    const size = buf.readUInt32BE(i + 4);
+    if ((stream !== 1 && stream !== 2) || i + 8 + size > buf.length) return buf.toString('utf8');
+    parts.push(buf.subarray(i + 8, i + 8 + size).toString('utf8'));
+    i += 8 + size;
+  }
+  return i === buf.length ? parts.join('') : buf.toString('utf8');
 }

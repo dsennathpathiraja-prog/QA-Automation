@@ -10,6 +10,8 @@ export interface LauncherDeps {
   /** Only images from these registries may run, for example ['registry.local/qa/']. */
   allowedImagePrefixes: string[];
   maxConcurrent: number;
+  /** A locally built image. The launcher pins it to the engine's current image id and refuses every other digest. */
+  localImage?: { repository: string; ref: string };
 }
 
 const same = (a: string, b: string) => {
@@ -52,7 +54,21 @@ export function buildLauncherApp(deps: LauncherDeps): FastifyInstance {
     return c;
   };
 
+  const currentPin = async (): Promise<{ image: string; dockerRef: string } | undefined> => {
+    if (!deps.localImage) return undefined;
+    const info = await deps.engine.inspectImage(deps.localImage.ref);
+    const id = info?.id ?? '';
+    if (!/^sha256:[a-f0-9]{64}$/.test(id)) return undefined;
+    return { image: `${deps.localImage.repository}@${id}`, dockerRef: id };
+  };
+
   app.get('/healthz', async () => ({ status: 'ok' }));
+
+  app.get('/v1/runner-image', async (_req, reply) => {
+    const pin = await currentPin();
+    if (!pin) return reply.code(503).send(err('transient', 'The runner image is not on this machine yet. Rebuild the stack.'));
+    return { image: pin.image };
+  });
 
   app.post('/v1/runners', async (req, reply) => {
     const spec = req.body as RunnerSpec;
@@ -61,15 +77,20 @@ export function buildLauncherApp(deps: LauncherDeps): FastifyInstance {
     if (!deps.allowedImagePrefixes.some((p) => spec.image.startsWith(p))) {
       return reply.code(403).send(err('denied', 'image registry is not approved for runners'));
     }
+    const pin = deps.localImage ? await currentPin() : undefined;
+    if (deps.localImage && !pin) return reply.code(503).send(err('transient', 'The runner image is not on this machine yet. Rebuild the stack.'));
+    if (pin && spec.image !== pin.image) return reply.code(403).send(err('denied', 'image is not the approved runner'));
     const name = containerName(spec.runId);
     const existing = await deps.engine.inspect(name);
     if (existing) return reply.code(200).send({ id: existing.id, runId: spec.runId, startedAt: (existing.startedAt ?? new Date()).toISOString() });
     const running = (await deps.engine.list({ [LABEL.managed]: 'true' })).filter((c) => c.status === 'running' || c.status === 'created').length;
     if (running >= deps.maxConcurrent) return reply.code(429).send(err('rate-limited', 'the runner pool is full; try again later'));
 
+    const body = toDockerCreateBody(spec, deps.translate);
+    if (pin) body.Image = pin.dockerRef;
     let id: string;
     try {
-      id = (await deps.engine.create(name, toDockerCreateBody(spec, deps.translate))).id;
+      id = (await deps.engine.create(name, body)).id;
     } catch (e) {
       if (!requireConflict(e)) throw e;
       const c = await deps.engine.inspect(name);
@@ -81,6 +102,11 @@ export function buildLauncherApp(deps: LauncherDeps): FastifyInstance {
   });
 
   app.get<{ Params: { id: string } }>('/v1/runners/:id', async (req) => status(await managed(req.params.id)));
+
+  app.get<{ Params: { id: string } }>('/v1/runners/:id/logs', async (req) => {
+    await managed(req.params.id);
+    return { text: await deps.engine.logs(req.params.id) };
+  });
 
   app.post<{ Params: { id: string }; Body: { reason?: string } }>('/v1/runners/:id/stop', async (req, reply) => {
     const c = await managed(req.params.id);

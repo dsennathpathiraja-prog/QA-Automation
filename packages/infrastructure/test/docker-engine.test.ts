@@ -4,11 +4,25 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { LABEL, containerName, stateOf } from '@qa/domain';
-import { DockerEngine } from '../src';
+import { DockerEngine, dockerLogText } from '../src';
 
 interface Fake { id: string; name: string; body: any; status: string; exit: number }
 
 /** A small Docker Engine API double on a real unix socket, so the socket code path is exercised. */
+describe('docker log frames', () => {
+  it('joins framed stdout and leaves plain text alone', () => {
+    const frame = (text: string) => {
+      const payload = Buffer.from(text);
+      const head = Buffer.alloc(8);
+      head[0] = 1;
+      head.writeUInt32BE(payload.length, 4);
+      return Buffer.concat([head, payload]);
+    };
+    expect(dockerLogText(Buffer.concat([frame('answered '), frame('200\n')]))).toBe('answered 200\n');
+    expect(dockerLogText(Buffer.from('answered 200\n'))).toBe('answered 200\n');
+  });
+});
+
 describe('DockerEngine over a unix socket', () => {
   const dir = mkdtempSync(join(tmpdir(), 'docker-fake-'));
   const socket = join(dir, 'docker.sock');

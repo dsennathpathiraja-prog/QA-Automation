@@ -97,6 +97,20 @@ describe('runner launcher service', () => {
     expect(engine.containers.get('db-1')!.state.status).toBe('running');
   });
 
+  it('pins a local image to the engine id and refuses any other digest', async () => {
+    const engine = new FakeContainerEngine();
+    const digest = 'c'.repeat(64);
+    engine.images.set('qa-runner:local', { id: `sha256:${digest}` });
+    const app = buildLauncherApp(deps(engine, { allowedImagePrefixes: ['qa-runner@'], localImage: { repository: 'qa-runner', ref: 'qa-runner:local' } }));
+    const pin = `qa-runner@sha256:${digest}`;
+    expect((await app.inject({ method: 'GET', url: '/v1/runner-image', headers: auth })).json()).toEqual({ image: pin });
+    const ok = await app.inject({ method: 'POST', url: '/v1/runners', headers: auth, payload: sampleRunnerSpec({ image: pin, allowedHosts: ['qa.shop.example'] }) });
+    expect(ok.statusCode).toBe(201);
+    expect(engine.created[0]!.body.Image).toBe(`sha256:${digest}`);
+    const other = await app.inject({ method: 'POST', url: '/v1/runners', headers: auth, payload: sampleRunnerSpec({ runId: 'other', image: `qa-runner@sha256:${'d'.repeat(64)}` }) });
+    expect(other.statusCode).toBe(403);
+  });
+
   it('stops runners that outlive their time limit and leaves the others alone', async () => {
     const engine = new FakeContainerEngine();
     const app = buildLauncherApp(deps(engine));

@@ -27,6 +27,10 @@ export interface ContainerEngine {
   inspect(idOrName: string): Promise<ContainerState | undefined>;
   stop(id: string, graceSeconds: number): Promise<void>;
   list(labels: Record<string, string>): Promise<ContainerState[]>;
+  /** The local image id (`sha256:...`), or undefined when the engine has no such image. */
+  inspectImage(ref: string): Promise<{ id: string } | undefined>;
+  /** The runner's own stdout and stderr, as text. */
+  logs(id: string): Promise<string>;
 }
 
 export interface TranslateOptions {

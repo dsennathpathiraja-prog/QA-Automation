@@ -57,6 +57,9 @@ services:
       DATABASE_PASSWORD: local-trial-db-password
       SECRET_STORE: db-envelope
       SECRET_MASTER_KEY: bG9jYWwtdHJpYWwtbWFzdGVyLWtleS0zMi1ieXRlcyE=
+      # Used when the runners profile is up. If that service is not running, the worker keeps checking the address itself.
+      RUNNER_LAUNCHER_URL: http://runner-launcher:3002
+      RUNNER_LAUNCHER_TOKEN: local-trial-launcher-token-32chars
     depends_on:
       api: { condition: service_healthy }
 
@@ -68,6 +71,33 @@ services:
     command: ["bash", "-lc", "npx --yes @playwright/mcp --port 8931 --host 0.0.0.0 --allowed-hosts '*'"]
     init: true
     expose: ["8931"]
+
+  # Builds the runner image and exits. The launcher starts a fresh container from qa-runner:local for each check.
+  # Start with: docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser --profile runners up --build -d
+  runner-image:
+    profiles: [runners]
+    image: qa-runner:local
+    build: { context: ../../.., dockerfile: deploy/images/runner.Dockerfile }
+    entrypoint: ["node", "-e", "process.exit(0)"]
+    restart: "no"
+
+  # The only local service that sees the container socket. It is root here so Docker Desktop's socket is usable.
+  runner-launcher:
+    profiles: [runners]
+    build: { context: ../../.., dockerfile: deploy/images/runner-launcher.Dockerfile }
+    user: "0:0"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3002"
+      LAUNCHER_TOKEN: local-trial-launcher-token-32chars
+      RUNNER_IMAGE_PREFIXES: qa-runner@
+      RUNNER_LOCAL_IMAGE: qa-runner:local
+      RUNNER_IMAGE_REPOSITORY: qa-runner
+      RUNNER_NETWORK: qa-platform-local
+      RUNNER_MAX_CONCURRENT: "2"
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
+    read_only: true
+    tmpfs: ["/tmp"]
 
   postgres:
     image: postgres:16-alpine
@@ -94,6 +124,10 @@ services:
       KC_PROXY_HEADERS: xforwarded
     volumes:
       - ./realm-local.json:/opt/keycloak/data/import/realm-local.json:ro
+
+networks:
+  default:
+    name: qa-platform-local
 
 volumes:
   pgdata: {}

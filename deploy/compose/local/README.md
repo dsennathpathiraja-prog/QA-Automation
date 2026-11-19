@@ -35,6 +35,16 @@ The trial realm accepts any `http://localhost:<port>` as a sign-in return addres
 3. `docker compose -f deploy/compose/local/docker-compose.local.yml ps` shows `api` as healthy and `worker` running.
 4. To see local models on the AI Models page, run Ollama on your machine and uncomment `OLLAMA_URL` in `docker-compose.local.yml`.
 
+## Runner
+
+The reachability button checks the address from the worker unless you also start the runner:
+
+```
+docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser --profile runners up --build -d
+```
+
+`runner-image` exits on purpose after the image `qa-runner:local` exists. `runner-launcher` is the service that starts a new container for each check. It is the only service that uses the Docker socket. Open the environment again and press Check reachability. The line should start with "The runner finished."
+
 ## Stop or reset
 
 ```

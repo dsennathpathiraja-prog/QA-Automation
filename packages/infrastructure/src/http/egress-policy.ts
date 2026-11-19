@@ -4,7 +4,7 @@ import { PlatformError, matchHost, type DeploymentProfile, type PlatformEnv } fr
 export interface EgressRule {
   /** Exact host or `*.suffix`. */
   hostPattern: string;
-  purpose: 'connector' | 'application' | 'registry' | 'llm' | 'telemetry';
+  purpose: 'connector' | 'application' | 'registry' | 'llm' | 'telemetry' | 'platform';
   /** Internal hosts may resolve to private ranges. Required for on-prem Jira/Squash etc. */
   internal: boolean;
   allowHttp?: boolean;

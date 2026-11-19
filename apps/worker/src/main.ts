@@ -1,6 +1,6 @@
 import { buildProviders, buildSecretStore, connectDatabase } from '@qa/bootstrap';
-import type { DeploymentProfile, PlatformEnv } from '@qa/domain';
-import { EgressPolicy, HardenedHttpClient, initTelemetry, type EgressRule } from '@qa/infrastructure';
+import { PlatformError, type DeploymentProfile, type PlatformEnv } from '@qa/domain';
+import { EgressPolicy, HardenedHttpClient, RemoteRunnerLauncher, initTelemetry, readSecretFile, type EgressRule } from '@qa/infrastructure';
 import { tick as engineTick } from '@qa/workflow-engine';
 import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgEnvironmentRepository, PgExecutionRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
 import { buildWorkerApp } from './app';
@@ -8,6 +8,7 @@ import { ConnectorTester } from './connector-tester';
 import { ConnectorHealthScheduler } from './health-scheduler';
 import { WorkerLoop } from './loop';
 import { checkReachability } from './reachability';
+import { launcherDown, runReachabilityCheck } from './runner-check';
 
 const env = process.env;
 const profile = (env.PLATFORM_PROFILE ?? 'standard') as DeploymentProfile;
@@ -62,11 +63,35 @@ const loop = new WorkerLoop({
       if ((await tester.runOnce()) === 'busy') busy = true;
     }
     if (executions && (await engineTick(executions, { owner: 'worker', now: new Date() })) === 'busy') busy = true;
-    if (environments && hosts && (await checkReachability(environments, async (url) => {
-      const rules: EgressRule[] = (await hosts.list('application')).map((h) => ({ hostPattern: h.hostPattern, purpose: 'application', internal: h.internal, allowHttp: h.allowHttp }));
-      const http = new HardenedHttpClient({ egress: new EgressPolicy({ rules, profile, platformEnv }), allowedMethods: ['GET', 'HEAD'], timeoutMs: 10_000, maxBodyBytes: 64 * 1024 });
-      const res = await http.request({ method: 'GET', url, headers: { accept: '*/*' } });
-      return { status: res.status };
+    if (environments && hosts && (await checkReachability(environments, async (target) => {
+      const direct = async () => {
+        const rules: EgressRule[] = (await hosts.list('application')).map((h) => ({ hostPattern: h.hostPattern, purpose: 'application', internal: h.internal, allowHttp: h.allowHttp }));
+        const http = new HardenedHttpClient({ egress: new EgressPolicy({ rules, profile, platformEnv }), allowedMethods: ['GET', 'HEAD'], timeoutMs: 10_000, maxBodyBytes: 64 * 1024 });
+        const res = await http.request({ method: 'GET', url: target.applicationUrl, headers: { accept: '*/*' } });
+        return { status: res.status };
+      };
+      const launcherUrl = env.RUNNER_LAUNCHER_URL;
+      const launcherToken = env.RUNNER_LAUNCHER_TOKEN_FILE ? readSecretFile(env.RUNNER_LAUNCHER_TOKEN_FILE) : env.RUNNER_LAUNCHER_TOKEN;
+      if (!launcherUrl || !launcherToken) return direct();
+      try {
+        const launcherHost = new URL(launcherUrl);
+        const http = new HardenedHttpClient({
+          egress: new EgressPolicy({
+            rules: [{ hostPattern: launcherHost.hostname, purpose: 'platform', internal: true, allowHttp: launcherHost.protocol === 'http:', allowLoopback: launcherHost.hostname === 'localhost' || launcherHost.hostname === '127.0.0.1' }],
+            profile,
+            platformEnv,
+          }),
+          allowedMethods: ['GET', 'POST'],
+          timeoutMs: 15_000,
+        });
+        const launcher = new RemoteRunnerLauncher({ baseUrl: launcherUrl, token: () => launcherToken, http });
+        const image = await launcher.image();
+        return await runReachabilityCheck({ launcher, image, environmentId: target.id, url: target.applicationUrl, logs: (id) => launcher.logs(id) });
+      } catch (e) {
+        if (launcherDown(e)) return direct();
+        if (e instanceof PlatformError) throw e;
+        throw new PlatformError('internal', 'The runner could not be started.');
+      }
     })) === 'busy') busy = true;
     return busy ? 'busy' : 'idle';
   },

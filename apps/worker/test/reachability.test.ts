@@ -38,6 +38,12 @@ describe('environment reachability', () => {
     expect(saved?.reachabilityDetail).toMatch(/approved list/);
   });
 
+  it('says when a runner placed the check', async () => {
+    const environments = await queued();
+    await checkReachability(environments, async () => ({ status: 200, viaRunner: true }));
+    expect((await environments.get(id))?.reachabilityDetail).toBe('The runner finished. The application answered 200.');
+  });
+
   it('records a server error as unreachable', async () => {
     const environments = await queued();
     await checkReachability(environments, async () => ({ status: 503 }));

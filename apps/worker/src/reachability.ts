@@ -7,18 +7,19 @@ import type { EnvironmentRepository } from '@qa/application';
  */
 export async function checkReachability(
   environments: Pick<EnvironmentRepository, 'claimReachability' | 'finishReachability'>,
-  probe: (url: string) => Promise<{ status: number }>,
+  probe: (env: { id: string; applicationUrl: string }) => Promise<{ status: number; viaRunner?: boolean }>,
   now: Date = new Date(),
 ): Promise<'busy' | 'idle'> {
   const env = await environments.claimReachability();
   if (!env) return 'idle';
   try {
-    const res = await probe(env.applicationUrl);
+    const res = await probe(env);
     const answered = res.status >= 200 && res.status < 500;
+    const who = res.viaRunner ? 'The runner finished. ' : '';
     await environments.finishReachability(
       env.id,
       answered ? 'reachable' : 'unreachable',
-      answered ? `The application answered ${res.status}.` : `The application returned status ${res.status}.`,
+      answered ? `${who}The application answered ${res.status}.` : `${who}The application returned status ${res.status}.`,
       now,
     );
   } catch (e) {

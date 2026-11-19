@@ -22,6 +22,17 @@ export class RemoteRunnerLauncher implements RunnerLauncher {
     await this.send('POST', `/v1/runners/${encodeURIComponent(runnerId)}/stop`, { reason });
   }
 
+  async image(): Promise<string> {
+    const r = await this.send<{ image?: string }>('GET', '/v1/runner-image');
+    if (!r.image) throw new PlatformError('internal', 'The runner launcher did not name an image.');
+    return r.image;
+  }
+
+  async logs(runnerId: string): Promise<string> {
+    const r = await this.send<{ text?: string }>('GET', `/v1/runners/${encodeURIComponent(runnerId)}/logs`);
+    return r.text ?? '';
+  }
+
   async list(labels: Record<string, string>): Promise<RunnerStatus[]> {
     const qs = new URLSearchParams(Object.entries(labels).map(([k, v]): [string, string] => [`label.${k}`, v])).toString();
     const r = await this.send<{ items: unknown[] }>('GET', `/v1/runners${qs ? `?${qs}` : ''}`);

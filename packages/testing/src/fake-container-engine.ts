@@ -9,6 +9,8 @@ interface Rec {
 export class FakeContainerEngine implements ContainerEngine {
   readonly containers = new Map<string, Rec>();
   readonly created: { name: string; body: Record<string, unknown> }[] = [];
+  readonly images = new Map<string, { id: string }>();
+  readonly output = new Map<string, string>();
   private seq = 0;
 
   async create(name: string, body: Record<string, unknown>) {
@@ -36,6 +38,14 @@ export class FakeContainerEngine implements ContainerEngine {
 
   async list(labels: Record<string, string>) {
     return [...this.containers.values()].map((c) => c.state).filter((s) => Object.entries(labels).every(([k, v]) => s.labels[k] === v));
+  }
+
+  async inspectImage(ref: string) {
+    return this.images.get(ref);
+  }
+
+  async logs(id: string) {
+    return this.output.get(id) ?? '';
   }
 
   add(state: ContainerState) {

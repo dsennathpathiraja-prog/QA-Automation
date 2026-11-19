@@ -17,6 +17,7 @@ const app = buildLauncherApp({
   allowedImagePrefixes: prefixes,
   maxConcurrent: Number(env.RUNNER_MAX_CONCURRENT ?? 4),
   translate: { network: env.RUNNER_NETWORK ?? 'automation', proxyUrl: env.RUNNER_PROXY_URL },
+  localImage: env.RUNNER_LOCAL_IMAGE ? { repository: env.RUNNER_IMAGE_REPOSITORY ?? 'qa-runner', ref: env.RUNNER_LOCAL_IMAGE } : undefined,
 });
 
 const sweep = setInterval(() => {
