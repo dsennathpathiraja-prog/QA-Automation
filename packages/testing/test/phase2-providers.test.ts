@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
-import { EgressPolicy, HardenedHttpClient, acceptanceCriteriaFromDescription, adfToText, azureBoardsProvider, azureDevOpsProvider, githubProvider, githubWriteScopes, azureDevOpsWriteScopes, jiraProvider, playwrightMcpProvider } from '@qa/infrastructure';
+import { EgressPolicy, HardenedHttpClient, acceptanceCriteriaFromDescription, adfToText, azureBoardsProvider, azureDevOpsProvider, githubProvider, githubWriteScopes, azureDevOpsWriteScopes, jiraProvider, playwrightMcpProvider, scenarioCuesFromDescription, splitAcceptanceCriteria } from '@qa/infrastructure';
 import { assertProviderContract } from '../src';
 
 const TOKEN = 'readonly-token-value-0001';
@@ -122,6 +122,13 @@ describe('source and work-item providers', () => {
     expect(conn.message).toMatch(/shop/);
   });
 
+  it('splits acceptance criteria and scenario cues from plain text', () => {
+    expect(splitAcceptanceCriteria('- Card listed\n- Tax included')).toEqual(['Card listed', 'Tax included']);
+    expect(splitAcceptanceCriteria('Given a card\nWhen paying\nThen receipt shows')).toEqual(['Given a card When paying Then receipt shows']);
+    expect(scenarioCuesFromDescription('Intro only')).toEqual([]);
+    expect(scenarioCuesFromDescription('Notes\n- First check\n- Second check')).toEqual(['First check', 'Second check']);
+  });
+
   it('reads Jira acceptance criteria from the description', async () => {
     const description = { type: 'doc', content: [{ type: 'heading', content: [{ type: 'text', text: 'Acceptance criteria' }] }, { type: 'paragraph', content: [{ type: 'text', text: 'The saved card is listed' }] }] };
     expect(acceptanceCriteriaFromDescription(`Intro\n\n## Acceptance criteria\nThe saved card is listed\n\n## Notes\nignore`)).toBe('The saved card is listed');
@@ -167,9 +174,35 @@ describe('source and work-item providers', () => {
     });
     const client = azureBoardsProvider.create({ organization: 'contoso', project: 'Web', baseUrl: m.baseUrl }, lease, { http: m.http });
     expect((await client.testConnection()).ok).toBe(true);
-    expect(await client.handle({ id: 'workitem.read' } as never, { id: '12' }, {} as never)).toMatchObject({ title: 'Checkout', acceptanceCriteria: 'The saved card is listed' });
+    expect(await client.handle({ id: 'workitem.read' } as never, { id: '12' }, {} as never)).toMatchObject({ title: 'Checkout', acceptanceCriteria: 'The saved card is listed', description: 'Pay' });
     expect(await client.handle({ id: 'workitem.search' } as never, { query: 'Checkout' }, {} as never)).toMatchObject({ items: [{ id: '12', title: 'Checkout' }] });
     expect(m.hits.some((h) => h.method === 'POST' && h.path.includes('wiql'))).toBe(true);
+  });
+
+  it('reads Azure Boards acceptance criteria from Description HTML when the field is empty', async () => {
+    const m = await mock((hit) => {
+      const path = pathOf(hit);
+      if (path.endsWith('/workitems/7189')) {
+        return {
+          body: {
+            id: 7189,
+            fields: {
+              'System.Title': 'PayNSure checkout',
+              'System.State': 'Active',
+              'System.WorkItemType': 'User Story',
+              'System.Description': '<div><b>Acceptance Criteria</b></div><ul><li>The saved card is listed</li><li>The total includes tax</li></ul><p>Given a saved card</p><p>When the shopper pays</p><p>Then the receipt shows the card</p>',
+            },
+          },
+        };
+      }
+      return { status: 404, body: {} };
+    });
+    const client = azureBoardsProvider.create({ organization: 'contoso', project: 'PayNSure', baseUrl: m.baseUrl }, lease, { http: m.http });
+    const item = await client.handle({ id: 'workitem.read' } as never, { id: '7189' }, {} as never) as { description?: string; acceptanceCriteria?: string };
+    expect(item.description).toMatch(/Acceptance Criteria/);
+    expect(item.description).toMatch(/The saved card is listed/);
+    expect(item.acceptanceCriteria).toMatch(/The saved card is listed/);
+    expect(item.acceptanceCriteria).toMatch(/The total includes tax/);
   });
 
   it('reads an Azure Boards attachment with the same credential', async () => {

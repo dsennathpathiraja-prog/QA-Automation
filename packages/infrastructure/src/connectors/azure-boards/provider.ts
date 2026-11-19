@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { PlatformError } from '@qa/domain';
 import type { AdapterDeps, CapabilityDescriptor, CapabilityProbeEntry, ConnectionTestResult, ConnectorClient, ConnectorProvider, PermissionReport } from '@qa/connector-sdk';
-import { textOf } from '../acceptance-criteria';
+import { acceptanceCriteriaFromDescription, scenarioCuesFromDescription, textOf } from '../acceptance-criteria';
 import { downloadBytes, joinUrl, requestJson, required } from '../rest';
+import { htmlToText } from '../squash/html';
 
 export const AZURE_BOARDS_PROVIDER_KEY = 'azure-boards';
 
@@ -15,12 +16,18 @@ const ConfigSchema = z.object({
 const SecretSchema = z.object({ token: z.string().min(20).max(500) });
 const API = '7.1';
 
+/** Azure Boards stores Description, Acceptance Criteria, and Repro Steps as HTML. */
+function fieldText(value: unknown): string {
+  if (typeof value === 'string') return htmlToText(value);
+  return htmlToText(textOf(value));
+}
+
 export const azureBoardsProvider: ConnectorProvider = {
   manifest: {
     providerKey: AZURE_BOARDS_PROVIDER_KEY,
     category: 'work-item',
     displayName: 'Azure Boards',
-    description: 'Reads projects and work items from Azure Boards. Acceptance criteria come from the Acceptance Criteria field.',
+    description: 'Reads projects and work items from Azure Boards. Acceptance criteria come from the Acceptance Criteria field, or from the Description when that field is empty.',
     authMethods: [{ key: 'pat', label: 'Personal access token with Work Items (Read)', recommended: true, fields: [{ name: 'token', label: 'Access token', secret: true, required: true }] }],
     capabilities: ['workitem.project.list', 'workitem.search', 'workitem.read', 'workitem.attachment.read'],
     requiredPermissions: ['Work Items (Read) on the organisation.'],
@@ -94,7 +101,7 @@ class AzureBoardsClient implements ConnectorClient {
     return [
       { capability: 'workitem.project.list', support: 'supported' },
       search,
-      { capability: 'workitem.read', support: 'supported', reason: `Acceptance criteria are read from ${this.cfg.acceptanceCriteriaField}` },
+      { capability: 'workitem.read', support: 'supported', reason: `Acceptance criteria are read from ${this.cfg.acceptanceCriteriaField}, or from the Description when that field is empty` },
       { capability: 'workitem.attachment.read', support: 'supported', reason: 'Attachments use the same permission as reading the work item' },
     ];
   }
@@ -117,13 +124,19 @@ class AzureBoardsClient implements ConnectorClient {
     if (cap.id === 'workitem.read') {
       const r = await this.call('GET', `/${encodeURIComponent(this.cfg.project)}/_apis/wit/workitems/${encodeURIComponent(required(i.id, 'Work item id'))}`);
       const f = (r.body?.fields ?? {}) as Record<string, unknown>;
+      const description = fieldText(f['System.Description']);
+      const reproSteps = fieldText(f['Microsoft.VSTS.TCM.ReproSteps']);
+      const fromField = fieldText(f[this.cfg.acceptanceCriteriaField]);
+      const fromDescription = acceptanceCriteriaFromDescription(description) ?? (scenarioCuesFromDescription(description).join('\n') || undefined);
+      const acceptanceCriteria = fromField || fromDescription || (reproSteps ? scenarioCuesFromDescription(reproSteps).join('\n') || reproSteps : undefined);
+      const descriptionParts = [description, reproSteps ? `Repro steps\n${reproSteps}` : ''].filter(Boolean);
       return {
         id: String(r.body?.id ?? i.id),
         title: String(f['System.Title'] ?? ''),
         type: typeof f['System.WorkItemType'] === 'string' ? f['System.WorkItemType'] : undefined,
         state: typeof f['System.State'] === 'string' ? f['System.State'] : undefined,
-        description: textOf(f['System.Description']),
-        acceptanceCriteria: textOf(f[this.cfg.acceptanceCriteriaField]) || undefined,
+        description: descriptionParts.join('\n\n') || undefined,
+        acceptanceCriteria: acceptanceCriteria || undefined,
         url: typeof r.body?._links?.html?.href === 'string' ? r.body._links.html.href : undefined,
       };
     }

@@ -12,6 +12,7 @@ import { ConnectorTester } from './connector-tester';
 import { ConnectorHealthScheduler } from './health-scheduler';
 import { WorkerLoop } from './loop';
 import { checkReachability } from './reachability';
+import { enrichStoryFromConnector } from './read-story';
 import { launcherDown, runReachabilityCheck } from './runner-check';
 import { launcherDown as workItemLauncherDown, processWorkItemExecutions, runWorkItemCases } from './run-work-item';
 import { squashIdFromSummary, syncCaseResultsToSquash } from './sync-execution';
@@ -104,7 +105,16 @@ const loop = new WorkerLoop({
       owner: 'worker',
       now: new Date(),
       perform: async (step) => {
-        const result = runFlowStep(step);
+        let params = step.params;
+        if (step.type === 'rv.read-user-story') {
+          const enriched = await enrichStoryFromConnector({
+            story: typeof step.params.story === 'string' ? step.params.story : '',
+            connectors: squash,
+            actor: { type: 'step', id: step.id, executionId: step.runId, stepId: step.id },
+          });
+          if (enriched) params = { ...step.params, story: enriched.story };
+        }
+        const result = runFlowStep({ ...step, params });
         if (step.type !== 'rv.publish-testcases' || !testCases) return result;
         const cases = (Array.isArray(result.outputs.cases) ? result.outputs.cases : []).flatMap((item) => {
           const row = item as Partial<GeneratedCase>;

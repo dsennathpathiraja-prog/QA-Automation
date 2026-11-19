@@ -24,17 +24,92 @@ export interface FlowResult {
 
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
 
-/** Lines under an "Acceptance criteria" heading, or every non-empty line when there is no heading. */
+const stripBullet = (line: string) => line.replace(/^[\s>*\-•\d.)]+/, '').trim();
+
+const isSectionHeading = (line: string) => /^(#{1,6}\s|acceptance criteria\b|repro(duction)? steps\b|description\b|notes?\b|business rules?\b)/i.test(line.trim());
+
+const isGwt = (line: string) => /^(given|when|then|and)\b/i.test(line);
+
+/** First non-empty line is treated as the work item id when it looks like one. */
+export function workItemIdFromStory(raw: string): string {
+  const first = raw.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? '';
+  if (/^\d{1,10}$/.test(first) || /^[A-Z][A-Z0-9]+-\d+$/i.test(first)) return first;
+  return first.slice(0, 80);
+}
+
+/**
+ * Lines under an "Acceptance criteria" heading, Given/When/Then blocks, or bullets.
+ * The work-item id on the first line is never treated as a criterion by itself.
+ */
 export function acceptanceLines(raw: string): string[] {
-  const lines = raw.split(/\r?\n/);
+  const lines = raw.replace(/\r/g, '').split('\n');
   const start = lines.findIndex((line) => /acceptance criteria/i.test(line));
-  const body = (start >= 0 ? lines.slice(start + 1) : lines).map((line) => line.replace(/^[\s>*\-•\d.)]+/, '').trim()).filter((line) => line.length > 0);
+  const bodyLines = (start >= 0 ? lines.slice(start + 1) : lines).map((line) => line.trim());
   const kept: string[] = [];
-  for (const line of body) {
-    if (start >= 0 && /^#{1,6}\s/.test(line)) break;
+  let gwt: string[] = [];
+  const flushGwt = () => {
+    if (gwt.length === 0) return;
+    kept.push(gwt.join(' '));
+    gwt = [];
+  };
+  for (const rawLine of bodyLines) {
+    if (!rawLine) continue;
+    if (start >= 0 && /^#{1,6}\s/.test(rawLine)) break;
+    const line = stripBullet(rawLine);
+    if (!line) continue;
+    if (isSectionHeading(line) && !isGwt(line)) {
+      flushGwt();
+      continue;
+    }
+    if (isGwt(line)) {
+      if (/^given\b/i.test(line) && gwt.length > 0) flushGwt();
+      gwt.push(line);
+      if (/^then\b/i.test(line)) flushGwt();
+      continue;
+    }
+    flushGwt();
     kept.push(line);
   }
-  return kept.slice(0, 40);
+  flushGwt();
+
+  const workItem = workItemIdFromStory(raw);
+  const withoutId = kept.filter((line) => line !== workItem && line.toLowerCase() !== 'acceptance criteria');
+  if (withoutId.length > 0) return withoutId.slice(0, 40);
+
+  // No AC heading: prefer bullets / GWT from the whole story, skipping the id line.
+  const cues: string[] = [];
+  gwt = [];
+  for (const rawLine of lines.map((line) => line.trim()).filter(Boolean)) {
+    const line = stripBullet(rawLine);
+    if (!line || line === workItem || isSectionHeading(line) && !isGwt(line)) {
+      if (gwt.length > 0) {
+        cues.push(gwt.join(' '));
+        gwt = [];
+      }
+      continue;
+    }
+    if (isGwt(line)) {
+      if (/^given\b/i.test(line) && gwt.length > 0) {
+        cues.push(gwt.join(' '));
+        gwt = [];
+      }
+      gwt.push(line);
+      if (/^then\b/i.test(line)) {
+        cues.push(gwt.join(' '));
+        gwt = [];
+      }
+      continue;
+    }
+    if (/^([\-*•]|\d+[.)])\s+\S/.test(rawLine) || start < 0 && line.length >= 12 && line !== workItem) {
+      if (gwt.length > 0) {
+        cues.push(gwt.join(' '));
+        gwt = [];
+      }
+      cues.push(line);
+    }
+  }
+  if (gwt.length > 0) cues.push(gwt.join(' '));
+  return cues.slice(0, 40);
 }
 
 const list = (value: unknown): string[] => (Array.isArray(value) ? value.map((item) => text(item)).filter(Boolean) : []);
@@ -75,15 +150,15 @@ export function runFlowStep(step: FlowStep): FlowResult {
   const environment = text(step.params.environment);
   const storyOut = step.prior.read_story ?? {};
   const criteria = list(storyOut.acceptanceCriteria);
-  const workItem = text(storyOut.workItem) || story.split(/\r?\n/)[0]?.slice(0, 80) || 'work-item';
+  const workItem = text(storyOut.workItem) || workItemIdFromStory(story) || 'work-item';
   const scenarios = scenariosOf(step.prior.plan?.scenarios);
   const cases = casesOf(step.prior.generate_tests?.cases);
 
   switch (step.type) {
     case 'rv.read-user-story': {
       const found = acceptanceLines(story);
-      const single = found.length === 1 && found[0] === story;
-      const acceptanceCriteria = single ? [] : found;
+      const onlyId = found.length === 0 || (found.length === 1 && found[0] === workItem);
+      const acceptanceCriteria = onlyId ? [] : found;
       return {
         summary: acceptanceCriteria.length > 0
           ? `Read work item ${workItem}. ${acceptanceCriteria.length} acceptance criteria.`

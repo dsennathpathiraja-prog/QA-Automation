@@ -24,6 +24,59 @@ export function acceptanceCriteriaFromDescription(text: string): string | undefi
   return rest.length > 0 ? rest : undefined;
 }
 
+const stripBullet = (line: string) => line.replace(/^[\s>*\-•\d.)]+/, '').trim();
+
+const isHeading = (line: string) => /^(#{1,6}\s|acceptance criteria\b|repro(duction)? steps\b|description\b|notes?\b|business rules?\b)/i.test(line);
+
+const isGwt = (line: string) => /^(given|when|then|and)\b/i.test(line);
+
+/**
+ * Splits an acceptance-criteria blob into one criterion per line / Given-When-Then block.
+ * Bullet markers and numbering are removed. Empty and heading-only lines are dropped.
+ */
+export function splitAcceptanceCriteria(text: string): string[] {
+  const lines = text.replace(/\r/g, '').split('\n').map((line) => line.trim()).filter(Boolean);
+  const out: string[] = [];
+  let gwt: string[] = [];
+  const flushGwt = () => {
+    if (gwt.length === 0) return;
+    out.push(gwt.join(' '));
+    gwt = [];
+  };
+  for (const raw of lines) {
+    const line = stripBullet(raw);
+    if (!line || isHeading(line) && !isGwt(line)) {
+      flushGwt();
+      continue;
+    }
+    if (isGwt(line)) {
+      if (/^given\b/i.test(line) && gwt.length > 0) flushGwt();
+      gwt.push(line);
+      if (/^then\b/i.test(line)) flushGwt();
+      continue;
+    }
+    flushGwt();
+    out.push(line);
+  }
+  flushGwt();
+  return out.slice(0, 40);
+}
+
+/**
+ * When there is no Acceptance Criteria section, pull scenario cues from the body:
+ * bullets, numbered lines, and Given/When/Then blocks.
+ */
+export function scenarioCuesFromDescription(text: string): string[] {
+  const fromSection = acceptanceCriteriaFromDescription(text);
+  if (fromSection) return splitAcceptanceCriteria(fromSection);
+  const lines = text.replace(/\r/g, '').split('\n').map((line) => line.trim()).filter(Boolean);
+  const bullets = lines.filter((line) => /^([\-*•]|\d+[.)])\s+\S/.test(line));
+  if (bullets.length > 0) return splitAcceptanceCriteria(bullets.join('\n'));
+  const gwtLines = lines.filter((line) => isGwt(stripBullet(line)));
+  if (gwtLines.length > 0) return splitAcceptanceCriteria(gwtLines.join('\n'));
+  return [];
+}
+
 export function textOf(value: unknown): string {
   if (typeof value === 'string') return value;
   if (value && typeof value === 'object') return adfToText(value);
