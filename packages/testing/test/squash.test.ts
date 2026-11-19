@@ -255,6 +255,24 @@ describe('Squash provider against the documentation-based mock', () => {
     ]));
   });
 
+  it('explains that a READ token can Test Connection but not store cases (Squash answers 401 on write)', async () => {
+    const read = makeSquashToken({ permissions: 'READ' });
+    await mock.close();
+    mock = await startSquashMock({ token: read, permissions: 'READ' });
+    const rules: EgressRule[] = [{ hostPattern: '127.0.0.1', purpose: 'application', internal: true, allowHttp: true, allowLoopback: true }];
+    const http = new HardenedHttpClient({
+      egress: new EgressPolicy({ rules, profile: 'standard', platformEnv: 'development' }),
+      allowedMethods: ['GET'],
+      allowOther: (req) => req.method === 'POST' && /\/api\/rest\/[^/]+\/(projects\/\d+\/test-cases|test-cases\/\d+\/steps)$/.test(new URL(req.url).pathname),
+    });
+    const client = squashProvider.create({ baseUrl: mock.baseUrl }, { value: { token: read }, expiresAt: new Date(Date.now() + 60_000), release() {} }, { http });
+    expect((await client.testConnection()).ok).toBe(true);
+    await expect(call(client, 'tm.testcase.upsert', { reference: 'QAP-read-1', name: 'Should fail' })).rejects.toMatchObject({
+      errorClass: 'auth',
+      message: expect.stringMatching(/READ-only|READ_WRITE/),
+    });
+  });
+
   it('never sends anything but GET, whatever was called', async () => {
     const c = connect();
     await c.testConnection();

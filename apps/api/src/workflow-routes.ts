@@ -74,6 +74,12 @@ export function registerWorkflowRoutes(app: FastifyInstance, workflows: Workflow
     return WorkflowSchema.parse(await workflows.disable({ id: req.principal!.id }, idOf(req)));
   });
 
+  app.delete('/api/v1/workflows/:id', { config: { access: requires('workflow.edit') } }, async (req, reply) => {
+    const force = String((req.query as { force?: string }).force ?? '') === 'true';
+    await workflows.remove({ id: req.principal!.id }, idOf(req), { force });
+    return reply.code(204).send();
+  });
+
   app.post('/api/v1/workflows/:id/runs', { config: { access: requires('execution.start') } }, async (req, reply) => {
     const input = body(StartRunRequest, req.body ?? {}, 'start workflow');
     return reply.code(201).send(ExecutionSchema.parse(await workflows.start({ id: req.principal!.id }, idOf(req), input.parameters ?? {})));

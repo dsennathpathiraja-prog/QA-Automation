@@ -30,7 +30,7 @@ beforeEach(async () => {
 });
 afterEach(() => { for (const s of spies.splice(0)) s.mockRestore(); });
 
-const call = (method: 'GET' | 'POST' | 'PUT' | 'PATCH', url: string, headers: Record<string, string>, payload?: object) => app.inject({ method, url, headers, payload });
+const call = (method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, headers: Record<string, string>, payload?: object) => app.inject({ method, url, headers, payload });
 
 describe('workflow drafts', () => {
   it('lets a QA lead save a draft and hides it from an engineer', async () => {
@@ -40,6 +40,14 @@ describe('workflow drafts', () => {
     expect(created.json()).toMatchObject({ key: 'checkout', status: 'draft', type: 'requirement-validation', publishedVersion: null });
     expect((await call('GET', '/api/v1/workflows', lead)).json()).toMatchObject({ items: [{ name: 'Checkout' }] });
     expect((await call('GET', '/api/v1/workflows', engineer)).json()).toEqual({ items: [] });
+  });
+
+  it('lets a QA lead delete a draft freely and blocks engineers', async () => {
+    const created = await call('POST', '/api/v1/workflows', lead, { name: 'Temp', type: 'requirement-validation' });
+    const id = created.json().id as string;
+    expect((await call('DELETE', `/api/v1/workflows/${id}`, engineer)).statusCode).toBe(403);
+    expect((await call('DELETE', `/api/v1/workflows/${id}`, lead)).statusCode).toBe(204);
+    expect((await call('GET', `/api/v1/workflows/${id}`, lead)).statusCode).toBe(404);
   });
 });
 
@@ -77,5 +85,25 @@ describe('publish and run', () => {
     const stream = await call('GET', `/api/v1/executions/${run.json().id}/events/stream`, engineer);
     expect(stream.headers['content-type']).toContain('text/event-stream');
     expect(stream.body).toContain('data:');
+
+    const blocked = await call('DELETE', `/api/v1/workflows/${id}`, lead);
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json().error.message).toMatch(/still active/);
+    expect((await call('DELETE', `/api/v1/workflows/${id}?force=true`, lead)).statusCode).toBe(204);
+    expect((await call('GET', `/api/v1/workflows/${id}`, lead)).statusCode).toBe(404);
+  });
+
+  it('deletes a published workflow with no active runs without force', async () => {
+    const created = await call('POST', '/api/v1/workflows', lead, { name: 'Quiet', type: 'requirement-validation', templateKey: 'tpl-rv-ui-only' });
+    const id = created.json().id as string;
+    const definition = (await call('GET', `/api/v1/workflows/${id}/definition`, lead)).json().definition;
+    for (const c of definition.spec.connectors) {
+      if (c.category !== 'test-runner') c.binding = { connectorInstanceId: c.category };
+    }
+    expect((await call('PUT', `/api/v1/workflows/${id}/definition`, lead, { definition })).statusCode).toBe(200);
+    expect((await call('POST', `/api/v1/workflows/${id}/publish-request`, lead, {})).statusCode).toBe(200);
+    expect((await call('POST', `/api/v1/workflows/${id}/approve`, lead, {})).statusCode).toBe(200);
+    expect((await call('DELETE', `/api/v1/workflows/${id}`, lead)).statusCode).toBe(204);
+    expect((await call('GET', `/api/v1/workflows/${id}`, lead)).statusCode).toBe(404);
   });
 });

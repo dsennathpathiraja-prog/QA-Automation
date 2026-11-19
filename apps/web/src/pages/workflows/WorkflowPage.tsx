@@ -1,7 +1,8 @@
 import { ConnectorListResponse, ExecutionEventList, ExecutionListResponse, ExecutionSchema, ValidationReportSchema, WorkflowDefinitionResponse, WorkflowSchema } from '@qa/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from '@tanstack/react-router';
+import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
+import { ApiError } from '../../api/client';
 import { useApi } from '../../api/context';
 import { useSession } from '../../auth/session';
 import { Card, ErrorNotice, PageHeader } from '../common';
@@ -26,16 +27,19 @@ export function WorkflowPage() {
   const api = useApi();
   const session = useSession();
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const workflow = useQuery({ queryKey: keyOf(id), queryFn: () => api.get(`/api/v1/workflows/${id}`, WorkflowSchema) });
   const definition = useQuery({ queryKey: [...keyOf(id), 'definition'], queryFn: () => api.get(`/api/v1/workflows/${id}/definition`, WorkflowDefinitionResponse) });
   const [edited, setEdited] = useState<Def | null>(null);
   const [tab, setTab] = useState<'steps' | 'flow' | 'connectors' | 'check' | 'run'>('steps');
   const [params, setParams] = useState<Record<string, string>>({});
   const [runId, setRunId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<'ask' | 'force' | undefined>();
   const savedConnectors = useQuery({ queryKey: ['connectors'], queryFn: () => api.get('/api/v1/connectors', ConnectorListResponse), enabled: session.can('connector.view_status') });
   const def = edited ?? (definition.data?.definition as Def | undefined);
   const draft = workflow.data?.status === 'draft';
   const canEdit = draft && session.can('workflow.edit');
+  const canDelete = session.can('workflow.edit');
   const refresh = async () => { setEdited(null); await qc.invalidateQueries({ queryKey: keyOf(id) }); };
 
   const save = useMutation({
@@ -48,6 +52,17 @@ export function WorkflowPage() {
   const start = useMutation({
     mutationFn: () => api.post(`/api/v1/workflows/${id}/runs`, { parameters: params }, ExecutionSchema),
     onSuccess: (run) => setRunId(run.id),
+  });
+  const remove = useMutation({
+    mutationFn: (force: boolean) => api.delete(`/api/v1/workflows/${id}${force ? '?force=true' : ''}`),
+    onSuccess: async () => {
+      setConfirmDelete(undefined);
+      await qc.invalidateQueries({ queryKey: ['workflows'] });
+      await navigate({ to: '/workflows' });
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 409 && /still active/i.test(err.message)) setConfirmDelete('force');
+    },
   });
   const runs = useQuery({ queryKey: [...keyOf(id), 'runs'], queryFn: () => api.get(`/api/v1/workflows/${id}/runs`, ExecutionListResponse), enabled: workflow.data?.status === 'published' && session.can('execution.start') });
   const activeId = runId ?? runs.data?.items[0]?.id ?? null;
@@ -165,8 +180,28 @@ export function WorkflowPage() {
             {canEdit && <button type="button" className={primaryButtonClass} disabled={save.isPending || !edited} onClick={() => save.mutate()}>Save draft</button>}
             {draft && session.can('workflow.publish.request') && <button type="button" className={buttonClass} disabled={publish.isPending} onClick={() => publish.mutate()}>Send for approval</button>}
             {workflow.data?.status === 'in_review' && session.can('workflow.publish.approve') && <button type="button" className={primaryButtonClass} disabled={approve.isPending} onClick={() => approve.mutate()}>Approve and publish</button>}
+            {canDelete && <button type="button" className={buttonClass} disabled={remove.isPending} onClick={() => setConfirmDelete('ask')}>Delete workflow</button>}
           </div>
-          {(save.isError || publish.isError || approve.isError) && <ErrorNotice message={errorText(save.error ?? publish.error ?? approve.error, 'That change was rejected.')} />}
+          {confirmDelete && (
+            <div role="alertdialog" aria-label="Confirm delete" className="rounded border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+              <p>
+                {confirmDelete === 'force'
+                  ? 'This published workflow still has active runs. Delete it anyway? Queued or running work will lose its workflow, but past run history stays.'
+                  : workflow.data?.status === 'published'
+                    ? 'Delete this published workflow? You can only do that freely when no run is queued, running, or paused.'
+                    : 'Delete this workflow? Drafts and unpublished versions are removed from the list.'}
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button type="button" className={primaryButtonClass} disabled={remove.isPending} onClick={() => remove.mutate(confirmDelete === 'force')}>
+                  {confirmDelete === 'force' ? 'Delete anyway' : 'Delete'}
+                </button>
+                <button type="button" className={buttonClass} onClick={() => setConfirmDelete(undefined)}>Cancel</button>
+              </div>
+            </div>
+          )}
+          {(save.isError || publish.isError || approve.isError || (remove.isError && !(remove.error instanceof ApiError && remove.error.status === 409 && /still active/i.test(remove.error.message)))) && (
+            <ErrorNotice message={errorText(save.error ?? publish.error ?? approve.error ?? remove.error, 'That change was rejected.')} />
+          )}
         </div>
       )}
     </>

@@ -44,6 +44,18 @@ Healthy result: steps 4–6 show new cases for that work item in Test Cases and 
 
 If something fails, send: `docker compose -f deploy/compose/local/docker-compose.local.yml ps`, logs for `api` and `worker`, which step number failed, and a screenshot of the page.
 
+### Squash publish says 401 / “rejected the API token” but Test Connection works
+
+That is expected when the personal token is **READ** only. Test Connection only calls `GET /projects`. Storing generated cases uses `POST .../test-cases`, and Squash answers **401** for a READ token on write (same wording as a bad token).
+
+Check, in order:
+
+1. **Same connector on the workflow.** On the workflow Connectors tab, Squash must be the connector you just tested (not “None” and not an older instance). Save the draft, republish, and run again.
+2. **READ_WRITE token.** In Squash, create a personal API token with **read and write**. On the connector, **Replace credentials**, paste that token, **Test Connection** (it should say the token can store generated test cases), then **Switch on**.
+3. **Restart the worker** after credential or compose changes so it leases the new secret (`docker compose ... restart worker`, or a full rebuild).
+
+Publish and Test Connection both use `Authorization: Bearer <token>` against the same `baseUrl` and the same secret locator `connectors/<id>/credentials`. There is no separate publish token.
+
 ## How to resume after your reply
 1. `git checkout cursor/phase1-foundation-2990 && git pull` (merge the status PR if it is still open).
 2. `pnpm install && pnpm check`.
