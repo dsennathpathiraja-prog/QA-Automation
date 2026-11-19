@@ -43,6 +43,8 @@ export const SQUASH_SUPPORTED_CAPABILITIES = [
   'tm.requirement.list',
   'tm.requirement.read',
   'tm.execution.history',
+  'tm.execution.upsert',
+  'tm.execution.status.update',
   'tm.campaign.list',
   'tm.iteration.list',
 ] as const;
@@ -217,6 +219,20 @@ class SquashClient implements ConnectorClient {
       support: supported.has('tm.testcase.list') ? 'supported' : 'unsupported',
       reason: 'Per test case: GET /test-cases/{id}/executions (checked when first used)',
     });
+    out.push({
+      capability: 'tm.execution.upsert',
+      support: !supported.has('tm.iteration.list') ? 'unsupported' : canWrite ? 'supported' : 'partial',
+      reason: !supported.has('tm.iteration.list')
+        ? 'Needs an iteration list'
+        : canWrite
+          ? 'POST /iterations/{id}/executions records a run for a Squash test case'
+          : 'The token does not show WRITE. Execution status stays on the platform until the token is READ_WRITE.',
+    });
+    out.push({
+      capability: 'tm.execution.status.update',
+      support: canWrite ? 'supported' : 'partial',
+      reason: canWrite ? 'PATCH /executions/{id} sets Passed/Failed/Blocked/Skipped' : 'Needs a READ_WRITE token',
+    });
     for (const [capability, reason] of Object.entries(NOT_AVAILABLE)) out.push({ capability, support: 'unsupported', reason });
     return out;
   }
@@ -280,6 +296,10 @@ class SquashClient implements ConnectorClient {
           path: typeof e.path === 'string' ? e.path : undefined,
           issueCount: typeof e.number_of_issues === 'number' ? e.number_of_issues : undefined,
         }));
+      case 'tm.execution.upsert':
+        return this.upsertExecution(i, signal);
+      case 'tm.execution.status.update':
+        return this.updateExecutionStatus(i, signal);
       case 'tm.campaign.list':
         return this.list(project ? `/projects/${project}/campaigns` : '/campaigns', 'campaigns', i, signal, (c) => ({ id: String(c.id), name: String(c.name) }));
       case 'tm.iteration.list':
@@ -464,11 +484,48 @@ class SquashClient implements ConnectorClient {
     return String(first.id);
   }
 
+  /**
+   * Records an execution against the first visible iteration (or the given iterationId).
+   * Project scope for ToolKit-AgenFlow (and others) stays on the connector config via projectName.
+   */
+  private async upsertExecution(i: Record<string, any>, signal?: AbortSignal): Promise<{ id: string; created: boolean }> {
+    const testCaseId = idOf(i.testCaseId, 'testCaseId');
+    const iterationId = i.iterationId ? idOf(i.iterationId, 'iterationId') : await this.firstIterationId(signal);
+    const created = await this.send('POST', `/iterations/${iterationId}/executions`, {
+      _type: 'execution',
+      test_case: { _type: 'test-case', id: Number(testCaseId) },
+      execution_status: 'READY',
+    }, signal);
+    const id = String(created.id ?? '');
+    if (!/^\d+$/.test(id)) throw new PlatformError('internal', 'Squash did not return an execution id.');
+    return { id, created: true };
+  }
+
+  private async updateExecutionStatus(i: Record<string, any>, signal?: AbortSignal): Promise<{ ok: boolean }> {
+    const executionId = idOf(i.executionId, 'executionId');
+    const status = String(i.status ?? '').trim().toUpperCase();
+    if (!status) throw new PlatformError('validation', 'An execution status is required.');
+    const actual = typeof i.actualResult === 'string' ? i.actualResult.trim() : '';
+    await this.send('PATCH', `/executions/${executionId}`, {
+      _type: 'execution',
+      execution_status: status,
+      ...(actual ? { comment: `<p>${escapeHtml(actual).slice(0, 2000)}</p>` } : {}),
+    }, signal);
+    return { ok: true };
+  }
+
+  private async firstIterationId(signal?: AbortSignal): Promise<string> {
+    const items = await this.collect('/iterations', 'iterations', signal);
+    const id = String(items[0]?.id ?? '');
+    if (!/^\d+$/.test(id)) throw new PlatformError('validation', 'Squash has no iteration this token can use for an execution.');
+    return id;
+  }
+
   private async get(path: string, query: Record<string, string | number>, signal?: AbortSignal): Promise<Json> {
     return this.send('GET', path, undefined, signal, query);
   }
 
-  private async send(method: 'GET' | 'POST', path: string, body: unknown, signal?: AbortSignal, query: Record<string, string | number> = {}): Promise<Json> {
+  private async send(method: 'GET' | 'POST' | 'PATCH', path: string, body: unknown, signal?: AbortSignal, query: Record<string, string | number> = {}): Promise<Json> {
     const qs = new URLSearchParams(Object.entries(query).map(([k, v]): [string, string] => [k, String(v)])).toString();
     const res = await this.deps.http.request({
       method,

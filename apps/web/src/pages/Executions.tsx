@@ -1,4 +1,4 @@
-import { ExecutionEventList, ExecutionListResponse, ExecutionSchema, WorkItemExecutionBoard, WorkItemExecutionSchema } from '@qa/contracts';
+import { ExecutionEventList, ExecutionListResponse, ExecutionSchema, WorkItemCaseScreenshot, WorkItemExecutionBoard, WorkItemExecutionSchema } from '@qa/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
@@ -9,6 +9,7 @@ import { Field, buttonClass, errorText, fieldClass, primaryButtonClass } from '.
 
 const key = ['executions'] as const;
 const LIVE = new Set(['queued', 'running']);
+const WI_LIVE = new Set(['queued', 'running']);
 const STATUS: Record<string, string> = {
   queued: 'Queued',
   running: 'Running',
@@ -16,6 +17,13 @@ const STATUS: Record<string, string> = {
   succeeded: 'Succeeded',
   failed: 'Failed',
   cancelled: 'Cancelled',
+};
+const WI_STATUS: Record<string, string> = {
+  prepared: 'Prepared',
+  queued: 'Queued',
+  running: 'Running',
+  completed: 'Completed',
+  failed: 'Failed',
 };
 
 export function Executions() {
@@ -25,10 +33,29 @@ export function Executions() {
   const [selected, setSelected] = useState<string | null>(null);
   const [workItem, setWorkItem] = useState('');
   const [environmentId, setEnvironmentId] = useState('');
-  const board = useQuery({ queryKey: ['work-item-executions'], queryFn: () => api.get('/api/v1/work-item-executions', WorkItemExecutionBoard) });
+  const [openRun, setOpenRun] = useState<string | null>(null);
+  const board = useQuery({
+    queryKey: ['work-item-executions'],
+    queryFn: () => api.get('/api/v1/work-item-executions', WorkItemExecutionBoard),
+    refetchInterval: (q) => (q.state.data?.items.some((item) => WI_LIVE.has(item.status)) ? 2000 : false),
+  });
+  const detail = useQuery({
+    queryKey: ['work-item-execution', openRun],
+    queryFn: () => api.get(`/api/v1/work-item-executions/${openRun}`, WorkItemExecutionSchema),
+    enabled: Boolean(openRun),
+    refetchInterval: (q) => (q.state.data && WI_LIVE.has(q.state.data.status) ? 1000 : false),
+  });
   const prepare = useMutation({
     mutationFn: () => api.post('/api/v1/work-item-executions', { workItem, environmentId }, WorkItemExecutionSchema),
     onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['work-item-executions'] }); },
+  });
+  const run = useMutation({
+    mutationFn: (id: string) => api.post(`/api/v1/work-item-executions/${id}/run`, {}, WorkItemExecutionSchema),
+    onSuccess: async (row) => {
+      setOpenRun(row.id);
+      await qc.invalidateQueries({ queryKey: ['work-item-executions'] });
+      await qc.invalidateQueries({ queryKey: ['work-item-execution', row.id] });
+    },
   });
   const runs = useQuery({
     queryKey: key,
@@ -54,6 +81,7 @@ export function Executions() {
   const items = runs.data?.items ?? [];
   const current = items.find((item) => item.id === selected);
   const open = current && current.status !== 'succeeded' && current.status !== 'failed' && current.status !== 'cancelled';
+  const shown = detail.data ?? board.data?.items.find((item) => item.id === openRun);
   return (
     <>
       <PageHeader title="Executions" description="Run the test cases of one work item. The environment is chosen here." />
@@ -83,11 +111,40 @@ export function Executions() {
           {board.data && board.data.items.length > 0 && (
             <ul className="mt-4 space-y-2">
               {board.data.items.map((item) => (
-                <li key={item.id}>{item.workItem} · {item.environmentName} · {item.caseCount} {item.caseCount === 1 ? 'case' : 'cases'} · Not run yet. The runner has not executed these cases.</li>
+                <li key={item.id}>
+                  <button type="button" className="text-left text-blue-700 underline dark:text-blue-300" onClick={() => setOpenRun(item.id)}>
+                    {item.workItem}
+                  </button>
+                  {' · '}{item.environmentName} · {item.caseCount} {item.caseCount === 1 ? 'case' : 'cases'} · {WI_STATUS[item.status] ?? item.status}
+                  {item.status === 'prepared' || item.status === 'failed' ? (
+                    <>
+                      {' · '}
+                      <button type="button" className={buttonClass} disabled={run.isPending} onClick={() => run.mutate(item.id)}>Run</button>
+                    </>
+                  ) : null}
+                </li>
               ))}
             </ul>
           )}
+          {run.isError && <div className="mt-3"><ErrorNotice message={errorText(run.error, 'The execution could not be started.')} /></div>}
         </Card>
+        {shown && (
+          <Card label="Work item run">
+            <p>{shown.workItem} on {shown.environmentName} is {WI_STATUS[shown.status]?.toLowerCase() ?? shown.status}.</p>
+            {shown.squashSync && <p className="mt-2">{shown.squashSync}</p>}
+            {shown.results && shown.results.length > 0 && (
+              <ul className="mt-3 space-y-3">
+                {shown.results.map((row) => (
+                  <li key={row.id}>
+                    <p>{row.name} · {row.status}{row.message ? ` · ${row.message}` : ''}{row.squashExecutionId ? ` · Squash ${row.squashExecutionId}` : ''}</p>
+                    {row.hasScreenshot && <CaseScreenshot executionId={shown.id} testCaseId={row.testCaseId} name={row.name} />}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {shown.status === 'prepared' && <p className="mt-2">Not run yet. Press Run to execute these cases through the Playwright runner.</p>}
+          </Card>
+        )}
         <Card label="Workflow runs">
           <p className="mb-3">These runs create the test cases. They are not the execution of a work item.</p>
           {runs.isError && <ErrorNotice message="Runs could not be loaded." onRetry={() => void runs.refetch()} />}
@@ -133,4 +190,15 @@ export function Executions() {
       </div>
     </>
   );
+}
+
+function CaseScreenshot({ executionId, testCaseId, name }: { executionId: string; testCaseId: string; name: string }) {
+  const api = useApi();
+  const shot = useQuery({
+    queryKey: ['work-item-screenshot', executionId, testCaseId],
+    queryFn: () => api.get(`/api/v1/work-item-executions/${executionId}/cases/${testCaseId}/screenshot`, WorkItemCaseScreenshot),
+  });
+  if (shot.isError) return <p className="text-sm">Screenshot for {name} could not be loaded.</p>;
+  if (!shot.data) return <p className="text-sm">Loading screenshot…</p>;
+  return <img className="mt-1 max-h-48 border border-slate-300 dark:border-slate-600" alt={`Screenshot for ${name}`} src={`data:image/png;base64,${shot.data.pngBase64}`} />;
 }

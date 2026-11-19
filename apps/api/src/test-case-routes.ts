@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import {
-  AddCollectionCaseRequest, CreateTestCaseRequest, CreateTestCollectionRequest, ReviseTestCaseRequest, StartWorkItemExecutionRequest, TestCaseListResponse, TestCaseSchema, TestCaseVersionList, TestCollectionListResponse, TestCollectionSchema, WorkItemExecutionBoard, WorkItemExecutionSchema,
+  AddCollectionCaseRequest, CreateTestCaseRequest, CreateTestCollectionRequest, ReviseTestCaseRequest, StartWorkItemExecutionRequest, TestCaseListResponse, TestCaseSchema, TestCaseVersionList, TestCollectionListResponse, TestCollectionSchema, WorkItemCaseScreenshot, WorkItemExecutionBoard, WorkItemExecutionSchema,
 } from '@qa/contracts';
 import { PlatformError } from '@qa/domain';
 import type { EnvironmentService, TestCaseService } from '@qa/application';
@@ -70,5 +70,18 @@ export function registerTestCaseRoutes(app: FastifyInstance, cases: TestCaseServ
     if (!env.enabled || !env.selectable) throw new PlatformError('validation', 'That environment cannot be used.');
     const created = await cases.startWorkItemExecution({ id: req.principal!.id }, { workItem: input.workItem, environmentId: env.id, environmentName: env.name });
     return reply.code(201).send(WorkItemExecutionSchema.parse(created));
+  });
+
+  app.get('/api/v1/work-item-executions/:id', { config: { access: requires('execution.start') } }, async (req) => {
+    return WorkItemExecutionSchema.parse(await cases.getWorkItemExecution(idOf((req.params as { id: string }).id, 'Work item execution')));
+  });
+
+  app.post('/api/v1/work-item-executions/:id/run', { config: { access: requires('execution.start') } }, async (req) => {
+    return WorkItemExecutionSchema.parse(await cases.queueWorkItemExecution({ id: req.principal!.id }, idOf((req.params as { id: string }).id, 'Work item execution')));
+  });
+
+  app.get('/api/v1/work-item-executions/:id/cases/:caseId/screenshot', { config: { access: requires('execution.start') } }, async (req) => {
+    const params = req.params as { id: string; caseId: string };
+    return WorkItemCaseScreenshot.parse(await cases.caseScreenshot(idOf(params.id, 'Work item execution'), idOf(params.caseId, 'Test case')));
   });
 }

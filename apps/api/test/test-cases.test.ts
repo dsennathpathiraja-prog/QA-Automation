@@ -53,4 +53,16 @@ describe('test case library', () => {
     expect(missing.statusCode).toBe(400);
     await local.close();
   });
+
+  it('queues a prepared work item run', async () => {
+    const repo = new InMemoryTestCaseRepository();
+    const cases = new TestCaseService({ cases: repo, audit: new InMemoryAuditSink() });
+    await cases.fileUnderWorkItem({ id: 'worker' }, { name: 'Login', steps: 'Open', expected: 'Form', workItem: 'QA-1' });
+    const prepared = await cases.startWorkItemExecution({ id: 'eng' }, { workItem: 'QA-1', environmentId: '11111111-1111-4111-8111-111111111111', environmentName: 'QA' });
+    const local = buildApp({ sessions: new DevHeaderSessionResolver('test'), profile: 'standard', testCases: cases });
+    const queued = await local.inject({ method: 'POST', url: `/api/v1/work-item-executions/${prepared.id}/run`, headers: engineer, payload: {} });
+    expect(queued.statusCode).toBe(200);
+    expect(queued.json()).toMatchObject({ status: 'queued', workItem: 'QA-1' });
+    await local.close();
+  });
 });

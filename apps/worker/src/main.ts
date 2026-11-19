@@ -13,6 +13,8 @@ import { ConnectorHealthScheduler } from './health-scheduler';
 import { WorkerLoop } from './loop';
 import { checkReachability } from './reachability';
 import { launcherDown, runReachabilityCheck } from './runner-check';
+import { launcherDown as workItemLauncherDown, processWorkItemExecutions, runWorkItemCases } from './run-work-item';
+import { squashIdFromSummary, syncCaseResultsToSquash } from './sync-execution';
 
 const env = process.env;
 const profile = (env.PLATFORM_PROFILE ?? 'standard') as DeploymentProfile;
@@ -49,11 +51,7 @@ if (conn && secrets && hosts && built) {
         egress: new EgressPolicy({ rules, profile, platformEnv }),
         allowedMethods: ['GET', 'HEAD'],
         // Work-item search, the Playwright server, and storing a generated Squash test case are the only writes a connector may send.
-        allowOther: (req) => {
-          const path = new URL(req.url).pathname;
-          if (req.method === 'POST' && /\/(_apis\/wit\/wiql|mcp)$/.test(path)) return true;
-          return req.method === 'POST' && /\/api\/rest\/[^/]+\/(projects\/\d+\/test-cases|test-cases\/\d+\/steps)$/.test(path);
-        },
+        allowOther: (req) => squashWriteAllowed(req.method, new URL(req.url).pathname),
         timeoutMs: 20_000,
         maxBodyBytes: 8 * 1024 * 1024,
       });
@@ -75,11 +73,7 @@ if (conn && secrets && hosts && built) {
             const http = new HardenedHttpClient({
               egress: new EgressPolicy({ rules, profile, platformEnv }),
               allowedMethods: ['GET', 'HEAD'],
-              allowOther: (item) => {
-                const path = new URL(item.url).pathname;
-                if (item.method === 'POST' && /\/(_apis\/wit\/wiql|mcp)$/.test(path)) return true;
-                return item.method === 'POST' && /\/api\/rest\/[^/]+\/(projects\/\d+\/test-cases|test-cases\/\d+\/steps)$/.test(path);
-              },
+              allowOther: (item) => squashWriteAllowed(item.method, new URL(item.url).pathname),
               timeoutMs: 20_000,
               maxBodyBytes: 8 * 1024 * 1024,
             });
@@ -88,6 +82,13 @@ if (conn && secrets && hosts && built) {
         },
       },
     });
+}
+
+/** Work-item search, Playwright MCP, Squash test-case store, and Squash execution status writes. */
+function squashWriteAllowed(method: string, path: string): boolean {
+  if (method === 'POST' && /\/(_apis\/wit\/wiql|mcp)$/.test(path)) return true;
+  if (method === 'POST' && /\/api\/rest\/[^/]+\/(projects\/\d+\/test-cases|test-cases\/\d+\/steps|iterations\/\d+\/executions)$/.test(path)) return true;
+  return method === 'PATCH' && /\/api\/rest\/[^/]+\/executions\/\d+$/.test(path);
 }
 const executions = conn ? new PgExecutionRepository(conn.db) : undefined;
 const testCases = conn ? new TestCaseService({ cases: new PgTestCaseRepository(conn.db), audit: new PgAuditSink(new PgAuditLog(conn.db)) }) : undefined;
@@ -156,6 +157,93 @@ const loop = new WorkerLoop({
         if (e instanceof PlatformError) throw e;
         throw new PlatformError('internal', 'The runner could not be started.');
       }
+    })) === 'busy') busy = true;
+    if (testCases && environments && hosts && (await processWorkItemExecutions({
+      testCases,
+      resolveUrl: async (environmentId) => {
+        const row = await environments.get(environmentId);
+        if (!row?.applicationUrl) throw new PlatformError('not-found', 'That environment was not found.');
+        return row.applicationUrl;
+      },
+      run: async ({ run, cases, url }) => {
+        const direct = async () => runWorkItemCases({
+          run,
+          cases,
+          url,
+          probe: async (target) => {
+            const rules: EgressRule[] = (await hosts.list('application')).map((h) => ({ hostPattern: h.hostPattern, purpose: 'application', internal: h.internal, allowHttp: h.allowHttp }));
+            const http = new HardenedHttpClient({ egress: new EgressPolicy({ rules, profile, platformEnv }), allowedMethods: ['GET', 'HEAD'], timeoutMs: 10_000, maxBodyBytes: 64 * 1024 });
+            const res = await http.request({ method: 'GET', url: target, headers: { accept: '*/*' } });
+            return { status: res.status };
+          },
+        });
+        const launcherUrl = env.RUNNER_LAUNCHER_URL;
+        const launcherToken = env.RUNNER_LAUNCHER_TOKEN_FILE ? readSecretFile(env.RUNNER_LAUNCHER_TOKEN_FILE) : env.RUNNER_LAUNCHER_TOKEN;
+        if (!launcherUrl || !launcherToken) return direct();
+        try {
+          const launcherHost = new URL(launcherUrl);
+          const http = new HardenedHttpClient({
+            egress: new EgressPolicy({
+              rules: [{ hostPattern: launcherHost.hostname, purpose: 'platform', internal: true, allowHttp: launcherHost.protocol === 'http:', allowLoopback: launcherHost.hostname === 'localhost' || launcherHost.hostname === '127.0.0.1' }],
+              profile,
+              platformEnv,
+            }),
+            allowedMethods: ['GET', 'POST'],
+            timeoutMs: 30_000,
+          });
+          const launcher = new RemoteRunnerLauncher({ baseUrl: launcherUrl, token: () => launcherToken, http });
+          const image = await launcher.image();
+          return await runWorkItemCases({
+            run,
+            cases,
+            url,
+            launcher: { launcher, image, logs: (id) => launcher.logs(id) },
+            probe: async (target) => {
+              const rules: EgressRule[] = (await hosts.list('application')).map((h) => ({ hostPattern: h.hostPattern, purpose: 'application', internal: h.internal, allowHttp: h.allowHttp }));
+              const appHttp = new HardenedHttpClient({ egress: new EgressPolicy({ rules, profile, platformEnv }), allowedMethods: ['GET', 'HEAD'], timeoutMs: 10_000, maxBodyBytes: 64 * 1024 });
+              const res = await appHttp.request({ method: 'GET', url: target, headers: { accept: '*/*' } });
+              return { status: res.status };
+            },
+          });
+        } catch (e) {
+          if (workItemLauncherDown(e) || launcherDown(e)) return direct();
+          if (e instanceof PlatformError) throw e;
+          throw new PlatformError('internal', 'The runner could not be started.');
+        }
+      },
+      syncSquash: squash && conn
+        ? async (results, workItem) => {
+            const connectors = new PgConnectorRepository(conn.db);
+            const squashInstance = (await connectors.list()).find((c) => c.category === 'test-management' && c.enabled && c.accessMode === 'read_write');
+            if (!squashInstance) {
+              return { results, summary: `Cases ran for ${workItem}. No writable Squash connector is switched on.` };
+            }
+            const actor = { type: 'user' as const, id: 'worker', permissions: ['connector.manage'] };
+            return syncCaseResultsToSquash({
+              results,
+              workItem,
+              squashIdForCase: async (testCaseId) => {
+                const view = await testCases.get(testCaseId);
+                return squashIdFromSummary(view.summary);
+              },
+              upsert: async (testCaseId) => squash.invoke<{ id: string; created: boolean }>({
+                connectorInstanceId: squashInstance.id,
+                capability: 'tm.execution.upsert',
+                input: { testCaseId },
+                idempotencyKey: `exec-${workItem}-${testCaseId}`,
+                actor,
+              }),
+              updateStatus: async (executionId, status, actualResult) => {
+                await squash.invoke({
+                  connectorInstanceId: squashInstance.id,
+                  capability: 'tm.execution.status.update',
+                  input: { executionId, status, actualResult },
+                  actor,
+                });
+              },
+            });
+          }
+        : undefined,
     })) === 'busy') busy = true;
     return busy ? 'busy' : 'idle';
   },

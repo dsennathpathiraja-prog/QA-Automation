@@ -1,8 +1,8 @@
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { PlatformError } from '@qa/domain';
-import type { CollectionCaseRecord, TestCaseRecord, TestCaseRepository, TestCaseVersionRecord, TestCollectionRecord, WorkItemRunRecord } from '@qa/application';
+import type { CaseRunStatus, CollectionCaseRecord, TestCaseRecord, TestCaseRepository, TestCaseVersionRecord, TestCollectionRecord, WorkItemCaseResultRecord, WorkItemRunRecord, WorkItemRunStatus } from '@qa/application';
 import type { Db } from './db';
-import { testCase, testCaseVersion, testCollection, testCollectionCase, workItemExecution } from './schema';
+import { testCase, testCaseVersion, testCollection, testCollectionCase, workItemCaseResult, workItemExecution } from './schema';
 
 const caseOf = (r: typeof testCase.$inferSelect): TestCaseRecord => ({
   id: r.id,
@@ -130,11 +130,104 @@ export class PgTestCaseRepository implements TestCaseRepository {
 
   async listWorkItemRuns() {
     const rows = await this.db.select().from(workItemExecution).orderBy(desc(workItemExecution.createdAt));
-    return rows.map((r): WorkItemRunRecord => ({ id: r.id, workItem: r.workItem, environmentId: r.environmentId, environmentName: r.environmentName, caseCount: r.caseCount, createdAt: r.createdAt }));
+    return rows.map((r) => this.runOf(r));
+  }
+
+  async getWorkItemRun(id: string) {
+    const [row] = await this.db.select().from(workItemExecution).where(eq(workItemExecution.id, id)).limit(1);
+    return row && this.runOf(row);
   }
 
   async insertWorkItemRun(row: { id: string; workItem: string; environmentId: string; environmentName: string; caseCount: number }) {
     const [saved] = await this.db.insert(workItemExecution).values(row).returning();
-    return { id: saved!.id, workItem: saved!.workItem, environmentId: saved!.environmentId, environmentName: saved!.environmentName, caseCount: saved!.caseCount, createdAt: saved!.createdAt };
+    return this.runOf(saved!);
+  }
+
+  async updateWorkItemRun(id: string, patch: { status: WorkItemRunStatus; squashSync?: string; finishedAt?: Date }) {
+    const [saved] = await this.db
+      .update(workItemExecution)
+      .set({ status: patch.status, squashSync: patch.squashSync, finishedAt: patch.finishedAt })
+      .where(eq(workItemExecution.id, id))
+      .returning();
+    if (!saved) throw new PlatformError('not-found', 'Work item execution not found');
+    return this.runOf(saved);
+  }
+
+  async claimQueuedWorkItemRun() {
+    const [candidate] = await this.db
+      .select({ id: workItemExecution.id })
+      .from(workItemExecution)
+      .where(eq(workItemExecution.status, 'queued'))
+      .orderBy(asc(workItemExecution.createdAt))
+      .limit(1);
+    if (!candidate) return undefined;
+    const [saved] = await this.db
+      .update(workItemExecution)
+      .set({ status: 'running' })
+      .where(and(eq(workItemExecution.id, candidate.id), eq(workItemExecution.status, 'queued')))
+      .returning();
+    return saved && this.runOf(saved);
+  }
+
+  async replaceCaseResults(executionId: string, results: Array<{ id: string; testCaseId: string; name: string; status: CaseRunStatus; message: string; screenshotPng?: string; squashExecutionId?: string }>) {
+    await this.db.transaction(async (tx) => {
+      await tx.delete(workItemCaseResult).where(eq(workItemCaseResult.executionId, executionId));
+      if (results.length === 0) return;
+      await tx.insert(workItemCaseResult).values(results.map((r) => ({
+        id: r.id,
+        executionId,
+        testCaseId: r.testCaseId,
+        name: r.name,
+        status: r.status,
+        message: r.message,
+        screenshotPng: r.screenshotPng,
+        squashExecutionId: r.squashExecutionId,
+      })));
+    });
+  }
+
+  async listCaseResults(executionId: string) {
+    const rows = await this.db.select().from(workItemCaseResult).where(eq(workItemCaseResult.executionId, executionId)).orderBy(asc(workItemCaseResult.createdAt));
+    return rows.map((r): WorkItemCaseResultRecord => ({
+      id: r.id,
+      testCaseId: r.testCaseId,
+      name: r.name,
+      status: r.status as CaseRunStatus,
+      message: r.message,
+      screenshotPng: r.screenshotPng ?? undefined,
+      squashExecutionId: r.squashExecutionId ?? undefined,
+    }));
+  }
+
+  async getCaseResult(executionId: string, testCaseId: string) {
+    const [row] = await this.db
+      .select()
+      .from(workItemCaseResult)
+      .where(and(eq(workItemCaseResult.executionId, executionId), eq(workItemCaseResult.testCaseId, testCaseId)))
+      .limit(1);
+    if (!row) return undefined;
+    return {
+      id: row.id,
+      testCaseId: row.testCaseId,
+      name: row.name,
+      status: row.status as CaseRunStatus,
+      message: row.message,
+      screenshotPng: row.screenshotPng ?? undefined,
+      squashExecutionId: row.squashExecutionId ?? undefined,
+    } satisfies WorkItemCaseResultRecord;
+  }
+
+  private runOf(r: typeof workItemExecution.$inferSelect): WorkItemRunRecord {
+    return {
+      id: r.id,
+      workItem: r.workItem,
+      environmentId: r.environmentId,
+      environmentName: r.environmentName,
+      caseCount: r.caseCount,
+      status: r.status as WorkItemRunStatus,
+      squashSync: r.squashSync ?? undefined,
+      createdAt: r.createdAt,
+      finishedAt: r.finishedAt ?? undefined,
+    };
   }
 }

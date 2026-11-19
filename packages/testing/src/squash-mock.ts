@@ -162,6 +162,28 @@ export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock>
           row.steps.push(step);
           return send(201, step);
         }
+        if (req.method === 'POST' && (created = path.match(/^\/iterations\/(\d+)\/executions$/))) {
+          const id = 5000 + EXECUTIONS.length + 1;
+          const row = {
+            _type: 'execution',
+            id,
+            execution_order: 0,
+            execution_status: String(payload.execution_status ?? 'READY'),
+            last_executed_by: 'platform',
+            last_executed_on: new Date().toISOString(),
+            path: `/iteration/${created[1]}`,
+            number_of_issues: 0,
+            test_case: payload.test_case,
+          };
+          EXECUTIONS.push(row);
+          return send(201, row);
+        }
+        if (req.method === 'PATCH' && (created = path.match(/^\/executions\/(\d+)$/))) {
+          const row = EXECUTIONS.find((item) => item.id === Number(created![1]));
+          if (!row) return send(404, { message: 'not found' });
+          if (typeof payload.execution_status === 'string') row.execution_status = payload.execution_status;
+          return send(200, row);
+        }
         return send(405, { message: 'write not available in the mock' });
       }
       const r = route(path, url);

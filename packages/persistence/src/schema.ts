@@ -490,11 +490,32 @@ export const workItemExecution = pgTable(
     environmentName: text('environment_name').notNull(),
     caseCount: integer('case_count').notNull(),
     status: text('status').notNull().default('prepared'),
+    squashSync: text('squash_sync'),
+    finishedAt: ts('finished_at'),
     createdAt: ts('created_at').notNull().defaultNow(),
   },
   (t) => [
     index('work_item_execution_created_idx').on(t.createdAt),
-    check('work_item_execution_status_ck', sql`${t.status} in ('prepared')`),
+    check('work_item_execution_status_ck', sql`${t.status} in ('prepared','queued','running','completed','failed')`),
+  ],
+);
+
+export const workItemCaseResult = pgTable(
+  'work_item_case_result',
+  {
+    id: id(),
+    executionId: uuid('execution_id').notNull(),
+    testCaseId: uuid('test_case_id').notNull(),
+    name: text('name').notNull(),
+    status: text('status').notNull(),
+    message: text('message').notNull().default(''),
+    screenshotPng: text('screenshot_png'),
+    squashExecutionId: text('squash_execution_id'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [
+    index('work_item_case_result_execution_idx').on(t.executionId),
+    check('work_item_case_result_status_ck', sql`${t.status} in ('Passed','Failed','Blocked','Skipped')`),
   ],
 );
 
