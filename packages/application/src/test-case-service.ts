@@ -3,6 +3,9 @@ import { PlatformError } from '@qa/domain';
 import type { ActorRef } from './connector-service';
 import type { AuditSink } from './ports';
 
+export type WorkItemRunStatus = 'prepared' | 'queued' | 'running' | 'completed' | 'failed';
+export type CaseRunStatus = 'Passed' | 'Failed' | 'Blocked' | 'Skipped';
+
 export interface TestCaseRecord {
   id: string;
   key: string;
@@ -34,6 +37,16 @@ export interface CollectionCaseRecord {
   position: number;
 }
 
+export interface WorkItemCaseResultRecord {
+  id: string;
+  testCaseId: string;
+  name: string;
+  status: CaseRunStatus;
+  message: string;
+  screenshotPng?: string;
+  squashExecutionId?: string;
+}
+
 export interface TestCaseRepository {
   list(): Promise<TestCaseRecord[]>;
   get(id: string): Promise<TestCaseRecord | undefined>;
@@ -49,7 +62,13 @@ export interface TestCaseRepository {
   addCase(collectionId: string, testCaseId: string): Promise<'added' | 'exists'>;
   removeCase(collectionId: string, testCaseId: string): Promise<boolean>;
   listWorkItemRuns(): Promise<WorkItemRunRecord[]>;
+  getWorkItemRun(id: string): Promise<WorkItemRunRecord | undefined>;
   insertWorkItemRun(row: { id: string; workItem: string; environmentId: string; environmentName: string; caseCount: number }): Promise<WorkItemRunRecord>;
+  updateWorkItemRun(id: string, patch: { status: WorkItemRunStatus; squashSync?: string; finishedAt?: Date }): Promise<WorkItemRunRecord>;
+  claimQueuedWorkItemRun(): Promise<WorkItemRunRecord | undefined>;
+  replaceCaseResults(executionId: string, results: Array<{ id: string; testCaseId: string; name: string; status: CaseRunStatus; message: string; screenshotPng?: string; squashExecutionId?: string }>): Promise<void>;
+  listCaseResults(executionId: string): Promise<WorkItemCaseResultRecord[]>;
+  getCaseResult(executionId: string, testCaseId: string): Promise<WorkItemCaseResultRecord | undefined>;
 }
 
 export interface WorkItemRunRecord {
@@ -58,7 +77,10 @@ export interface WorkItemRunRecord {
   environmentId: string;
   environmentName: string;
   caseCount: number;
+  status: WorkItemRunStatus;
+  squashSync?: string;
   createdAt: Date;
+  finishedAt?: Date;
 }
 
 export interface TestCaseView {
@@ -85,6 +107,27 @@ export interface TestCaseListItem {
 
 const itemOf = (r: TestCaseRecord): TestCaseListItem => ({
   id: r.id, key: r.key, name: r.name, summary: r.summary, workItem: r.workItem, version: r.currentVersion, updatedAt: r.updatedAt.toISOString(),
+});
+
+const runOf = (row: WorkItemRunRecord, results?: WorkItemCaseResultRecord[]) => ({
+  id: row.id,
+  workItem: row.workItem,
+  environmentId: row.environmentId,
+  environmentName: row.environmentName,
+  caseCount: row.caseCount,
+  status: row.status,
+  createdAt: row.createdAt.toISOString(),
+  finishedAt: row.finishedAt?.toISOString(),
+  squashSync: row.squashSync,
+  results: results?.map((r) => ({
+    id: r.id,
+    testCaseId: r.testCaseId,
+    name: r.name,
+    status: r.status,
+    message: r.message,
+    hasScreenshot: Boolean(r.screenshotPng),
+    squashExecutionId: r.squashExecutionId,
+  })),
 });
 
 export class TestCaseService {
@@ -183,16 +226,19 @@ export class TestCaseService {
   async executionBoard() {
     const counts = new Map<string, number>();
     for (const item of await this.list()) if (item.workItem) counts.set(item.workItem, (counts.get(item.workItem) ?? 0) + 1);
-    const items = (await this.d.cases.listWorkItemRuns()).map((row) => ({
-      id: row.id,
-      workItem: row.workItem,
-      environmentId: row.environmentId,
-      environmentName: row.environmentName,
-      caseCount: row.caseCount,
-      status: 'prepared' as const,
-      createdAt: row.createdAt.toISOString(),
-    }));
+    const items = [];
+    for (const row of await this.d.cases.listWorkItemRuns()) {
+      const results = row.status === 'prepared' || row.status === 'queued' ? undefined : await this.d.cases.listCaseResults(row.id);
+      items.push(runOf(row, results));
+    }
     return { workItems: [...counts].map(([workItem, caseCount]) => ({ workItem, caseCount })), items };
+  }
+
+  async getWorkItemExecution(id: string) {
+    const row = await this.d.cases.getWorkItemRun(id);
+    if (!row) throw new PlatformError('not-found', 'Work item execution not found');
+    const results = await this.d.cases.listCaseResults(id);
+    return runOf(row, results);
   }
 
   async startWorkItemExecution(actor: ActorRef, input: { workItem: string; environmentId: string; environmentName: string }) {
@@ -202,7 +248,41 @@ export class TestCaseService {
     if (caseCount === 0) throw new PlatformError('validation', 'That work item has no test cases.');
     const row = await this.d.cases.insertWorkItemRun({ id: randomUUID(), workItem, environmentId: input.environmentId, environmentName: input.environmentName, caseCount });
     await this.d.audit.append({ actorId: actor.id, action: 'workitem.execution.prepare', subjectType: 'work_item_execution', subjectId: row.id, detail: { workItem, environmentId: input.environmentId, caseCount } });
-    return { id: row.id, workItem: row.workItem, environmentId: row.environmentId, environmentName: row.environmentName, caseCount: row.caseCount, status: 'prepared' as const, createdAt: row.createdAt.toISOString() };
+    return runOf(row);
+  }
+
+  /** Queues a prepared row so the worker runs its cases through the Playwright runner. */
+  async queueWorkItemExecution(actor: ActorRef, id: string) {
+    const row = await this.d.cases.getWorkItemRun(id);
+    if (!row) throw new PlatformError('not-found', 'Work item execution not found');
+    if (row.status !== 'prepared' && row.status !== 'failed') throw new PlatformError('conflict', 'That execution is already running or finished.');
+    const updated = await this.d.cases.updateWorkItemRun(id, { status: 'queued' });
+    await this.d.audit.append({ actorId: actor.id, action: 'workitem.execution.queue', subjectType: 'work_item_execution', subjectId: id, detail: { workItem: row.workItem } });
+    return runOf(updated);
+  }
+
+  async claimQueuedWorkItemExecution() {
+    return this.d.cases.claimQueuedWorkItemRun();
+  }
+
+  async completeWorkItemExecution(id: string, input: {
+    status: 'completed' | 'failed';
+    squashSync?: string;
+    results: Array<{ testCaseId: string; name: string; status: CaseRunStatus; message: string; screenshotPng?: string; squashExecutionId?: string }>;
+  }) {
+    await this.d.cases.replaceCaseResults(id, input.results.map((r) => ({ id: randomUUID(), ...r })));
+    const updated = await this.d.cases.updateWorkItemRun(id, { status: input.status, squashSync: input.squashSync, finishedAt: new Date() });
+    return runOf(updated, await this.d.cases.listCaseResults(id));
+  }
+
+  async caseScreenshot(executionId: string, testCaseId: string) {
+    const row = await this.d.cases.getCaseResult(executionId, testCaseId);
+    if (!row?.screenshotPng) throw new PlatformError('not-found', 'Screenshot not found');
+    return { testCaseId: row.testCaseId, name: row.name, contentType: 'image/png' as const, pngBase64: row.screenshotPng };
+  }
+
+  casesForWorkItem(workItem: string) {
+    return this.list().then((items) => items.filter((item) => item.workItem === workItem));
   }
 
   private async ensureWorkItemCollection(actor: ActorRef, workItem: string) {

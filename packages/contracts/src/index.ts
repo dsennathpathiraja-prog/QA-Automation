@@ -286,14 +286,27 @@ export const TestCollectionCaseSchema = z.object({ id: z.string(), name: z.strin
 export const TestCollectionSchema = z.object({ id: z.string(), name: z.string(), description: z.string(), cases: z.array(TestCollectionCaseSchema) });
 export const CreateTestCollectionRequest = z.object({ name: z.string(), description: z.string().optional() });
 export const AddCollectionCaseRequest = z.object({ testCaseId: z.string() });
+export const WorkItemCaseStatus = z.enum(['Passed', 'Failed', 'Blocked', 'Skipped']);
+export const WorkItemCaseResultSchema = z.object({
+  id: z.string(),
+  testCaseId: z.string(),
+  name: z.string(),
+  status: WorkItemCaseStatus,
+  message: z.string(),
+  hasScreenshot: z.boolean(),
+  squashExecutionId: z.string().optional(),
+});
 export const WorkItemExecutionSchema = z.object({
   id: z.string(),
   workItem: z.string(),
   environmentId: z.string(),
   environmentName: z.string(),
   caseCount: z.number(),
-  status: z.literal('prepared'),
+  status: z.enum(['prepared', 'queued', 'running', 'completed', 'failed']),
   createdAt: z.string(),
+  finishedAt: z.string().optional(),
+  squashSync: z.string().optional(),
+  results: z.array(WorkItemCaseResultSchema).optional(),
 });
 export const WorkItemExecutionBoard = z.object({
   workItems: z.array(z.object({ workItem: z.string(), caseCount: z.number() })),
@@ -301,6 +314,7 @@ export const WorkItemExecutionBoard = z.object({
   items: z.array(WorkItemExecutionSchema),
 });
 export const StartWorkItemExecutionRequest = z.object({ workItem: z.string(), environmentId: z.string() });
+export const WorkItemCaseScreenshot = z.object({ testCaseId: z.string(), name: z.string(), contentType: z.literal('image/png'), pngBase64: z.string() });
 
 export const ValidateEnvironmentRequest = z.object({
   workflowType: z.enum(['requirement-validation', 'regression-testing']).optional(),

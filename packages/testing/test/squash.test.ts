@@ -25,7 +25,11 @@ afterEach(async () => {
 describe('Squash provider against the documentation-based mock', () => {
   it('declares only capabilities that exist in the catalog and that Squash documents', () => {
     expect(squashProvider.manifest.capabilities).toEqual([...SQUASH_SUPPORTED_CAPABILITIES]);
-    expect(squashProvider.manifest.capabilities.filter((id) => caps.get(id).access === 'write')).toEqual(['tm.testcase.upsert']);
+    expect(squashProvider.manifest.capabilities.filter((id) => caps.get(id).access === 'write')).toEqual([
+      'tm.testcase.upsert',
+      'tm.execution.upsert',
+      'tm.execution.status.update',
+    ]);
     expect(squashProvider.manifest.authMethods.map((a) => a.key)).toEqual(['api_token']);
   });
 

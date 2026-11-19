@@ -61,7 +61,7 @@ describe('route guard', () => {
 
   it('placeholder pages say which phase delivers them', async () => {
     renderApp('/automation', { me: { status: 200, body: meFor('qa_lead') } });
-    expect(await screen.findByText(/Phase 7/)).toBeTruthy();
+    expect(await screen.findByText(/Phase 8/)).toBeTruthy();
   });
 
   it('lists test cases kept in this platform', async () => {
@@ -83,13 +83,21 @@ describe('route guard', () => {
     renderApp('/executions', {
       me: { status: 200, body: meFor('qa_engineer') },
       routes: {
-        '/api/v1/work-item-executions': { status: 200, body: { workItems: [{ workItem: 'QA-1', caseCount: 2 }], environments: [{ id: '33333333-3333-4333-8333-333333333333', name: 'QA', kind: 'qa' }], items: [] } },
+        '/api/v1/work-item-executions': {
+          status: 200,
+          body: {
+            workItems: [{ workItem: 'QA-1', caseCount: 2 }],
+            environments: [{ id: '33333333-3333-4333-8333-333333333333', name: 'QA', kind: 'qa' }],
+            items: [{ id: '44444444-4444-4444-8444-444444444444', workItem: 'QA-1', environmentId: '33333333-3333-4333-8333-333333333333', environmentName: 'QA', caseCount: 2, status: 'prepared', createdAt: '2026-11-19T12:00:00.000Z' }],
+          },
+        },
         '/api/v1/executions': { status: 200, body: { items: [{ id: '1436518e-0000-4000-8000-000000000001', workflowId: '11111111-1111-4111-8111-111111111111', workflowName: 'Checkout', status: 'succeeded', stepIndex: 10, createdAt: '2026-11-18T10:00:00.000Z', updatedAt: '2026-11-18T10:05:00.000Z' }] } },
         '/api/v1/executions/1436518e-0000-4000-8000-000000000001/events': { status: 200, body: { items: [{ seq: 1, kind: 'step.completed', at: '2026-11-18T10:00:00.000Z', payload: { stepId: 'read_story', summary: 'Read work item QA-1.' } }] } },
       },
     });
     expect(await screen.findByText('Checkout')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Prepare execution' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Run' })).toBeTruthy();
     expect(screen.getByText(/These runs create the test cases/)).toBeTruthy();
     expect(screen.getByText(/Succeeded/)).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Checkout' }));

@@ -3,13 +3,9 @@
 Connector-first, local-first agentic QA automation platform. Design: see the architecture documents
 (`architecture-and-roadmap.md`, `architecture/platform-decisions.md`).
 
-## Status: Phase 6 awaiting confirmation
+## Status: Phase 7 execute path
 
-Phases 1, 2, 3, 4, and 5 are done. Phase 4 covers workflow drafts, the step validator, publish and approval, the worker engine, and the builder. On 18 Nov 2026 the user approved a workflow and run 1436518e succeeded through all 10 steps. The plan is in [`docs/phase4-plan.md`](docs/phase4-plan.md).
-
-Phase 5 places the reachability check in a runner when the local runners profile is up. On 19 Nov 2026 the page showed "The runner finished. The application answered 200." The plan is in [`docs/phase5-plan.md`](docs/phase5-plan.md).
-
-Phase 6 code is complete. A requirement-validation run ends when the generated cases are stored in Test Cases, under the work item, and in Squash. Executions prepares a run of that work item against an environment chosen on that page; the row stays prepared until a later phase runs Playwright. Confirm with the checklist in [`docs/phase6-status.md`](docs/phase6-status.md). Split: [`docs/requirement-validation-phases.md`](docs/requirement-validation-phases.md) and [`docs/phase6-plan.md`](docs/phase6-plan.md).
+Phases 1–6 are in place. Phase 6 stores cases under the work item and prepares an Executions row. Phase 7 runs that row through the Playwright runner (existing launcher profile when up), records Passed / Failed / Blocked / Skipped with screenshots, and writes Squash execution status when the connector is writable. Plan: [`docs/phase7-plan.md`](docs/phase7-plan.md). Split: [`docs/requirement-validation-phases.md`](docs/requirement-validation-phases.md).
 
 Connectors can be added from the UI (GitHub, Azure DevOps Repos, Jira, Azure Boards, Squash, the managed Playwright server, and an offline demo). GitHub, Azure Boards, and the current Squash instance have been used live. Azure DevOps Repos and Jira remain labelled "not verified against a live instance" until someone runs them against a reachable server. What is in each slice is in [`docs/phase2-plan.md`](docs/phase2-plan.md). Phase 1 sign-off notes remain in [`docs/phase1-status.md`](docs/phase1-status.md).
 

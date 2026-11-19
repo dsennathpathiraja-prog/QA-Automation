@@ -6,21 +6,15 @@ A requirement-validation workflow ends when the test cases are created and store
 
 The earlier draft of this page put execution, screenshots, and the report inside the same workflow, as Phases 7 to 11. That is not the product. Those steps are no longer part of the requirement-validation template, and an already published workflow stops after the cases are stored.
 
-## Phase 6 — Store the cases, then execute by work item
+## Phase 6 — Store the cases, then prepare by work item
 
-This is the current phase.
+A requirement-validation run reads the story, plans with `playwright-test-planner`, and writes the cases with `playwright-test-generator`. Publish stores them in Test Cases, in a collection named for the work item, and in Squash when that connector has a READ_WRITE token. The run stops there. Starting the run does not ask for an environment.
 
-A requirement-validation run reads the story, plans with `playwright-test-planner`, and writes the cases with `playwright-test-generator`. Publish stores them in Test Cases, in a collection named for the work item, and in Squash when that connector has a READ_WRITE token. The run stops there. It does not walk empty execute, sync, or report steps, including on a workflow that was published before this change. Starting the run does not ask for an environment.
+Executions asks for the work item and the environment. That row is marked prepared until Phase 7 runs it.
 
-Test Cases opens on the work items. It does not ask anyone to type a case by hand.
+## Phase 7 — Execute prepared work items (current)
 
-Executions asks for the work item and the environment. That row is marked prepared. The runner does not execute the Playwright file yet, so the page does not say the tests passed and it does not show a screenshot. Older workflow runs stay on the same page, labelled as the runs that created the cases.
-
-This phase closes when a new run is confirmed: the cases for that work item are in Test Cases and in Squash. Run 1436518e, from 18 Nov 2026, is the old empty success. Rebuilding does not change that row.
-
-## After Phase 6
-
-Execute the stored cases for one work item on the environment chosen on Executions. Each case gets a real status and a screenshot, and that result is written to Squash. Until that exists, an execution stays prepared.
+From Executions, run a prepared work item against the chosen environment. The worker uses the existing runner-launcher profile when it is up (`bundleRef: work-item`). Each case gets Passed, Failed, Blocked, or Skipped, plus a screenshot. When Squash is writable (project name such as ToolKit-AgenFlow), the execution status is written back. Plan: [`phase7-plan.md`](phase7-plan.md).
 
 Regression is the next workflow. It reads the system's cases from Squash and runs them. It does not plan or generate.
 
