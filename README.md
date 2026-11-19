@@ -3,13 +3,13 @@
 Connector-first, local-first agentic QA automation platform. Design: see the architecture documents
 (`architecture-and-roadmap.md`, `architecture/platform-decisions.md`).
 
-## Status: Phase 6 started
+## Status: Phase 6 awaiting confirmation
 
-Phases 1, 2, 3, 4, and 5 are done. Phase 4 covers workflow drafts, the step validator, publish and approval, the worker engine, and the builder. On 18 Nov 2026 the user approved a workflow and run 1436518e succeeded through all 10 steps. The run records the steps. Reading the story, driving the browser, and creating test cases in Squash are later. The plan is in [`docs/phase4-plan.md`](docs/phase4-plan.md).
+Phases 1, 2, 3, 4, and 5 are done. Phase 4 covers workflow drafts, the step validator, publish and approval, the worker engine, and the builder. On 18 Nov 2026 the user approved a workflow and run 1436518e succeeded through all 10 steps. The plan is in [`docs/phase4-plan.md`](docs/phase4-plan.md).
 
-Phase 5 places the reachability check in a runner when the local runners profile is up. On 19 Nov 2026 the page showed "The runner finished. The application answered 200." Without that profile the worker still checks the address itself, and earlier the same day that check showed "The application answered 200." Workflow steps still do not run a test suite. The plan is in [`docs/phase5-plan.md`](docs/phase5-plan.md).
+Phase 5 places the reachability check in a runner when the local runners profile is up. On 19 Nov 2026 the page showed "The runner finished. The application answered 200." The plan is in [`docs/phase5-plan.md`](docs/phase5-plan.md).
 
-Phase 6 is in progress. A requirement-validation run ends when the generated cases are stored in Test Cases, under the work item, and in Squash. Executions then prepares a run of that work item against an environment chosen on that page. The runner does not execute the Playwright file yet, so that row stays prepared. The split is in [`docs/requirement-validation-phases.md`](docs/requirement-validation-phases.md) and [`docs/phase6-plan.md`](docs/phase6-plan.md). Kubernetes stays after that sequence.
+Phase 6 code is complete. A requirement-validation run ends when the generated cases are stored in Test Cases, under the work item, and in Squash. Executions prepares a run of that work item against an environment chosen on that page; the row stays prepared until a later phase runs Playwright. Confirm with the checklist in [`docs/phase6-status.md`](docs/phase6-status.md). Split: [`docs/requirement-validation-phases.md`](docs/requirement-validation-phases.md) and [`docs/phase6-plan.md`](docs/phase6-plan.md).
 
 Connectors can be added from the UI (GitHub, Azure DevOps Repos, Jira, Azure Boards, Squash, the managed Playwright server, and an offline demo). GitHub, Azure Boards, and the current Squash instance have been used live. Azure DevOps Repos and Jira remain labelled "not verified against a live instance" until someone runs them against a reachable server. What is in each slice is in [`docs/phase2-plan.md`](docs/phase2-plan.md). Phase 1 sign-off notes remain in [`docs/phase1-status.md`](docs/phase1-status.md).
 
