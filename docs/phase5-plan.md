@@ -3,7 +3,7 @@
 Started 19 Nov 2026, after the Phase 4 sign-off. This is the runner work named in the Phase 1 status, not the model-qualification note in ADR 0009.
 
 ## Status (19 Nov 2026)
-The first slice is in place. On an environment, Check reachability asks the worker to call the application address. The page shows whether it answered. The worker uses the approved-host list, the same rule as every other outbound call. A host that is not approved is recorded as unreachable, with that reason.
+Slice 1 is confirmed. The user pressed Check reachability and the page showed "The application answered 200." The worker called the application address through the approved-host list and stored that answer.
 
 The published workflow still walks its steps without starting a runner. That stays until a runner image exists, so the run that already succeeded keeps working.
 
