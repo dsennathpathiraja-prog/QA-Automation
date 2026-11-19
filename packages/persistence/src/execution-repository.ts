@@ -67,7 +67,7 @@ export class PgExecutionRepository implements ExecutionRepository {
         LIMIT 1
       ) AS picked
       WHERE e.id = picked.id
-      RETURNING e.id, e.status, e.step_index, e.phase, e.control, e.definition
+        RETURNING e.id, e.status, e.step_index, e.phase, e.control, e.definition, e.params
     `);
     const row = rowsOf(result)[0];
     if (!row) return undefined;
@@ -78,6 +78,7 @@ export class PgExecutionRepository implements ExecutionRepository {
       phase: (row.phase === 'effect' ? 'effect' : 'pending') as 'pending' | 'effect',
       control: (row.control === 'pause' || row.control === 'cancel' ? row.control : null) as 'pause' | 'cancel' | null,
       definition: row.definition,
+      params: row.params && typeof row.params === 'object' ? row.params as Record<string, unknown> : {},
     };
   }
 
@@ -105,5 +106,13 @@ export class PgExecutionRepository implements ExecutionRepository {
 
   async append(id: string, kind: string, payload: Record<string, unknown>) {
     await this.db.insert(workflowEvent).values({ executionId: id, kind, payload });
+  }
+
+  async stepsDone(id: string) {
+    const rows = await this.events(id);
+    return rows.filter((row) => row.kind === 'step.completed').map((row) => ({
+      stepId: typeof row.payload.stepId === 'string' ? row.payload.stepId : '',
+      outputs: row.payload.outputs && typeof row.payload.outputs === 'object' ? row.payload.outputs as Record<string, unknown> : {},
+    }));
   }
 }

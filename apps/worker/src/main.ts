@@ -1,8 +1,9 @@
 import { buildProviders, buildSecretStore, connectDatabase } from '@qa/bootstrap';
 import { PlatformError, type DeploymentProfile, type PlatformEnv } from '@qa/domain';
 import { EgressPolicy, HardenedHttpClient, RemoteRunnerLauncher, initTelemetry, readSecretFile, type EgressRule } from '@qa/infrastructure';
-import { tick as engineTick } from '@qa/workflow-engine';
-import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgEnvironmentRepository, PgExecutionRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
+import { runFlowStep, tick as engineTick } from '@qa/workflow-engine';
+import { TestCaseService } from '@qa/application';
+import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgEnvironmentRepository, PgExecutionRepository, PgTestCaseRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
 import { buildWorkerApp } from './app';
 import { ConnectorTester } from './connector-tester';
 import { ConnectorHealthScheduler } from './health-scheduler';
@@ -54,6 +55,7 @@ if (conn && secrets && hosts) {
 }
 
 const executions = conn ? new PgExecutionRepository(conn.db) : undefined;
+const testCases = conn ? new TestCaseService({ cases: new PgTestCaseRepository(conn.db), audit: new PgAuditSink(new PgAuditLog(conn.db)) }) : undefined;
 const environments = conn ? new PgEnvironmentRepository(conn.db) : undefined;
 const loop = new WorkerLoop({
   tick: async () => {
@@ -62,7 +64,26 @@ const loop = new WorkerLoop({
       await scheduler?.enqueueDue();
       if ((await tester.runOnce()) === 'busy') busy = true;
     }
-    if (executions && (await engineTick(executions, { owner: 'worker', now: new Date() })) === 'busy') busy = true;
+    if (executions && (await engineTick(executions, {
+      owner: 'worker',
+      now: new Date(),
+      perform: async (step) => {
+        const result = runFlowStep(step);
+        if (step.type === 'rv.publish-testcases' && testCases) {
+          const cases = Array.isArray(result.outputs.cases) ? result.outputs.cases : [];
+          for (const item of cases) {
+            const row = item as { name?: unknown; steps?: unknown; expected?: unknown; workItem?: unknown };
+            if (typeof row.name !== 'string' || typeof row.steps !== 'string' || typeof row.expected !== 'string') continue;
+            try {
+              await testCases.create({ id: 'worker' }, { name: row.name, steps: row.steps, expected: row.expected, summary: typeof row.workItem === 'string' && row.workItem ? `Work item ${row.workItem}` : '', workItem: typeof row.workItem === 'string' ? row.workItem : '' });
+            } catch (e) {
+              if (!(e instanceof PlatformError) || e.errorClass !== 'conflict') throw e;
+            }
+          }
+        }
+        return result;
+      },
+    })) === 'busy') busy = true;
     if (environments && hosts && (await checkReachability(environments, async (target) => {
       const direct = async () => {
         const rules: EgressRule[] = (await hosts.list('application')).map((h) => ({ hostPattern: h.hostPattern, purpose: 'application', internal: h.internal, allowHttp: h.allowHttp }));

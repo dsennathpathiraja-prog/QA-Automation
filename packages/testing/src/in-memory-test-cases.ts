@@ -21,10 +21,10 @@ export class InMemoryTestCaseRepository implements TestCaseRepository {
     return row ? structuredClone(row) : undefined;
   }
 
-  async insert(row: { id: string; key: string; name: string; summary: string; steps: string; expected: string }) {
+  async insert(row: { id: string; key: string; name: string; summary: string; workItem: string; steps: string; expected: string }) {
     if ([...this.cases.values()].some((r) => r.key === row.key)) throw new PlatformError('conflict', 'A test case with that name already exists.');
     const now = new Date();
-    const saved: TestCaseRecord = { id: row.id, key: row.key, name: row.name, summary: row.summary, currentVersion: 1, updatedAt: now };
+    const saved: TestCaseRecord = { id: row.id, key: row.key, name: row.name, summary: row.summary, workItem: row.workItem, currentVersion: 1, updatedAt: now };
     this.cases.set(saved.id, saved);
     this.versionRows.set(saved.id, [{ version: 1, steps: row.steps, expected: row.expected, createdAt: now }]);
     return structuredClone(saved);

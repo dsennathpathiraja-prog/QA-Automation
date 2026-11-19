@@ -8,6 +8,7 @@ export interface TestCaseRecord {
   key: string;
   name: string;
   summary: string;
+  workItem: string;
   currentVersion: number;
   updatedAt: Date;
 }
@@ -37,7 +38,7 @@ export interface TestCaseRepository {
   list(): Promise<TestCaseRecord[]>;
   get(id: string): Promise<TestCaseRecord | undefined>;
   findKey(key: string): Promise<TestCaseRecord | undefined>;
-  insert(row: { id: string; key: string; name: string; summary: string; steps: string; expected: string }): Promise<TestCaseRecord>;
+  insert(row: { id: string; key: string; name: string; summary: string; workItem: string; steps: string; expected: string }): Promise<TestCaseRecord>;
   current(id: string): Promise<TestCaseVersionRecord | undefined>;
   versions(id: string): Promise<TestCaseVersionRecord[]>;
   saveVersion(id: string, version: number, steps: string, expected: string, summary: string): Promise<TestCaseRecord>;
@@ -54,6 +55,7 @@ export interface TestCaseView {
   key: string;
   name: string;
   summary: string;
+  workItem: string;
   version: number;
   steps: string;
   expected: string;
@@ -65,12 +67,13 @@ export interface TestCaseListItem {
   key: string;
   name: string;
   summary: string;
+  workItem: string;
   version: number;
   updatedAt: string;
 }
 
 const itemOf = (r: TestCaseRecord): TestCaseListItem => ({
-  id: r.id, key: r.key, name: r.name, summary: r.summary, version: r.currentVersion, updatedAt: r.updatedAt.toISOString(),
+  id: r.id, key: r.key, name: r.name, summary: r.summary, workItem: r.workItem, version: r.currentVersion, updatedAt: r.updatedAt.toISOString(),
 });
 
 export class TestCaseService {
@@ -92,14 +95,15 @@ export class TestCaseService {
     return (await this.d.cases.versions(id)).map((r) => ({ version: r.version, steps: r.steps, expected: r.expected, createdAt: r.createdAt.toISOString() }));
   }
 
-  async create(actor: ActorRef, input: { name: string; summary?: string; steps: string; expected: string }): Promise<TestCaseView> {
+  async create(actor: ActorRef, input: { name: string; summary?: string; steps: string; expected: string; workItem?: string }): Promise<TestCaseView> {
     const name = this.name(input.name);
-    const key = this.key(name);
+    const workItem = this.summary(input.workItem ?? '');
+    const key = this.key(workItem ? `${workItem} ${name}` : name);
     if (await this.d.cases.findKey(key)) throw new PlatformError('conflict', 'A test case with that name already exists.');
     const summary = this.summary(input.summary ?? '');
     const steps = this.steps(input.steps);
     const expected = this.expected(input.expected);
-    const row = await this.d.cases.insert({ id: randomUUID(), key, name, summary, steps, expected });
+    const row = await this.d.cases.insert({ id: randomUUID(), key, name, summary, workItem, steps, expected });
     await this.d.audit.append({ actorId: actor.id, action: 'testcase.create', subjectType: 'test_case', subjectId: row.id, detail: { key } });
     return this.get(row.id);
   }

@@ -57,7 +57,12 @@ export function WorkflowPage() {
     enabled: Boolean(activeId),
     refetchInterval: (q) => (q.state.data && (q.state.data.status === 'queued' || q.state.data.status === 'running') ? 1000 : false),
   });
-  const events = useQuery({ queryKey: ['execution', activeId, 'events'], queryFn: () => api.get(`/api/v1/executions/${activeId}/events`, ExecutionEventList), enabled: Boolean(activeId) && run.data?.status === 'succeeded' });
+  const events = useQuery({
+    queryKey: ['execution', activeId, 'events'],
+    queryFn: () => api.get(`/api/v1/executions/${activeId}/events`, ExecutionEventList),
+    enabled: Boolean(activeId),
+    refetchInterval: () => (run.data?.status === 'queued' || run.data?.status === 'running' ? 1000 : false),
+  });
 
   const patch = (next: Def) => setEdited(next);
   const steps = def?.spec?.steps ?? [];
@@ -142,7 +147,13 @@ export function WorkflowPage() {
                 </form>
               )}
               {run.data && <p className="mt-3">Run {run.data.id.slice(0, 8)} is {run.data.status}, at step {run.data.stepIndex}. A queued run moves when the worker is up.</p>}
-              {events.data && events.data.items.length > 0 && <p className="mt-2">Events: {events.data.items.map((e) => e.kind).join(', ')}</p>}
+              {events.data && events.data.items.some((event) => event.kind === 'step.completed' || event.kind === 'step.failed') && (
+                <ul className="mt-3 space-y-2">
+                  {events.data.items.filter((event) => event.kind === 'step.completed' || event.kind === 'step.failed').map((event) => (
+                    <li key={event.seq}>{event.kind === 'step.failed' ? 'Failed' : 'Done'}. {typeof event.payload.summary === 'string' && event.payload.summary ? event.payload.summary : String(event.payload.stepId ?? event.kind)}</li>
+                  ))}
+                </ul>
+              )}
             </Card>
           )}
           <div className="flex flex-wrap gap-2">

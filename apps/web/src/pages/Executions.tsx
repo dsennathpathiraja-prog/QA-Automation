@@ -32,6 +32,10 @@ export function Executions() {
     queryKey: ['execution', selected, 'events'],
     queryFn: () => api.get(`/api/v1/executions/${selected}/events`, ExecutionEventList),
     enabled: Boolean(selected),
+    refetchInterval: () => {
+      const status = runs.data?.items.find((item) => item.id === selected)?.status;
+      return status === 'queued' || status === 'running' ? 1000 : false;
+    },
   });
   const control = useMutation({
     mutationFn: (command: 'pause' | 'resume' | 'cancel') => api.post(`/api/v1/executions/${selected}/${command}`, {}, ExecutionSchema),
@@ -78,8 +82,14 @@ export function Executions() {
             )}
             {control.isError && <div className="mt-3"><ErrorNotice message={errorText(control.error, 'That command was rejected.')} /></div>}
             {events.isError && <div className="mt-3"><ErrorNotice message="The step history could not be loaded." onRetry={() => void events.refetch()} /></div>}
-            {events.data && events.data.items.length > 0 && <p className="mt-3">Events: {events.data.items.map((event) => event.kind).join(', ')}</p>}
-            {events.data && events.data.items.length === 0 && <p className="mt-3">This run has no recorded events yet.</p>}
+            {events.data && (
+              <ul className="mt-3 space-y-2">
+                {events.data.items.filter((event) => event.kind === 'step.completed' || event.kind === 'step.failed').map((event) => (
+                  <li key={event.seq}>{event.kind === 'step.failed' ? 'Failed' : 'Done'}. {typeof event.payload.summary === 'string' && event.payload.summary ? event.payload.summary : String(event.payload.stepId ?? event.kind)}</li>
+                ))}
+                {events.data.items.every((event) => event.kind !== 'step.completed' && event.kind !== 'step.failed') && <li>This run has no recorded steps yet.</li>}
+              </ul>
+            )}
           </Card>
         )}
       </div>

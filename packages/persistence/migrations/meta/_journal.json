@@ -64,6 +64,13 @@
       "when": 1795078200000,
       "tag": "0008_test_case_library",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795079000000,
+      "tag": "0009_test_case_work_item",
+      "breakpoints": true
     }
   ]
 }

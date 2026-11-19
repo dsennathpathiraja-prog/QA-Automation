@@ -9,6 +9,7 @@ const caseOf = (r: typeof testCase.$inferSelect): TestCaseRecord => ({
   key: r.key,
   name: r.name,
   summary: r.summary,
+  workItem: r.workItem,
   currentVersion: r.currentVersion,
   updatedAt: r.updatedAt,
 });
@@ -43,10 +44,10 @@ export class PgTestCaseRepository implements TestCaseRepository {
     return row && caseOf(row);
   }
 
-  async insert(row: { id: string; key: string; name: string; summary: string; steps: string; expected: string }) {
+  async insert(row: { id: string; key: string; name: string; summary: string; workItem: string; steps: string; expected: string }) {
     try {
       return await this.db.transaction(async (tx) => {
-        const [saved] = await tx.insert(testCase).values({ id: row.id, key: row.key, name: row.name, summary: row.summary }).returning();
+        const [saved] = await tx.insert(testCase).values({ id: row.id, key: row.key, name: row.name, summary: row.summary, workItem: row.workItem }).returning();
         await tx.insert(testCaseVersion).values({ testCaseId: row.id, version: 1, steps: row.steps, expected: row.expected });
         return caseOf(saved!);
       });

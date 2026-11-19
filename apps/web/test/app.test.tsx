@@ -68,11 +68,12 @@ describe('route guard', () => {
     renderApp('/test-cases', {
       me: { status: 200, body: meFor('business_user') },
       routes: {
-        '/api/v1/test-cases': { status: 200, body: { items: [{ id: '22222222-2222-4222-8222-222222222222', key: 'login', name: 'Login', summary: 'A customer signs in', version: 1, updatedAt: '2026-11-19T09:00:00.000Z' }] } },
+        '/api/v1/test-cases': { status: 200, body: { items: [{ id: '22222222-2222-4222-8222-222222222222', key: 'login', name: 'Login', summary: 'A customer signs in', workItem: 'QA-1', version: 1, updatedAt: '2026-11-19T09:00:00.000Z' }] } },
         '/api/v1/test-collections': { status: 200, body: { items: [] } },
       },
     });
     expect(await screen.findByText('Login')).toBeTruthy();
+    expect(screen.getByText(/QA-1/)).toBeTruthy();
     expect(screen.getByText(/not written to Squash/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Save test case' })).toBeNull();
   });
@@ -83,13 +84,13 @@ describe('route guard', () => {
       me: { status: 200, body: meFor('qa_engineer') },
       routes: {
         '/api/v1/executions': { status: 200, body: { items: [{ id: '1436518e-0000-4000-8000-000000000001', workflowId: '11111111-1111-4111-8111-111111111111', workflowName: 'Checkout', status: 'succeeded', stepIndex: 10, createdAt: '2026-11-18T10:00:00.000Z', updatedAt: '2026-11-18T10:05:00.000Z' }] } },
-        '/api/v1/executions/1436518e-0000-4000-8000-000000000001/events': { status: 200, body: { items: [{ seq: 1, kind: 'started', at: '2026-11-18T10:00:00.000Z', payload: {} }] } },
+        '/api/v1/executions/1436518e-0000-4000-8000-000000000001/events': { status: 200, body: { items: [{ seq: 1, kind: 'step.completed', at: '2026-11-18T10:00:00.000Z', payload: { stepId: 'read_story', summary: 'Read work item QA-1.' } }] } },
       },
     });
     expect(await screen.findByText('Checkout')).toBeTruthy();
     expect(screen.getByText(/Succeeded/)).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Checkout' }));
-    expect((await screen.findByRole('region', { name: 'Selected run' })).textContent).toMatch(/started/);
+    expect((await screen.findByRole('region', { name: 'Selected run' })).textContent).toMatch(/Read work item QA-1/);
   });
 });
 

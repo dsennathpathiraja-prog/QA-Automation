@@ -34,7 +34,7 @@ d('PostgreSQL (real server)', () => {
 
   it('serialises concurrent migrators from separate connections', async () => {
     const results = await Promise.all(Array.from({ length: 5 }, () => migrate(conn.db)));
-    expect(results.flatMap((r) => r.applied).sort()).toEqual(['0000_baseline', '0001_append_only_guards', '0002_llm_call_log', '0003_llm_call_log_append_only', '0004_connector_management', '0005_workflow_draft', '0006_workflow_engine', '0007_environment_reachability', '0008_test_case_library']);
+    expect(results.flatMap((r) => r.applied).sort()).toEqual(['0000_baseline', '0001_append_only_guards', '0002_llm_call_log', '0003_llm_call_log_append_only', '0004_connector_management', '0005_workflow_draft', '0006_workflow_engine', '0007_environment_reachability', '0008_test_case_library', '0009_test_case_work_item']);
     await seedRoles(conn.db);
     await seedDefaultGroupMappings(conn.db);
     expect(await pingDb(conn.db)).toBe(true);

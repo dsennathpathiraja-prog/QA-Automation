@@ -68,6 +68,7 @@ export function TestCases() {
               {cases.data.items.map((item) => (
                 <li key={item.id}>
                   <Link to="/test-cases/$id" params={{ id: item.id }} className="text-blue-700 underline dark:text-blue-300">{item.name}</Link>
+                  {item.workItem ? ` · ${item.workItem}` : ''}
                   {' · version '}{item.version}
                   {item.summary ? ` · ${item.summary}` : ''}
                 </li>

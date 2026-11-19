@@ -6,7 +6,7 @@ describe('test case library storage', () => {
   it('keeps the first version and adds the next one', async () => {
     const { db } = await freshDb({ seed: false });
     const cases = new PgTestCaseRepository(db);
-    const created = await cases.insert({ id: '11111111-1111-4111-8111-111111111111', key: 'login', name: 'Login', summary: 'A customer signs in', steps: 'Open the page', expected: 'The form is shown' });
+    const created = await cases.insert({ id: '11111111-1111-4111-8111-111111111111', key: 'login', name: 'Login', summary: 'A customer signs in', workItem: 'QA-1', steps: 'Open the page', expected: 'The form is shown' });
     expect(created.currentVersion).toBe(1);
     const revised = await cases.saveVersion(created.id, 2, 'Open the page and submit', 'The account page opens', 'A customer signs in');
     expect(revised.currentVersion).toBe(2);

@@ -446,6 +446,7 @@ export const testCase = pgTable(
     key: text('key').notNull(),
     name: text('name').notNull(),
     summary: text('summary').notNull().default(''),
+    workItem: text('work_item').notNull().default(''),
     currentVersion: integer('current_version').notNull().default(1),
     deletedAt: ts('deleted_at'),
     createdAt: ts('created_at').notNull().defaultNow(),

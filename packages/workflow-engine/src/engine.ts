@@ -7,6 +7,7 @@ export interface ClaimedRun {
   phase: 'pending' | 'effect';
   control: 'pause' | 'cancel' | null;
   definition: unknown;
+  params?: Record<string, unknown>;
 }
 
 export interface RunPatch {
@@ -24,6 +25,8 @@ export interface EngineStore {
   recordEffect(id: string, stepId: string, key: string): Promise<'new' | 'exists'>;
   save(id: string, patch: RunPatch): Promise<void>;
   append(id: string, kind: string, payload: Record<string, unknown>): Promise<void>;
+  /** Completed step outputs, keyed later by step id. Omitted by stores that only record the effect. */
+  stepsDone?(id: string): Promise<{ stepId: string; outputs: Record<string, unknown> }[]>;
 }
 
 export interface TickOptions {
@@ -32,11 +35,13 @@ export interface TickOptions {
   leaseMs?: number;
   /** Commit the side effect, then die before the step is marked complete. */
   crashAfterEffect?: boolean;
+  /** Runs after a new effect is recorded. A repeated effect skips this so the work happens once. */
+  perform?(step: { id: string; type: string; params: Record<string, unknown>; prior: Record<string, Record<string, unknown>> }): Promise<{ summary: string; outputs?: Record<string, unknown> }>;
 }
 
-const enabledSteps = (definition: unknown): { id: string }[] => {
-  const steps = (definition as { spec?: { steps?: { id?: string; enabled?: boolean }[] } } | null)?.spec?.steps ?? [];
-  return steps.filter((s) => s && s.enabled !== false && s.id).map((s) => ({ id: String(s.id) }));
+const enabledSteps = (definition: unknown): { id: string; type: string }[] => {
+  const steps = (definition as { spec?: { steps?: { id?: string; type?: string; enabled?: boolean }[] } } | null)?.spec?.steps ?? [];
+  return steps.filter((s) => s && s.enabled !== false && s.id).map((s) => ({ id: String(s.id), type: String(s.type ?? s.id) }));
 };
 
 /**
@@ -66,10 +71,26 @@ export async function tick(store: EngineStore, opts: TickOptions): Promise<'busy
   }
   const effect = await store.recordEffect(run.id, step.id, step.id);
   if (opts.crashAfterEffect && effect === 'new') throw new Error('worker killed');
+  let summary = '';
+  let outputs: Record<string, unknown> = {};
+  if (opts.perform && effect === 'new') {
+    const doneSteps = store.stepsDone ? await store.stepsDone(run.id) : [];
+    const prior = Object.fromEntries(doneSteps.map((item) => [item.stepId, item.outputs]));
+    try {
+      const result = await opts.perform({ id: step.id, type: step.type, params: run.params ?? {}, prior });
+      summary = result.summary;
+      outputs = result.outputs ?? {};
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'The step failed.';
+      await store.save(run.id, { status: 'failed', ...clear });
+      await store.append(run.id, 'step.failed', { stepId: step.id, message });
+      return 'busy';
+    }
+  }
   const next = run.stepIndex + 1;
   const done = next >= steps.length;
   await store.save(run.id, { stepIndex: next, phase: 'pending', status: done ? 'succeeded' : 'running', ...(done ? clear : {}) });
-  await store.append(run.id, 'step.completed', { stepId: step.id, repeated: effect === 'exists' });
+  await store.append(run.id, 'step.completed', { stepId: step.id, repeated: effect === 'exists', summary, outputs });
   if (done) await store.append(run.id, 'succeeded', {});
   return 'busy';
 }
