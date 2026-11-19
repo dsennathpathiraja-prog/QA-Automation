@@ -1,8 +1,8 @@
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { PlatformError } from '@qa/domain';
-import type { CollectionCaseRecord, TestCaseRecord, TestCaseRepository, TestCaseVersionRecord, TestCollectionRecord } from '@qa/application';
+import type { CollectionCaseRecord, TestCaseRecord, TestCaseRepository, TestCaseVersionRecord, TestCollectionRecord, WorkItemRunRecord } from '@qa/application';
 import type { Db } from './db';
-import { testCase, testCaseVersion, testCollection, testCollectionCase } from './schema';
+import { testCase, testCaseVersion, testCollection, testCollectionCase, workItemExecution } from './schema';
 
 const caseOf = (r: typeof testCase.$inferSelect): TestCaseRecord => ({
   id: r.id,
@@ -126,5 +126,15 @@ export class PgTestCaseRepository implements TestCaseRepository {
   async removeCase(collectionId: string, testCaseId: string) {
     const removed = await this.db.delete(testCollectionCase).where(and(eq(testCollectionCase.collectionId, collectionId), eq(testCollectionCase.testCaseId, testCaseId))).returning();
     return removed.length > 0;
+  }
+
+  async listWorkItemRuns() {
+    const rows = await this.db.select().from(workItemExecution).orderBy(desc(workItemExecution.createdAt));
+    return rows.map((r): WorkItemRunRecord => ({ id: r.id, workItem: r.workItem, environmentId: r.environmentId, environmentName: r.environmentName, caseCount: r.caseCount, createdAt: r.createdAt }));
+  }
+
+  async insertWorkItemRun(row: { id: string; workItem: string; environmentId: string; environmentName: string; caseCount: number }) {
+    const [saved] = await this.db.insert(workItemExecution).values(row).returning();
+    return { id: saved!.id, workItem: saved!.workItem, environmentId: saved!.environmentId, environmentName: saved!.environmentName, caseCount: saved!.caseCount, createdAt: saved!.createdAt };
   }
 }

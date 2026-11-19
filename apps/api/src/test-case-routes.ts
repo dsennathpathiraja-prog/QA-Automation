@@ -1,9 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import {
-  AddCollectionCaseRequest, CreateTestCaseRequest, CreateTestCollectionRequest, ReviseTestCaseRequest, TestCaseListResponse, TestCaseSchema, TestCaseVersionList, TestCollectionListResponse, TestCollectionSchema,
+  AddCollectionCaseRequest, CreateTestCaseRequest, CreateTestCollectionRequest, ReviseTestCaseRequest, StartWorkItemExecutionRequest, TestCaseListResponse, TestCaseSchema, TestCaseVersionList, TestCollectionListResponse, TestCollectionSchema, WorkItemExecutionBoard, WorkItemExecutionSchema,
 } from '@qa/contracts';
 import { PlatformError } from '@qa/domain';
-import type { TestCaseService } from '@qa/application';
+import type { EnvironmentService, TestCaseService } from '@qa/application';
 import { requires } from '@qa/security';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -20,7 +20,7 @@ const idOf = (raw: unknown, what: string) => {
   return id;
 };
 
-export function registerTestCaseRoutes(app: FastifyInstance, cases: TestCaseService) {
+export function registerTestCaseRoutes(app: FastifyInstance, cases: TestCaseService, environments?: EnvironmentService) {
   app.get('/api/v1/test-cases', { config: { access: requires('testcase.view') } }, async () => TestCaseListResponse.parse({ items: await cases.list() }));
 
   app.post('/api/v1/test-cases', { config: { access: requires('testcase.edit') } }, async (req, reply) => {
@@ -55,5 +55,20 @@ export function registerTestCaseRoutes(app: FastifyInstance, cases: TestCaseServ
     const params = req.params as { id: string; caseId: string };
     await cases.removeFromCollection({ id: req.principal!.id }, idOf(params.id, 'Collection'), idOf(params.caseId, 'Test case'));
     return reply.code(204).send();
+  });
+
+  app.get('/api/v1/work-item-executions', { config: { access: requires('execution.start') } }, async () => {
+    const board = await cases.executionBoard();
+    const listed = environments ? (await environments.list()).filter((item) => item.enabled && item.selectable) : [];
+    return WorkItemExecutionBoard.parse({ ...board, environments: listed.map((item) => ({ id: item.id, name: item.name, kind: item.kind })) });
+  });
+
+  app.post('/api/v1/work-item-executions', { config: { access: requires('execution.start') } }, async (req, reply) => {
+    const input = body(StartWorkItemExecutionRequest, req.body, 'start work item execution');
+    if (!environments) throw new PlatformError('validation', 'No environments are configured.');
+    const env = await environments.get(input.environmentId);
+    if (!env.enabled || !env.selectable) throw new PlatformError('validation', 'That environment cannot be used.');
+    const created = await cases.startWorkItemExecution({ id: req.principal!.id }, { workItem: input.workItem, environmentId: env.id, environmentName: env.name });
+    return reply.code(201).send(WorkItemExecutionSchema.parse(created));
   });
 }

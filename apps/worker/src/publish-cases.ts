@@ -39,25 +39,22 @@ export async function publishGeneratedCases(input: {
         squashError = e instanceof PlatformError ? e.message : 'Squash did not accept the test case.';
       }
     }
-    try {
-      await input.testCases.create(
-        { id: 'worker' },
-        {
-          name: item.name,
-          steps: item.steps,
-          expected: item.expected,
-          workItem: item.workItem || workItem,
-          summary: squashId ? `Squash ${squashId}` : item.reference,
-        },
-      );
-    } catch (e) {
-      if (!(e instanceof PlatformError) || e.errorClass !== 'conflict') throw e;
-    }
+    await input.testCases.fileUnderWorkItem(
+      { id: 'worker' },
+      {
+        name: item.name,
+        steps: item.steps,
+        expected: item.expected,
+        workItem: item.workItem || workItem,
+        summary: squashId ? `Squash ${squashId}` : item.reference,
+      },
+    );
   }
   const count = input.cases.length;
   const noun = `test case${count === 1 ? '' : 's'}`;
-  if (!input.squash) return { summary: `Stored ${count} ${noun} for ${workItem} in Test Cases. No Squash connector is selected on this workflow.` };
-  if (squashError && squashIds.length === 0) return { summary: `Stored ${count} ${noun} for ${workItem} in Test Cases. Squash did not store them: ${squashError}` };
-  if (squashError) return { summary: `Stored ${count} ${noun} for ${workItem} in Test Cases. Squash stored ${squashIds.length} and then stopped: ${squashError}` };
-  return { summary: `Stored ${count} ${noun} for ${workItem} in Test Cases and in Squash.` };
+  const kept = `Stored ${count} ${noun} for ${workItem} under that work item`;
+  if (!input.squash) return { summary: `${kept} in Test Cases. No Squash connector is selected on this workflow.` };
+  if (squashError && squashIds.length === 0) return { summary: `${kept} in Test Cases. Squash did not store them: ${squashError}` };
+  if (squashError) return { summary: `${kept} in Test Cases. Squash stored ${squashIds.length} and then stopped: ${squashError}` };
+  return { summary: `${kept} in Test Cases and in Squash.` };
 }

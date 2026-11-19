@@ -65,7 +65,8 @@ export function WorkflowPage() {
   });
 
   const patch = (next: Def) => setEdited(next);
-  const steps = def?.spec?.steps ?? [];
+  const generation = workflow.data?.type === 'requirement-validation';
+  const steps = (def?.spec?.steps ?? []).filter((s) => !(generation && ['rv.execute-tests', 'rv.sync-results', 'rv.qa-report'].includes(s.type)));
   const enabled = steps.filter((s) => s.enabled !== false);
 
   return (
@@ -82,6 +83,7 @@ export function WorkflowPage() {
           </div>
           {tab === 'steps' && (
             <Card label="Steps">
+              {generation && <p className="mb-3">This workflow ends when the test cases are stored in Squash. Execution is a later action on Executions, for one work item and one environment.</p>}
               {steps.length === 0 && <p>This draft has no steps. Create it from a template to get the guided list.</p>}
               <ul className="space-y-2">
                 {steps.map((s) => (
@@ -137,7 +139,8 @@ export function WorkflowPage() {
               {workflow.data?.status !== 'published' && <p>Publish this workflow before starting a run. The worker runs the steps; this page only asks it to start.</p>}
               {workflow.data?.status === 'published' && session.can('execution.start') && (
                 <form onSubmit={(e) => { e.preventDefault(); start.mutate(); }}>
-                  {(def.spec?.parameters ?? []).filter((p) => p.required && (p.pinned === undefined || p.pinned === null)).map((p) => (
+                  {generation && <p className="mb-3">Starting this run creates the test cases. Choose the environment on Executions when you run the work item.</p>}
+                  {(def.spec?.parameters ?? []).filter((p) => p.required && (p.pinned === undefined || p.pinned === null) && !(generation && p.name === 'environment')).map((p) => (
                     <Field key={p.name} id={`param-${p.name}`} label={`${p.name} (${p.type})`} hint={p.type === 'work-item-ref' ? 'First line is the work item id. Add a heading Acceptance criteria, then one criterion on each line. Each line becomes a test case.' : undefined}>
                       {p.type === 'work-item-ref'
                         ? <textarea id={`param-${p.name}`} rows={6} className={fieldClass} value={params[p.name] ?? ''} onChange={(e) => setParams({ ...params, [p.name]: e.target.value })} />

@@ -1,11 +1,12 @@
 import { PlatformError } from '@qa/domain';
-import type { TestCaseRecord, TestCaseRepository, TestCaseVersionRecord } from '@qa/application';
+import type { TestCaseRecord, TestCaseRepository, TestCaseVersionRecord, WorkItemRunRecord } from '@qa/application';
 
 export class InMemoryTestCaseRepository implements TestCaseRepository {
   readonly cases = new Map<string, TestCaseRecord>();
   readonly versionRows = new Map<string, TestCaseVersionRecord[]>();
   readonly collections = new Map<string, { id: string; name: string; description: string }>();
   readonly members = new Map<string, { testCaseId: string; position: number }[]>();
+  readonly workItemRuns: WorkItemRunRecord[] = [];
 
   async list() {
     return [...this.cases.values()].sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()).map((r) => structuredClone(r));
@@ -93,5 +94,15 @@ export class InMemoryTestCaseRepository implements TestCaseRepository {
     const next = members.filter((m) => m.testCaseId !== testCaseId);
     this.members.set(collectionId, next);
     return next.length !== members.length;
+  }
+
+  async listWorkItemRuns() {
+    return this.workItemRuns.map((r) => structuredClone(r));
+  }
+
+  async insertWorkItemRun(row: { id: string; workItem: string; environmentId: string; environmentName: string; caseCount: number }) {
+    const saved: WorkItemRunRecord = { ...row, createdAt: new Date() };
+    this.workItemRuns.unshift(saved);
+    return structuredClone(saved);
   }
 }

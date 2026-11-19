@@ -481,6 +481,23 @@ export const testCollection = pgTable(
   (t) => [uniqueIndex('test_collection_name_uq').on(t.name).where(sql`${t.deletedAt} is null`)],
 );
 
+export const workItemExecution = pgTable(
+  'work_item_execution',
+  {
+    id: id(),
+    workItem: text('work_item').notNull(),
+    environmentId: uuid('environment_id').notNull(),
+    environmentName: text('environment_name').notNull(),
+    caseCount: integer('case_count').notNull(),
+    status: text('status').notNull().default('prepared'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [
+    index('work_item_execution_created_idx').on(t.createdAt),
+    check('work_item_execution_status_ck', sql`${t.status} in ('prepared')`),
+  ],
+);
+
 export const testCollectionCase = pgTable(
   'test_collection_case',
   {

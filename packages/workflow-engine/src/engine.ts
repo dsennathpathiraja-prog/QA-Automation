@@ -39,9 +39,12 @@ export interface TickOptions {
   perform?(step: { id: string; type: string; runId: string; params: Record<string, unknown>; prior: Record<string, Record<string, unknown>> }): Promise<{ summary: string; outputs?: Record<string, unknown> }>;
 }
 
+/** Requirement validation ends when the cases are stored. Execution is a later action on the work item. */
+const AFTER_CASES = new Set(['rv.execute-tests', 'rv.sync-results', 'rv.qa-report']);
+
 const enabledSteps = (definition: unknown): { id: string; type: string }[] => {
   const steps = (definition as { spec?: { steps?: { id?: string; type?: string; enabled?: boolean }[] } } | null)?.spec?.steps ?? [];
-  return steps.filter((s) => s && s.enabled !== false && s.id).map((s) => ({ id: String(s.id), type: String(s.type ?? s.id) }));
+  return steps.filter((s) => s && s.enabled !== false && s.id && !AFTER_CASES.has(String(s.type ?? s.id))).map((s) => ({ id: String(s.id), type: String(s.type ?? s.id) }));
 };
 
 /**

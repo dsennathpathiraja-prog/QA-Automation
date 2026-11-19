@@ -2,7 +2,7 @@ import {
   TestCaseListResponse, TestCaseSchema, TestCaseVersionList, TestCollectionListResponse, TestCollectionSchema,
 } from '@qa/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate, useParams } from '@tanstack/react-router';
+import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useApi } from '../api/context';
 import { useSession } from '../auth/session';
@@ -14,77 +14,45 @@ const collectionsKey = ['test-collections'] as const;
 
 export function TestCases() {
   const api = useApi();
-  const session = useSession();
-  const qc = useQueryClient();
-  const navigate = useNavigate();
   const cases = useQuery({ queryKey: casesKey, queryFn: () => api.get('/api/v1/test-cases', TestCaseListResponse) });
   const collections = useQuery({ queryKey: collectionsKey, queryFn: () => api.get('/api/v1/test-collections', TestCollectionListResponse) });
-  const [name, setName] = useState('');
-  const [summary, setSummary] = useState('');
-  const [steps, setSteps] = useState('');
-  const [expected, setExpected] = useState('');
-  const [collectionName, setCollectionName] = useState('');
-  const canEdit = session.can('testcase.edit');
-  const add = useMutation({
-    mutationFn: () => api.post('/api/v1/test-cases', { name, summary, steps, expected }, TestCaseSchema),
-    onSuccess: async (created) => {
-      setName('');
-      setSummary('');
-      setSteps('');
-      setExpected('');
-      await qc.invalidateQueries({ queryKey: casesKey });
-      await navigate({ to: '/test-cases/$id', params: { id: created.id } });
-    },
-  });
-  const addCollection = useMutation({
-    mutationFn: () => api.post('/api/v1/test-collections', { name: collectionName }, TestCollectionSchema),
-    onSuccess: async (created) => {
-      setCollectionName('');
-      await qc.invalidateQueries({ queryKey: collectionsKey });
-      await navigate({ to: '/test-collections/$id', params: { id: created.id } });
-    },
-  });
+  const items = cases.data?.items ?? [];
+  const groups = new Map<string, typeof items>();
+  for (const item of items) {
+    const key = item.workItem || 'No work item';
+    groups.set(key, [...(groups.get(key) ?? []), item]);
+  }
   return (
     <>
       <PageHeader title="Test Cases" description="Cases written by the Playwright test generator. A requirement-validation run stores them here and in Squash under the work item." />
       <div className="space-y-4">
-        {canEdit && (
-          <Card label="New test case">
-            <form onSubmit={(e) => { e.preventDefault(); add.mutate(); }}>
-              <Field id="case-name" label="Name"><input id="case-name" required className={fieldClass} value={name} onChange={(e) => setName(e.target.value)} /></Field>
-              <Field id="case-summary" label="Summary"><input id="case-summary" className={fieldClass} value={summary} onChange={(e) => setSummary(e.target.value)} /></Field>
-              <Field id="case-steps" label="Steps"><textarea id="case-steps" required rows={4} className={fieldClass} value={steps} onChange={(e) => setSteps(e.target.value)} /></Field>
-              <Field id="case-expected" label="Expected result"><textarea id="case-expected" required rows={3} className={fieldClass} value={expected} onChange={(e) => setExpected(e.target.value)} /></Field>
-              <button type="submit" className={`${primaryButtonClass} mt-3`} disabled={add.isPending}>Save test case</button>
-              {add.isError && <div className="mt-3"><ErrorNotice message={errorText(add.error, 'The test case could not be saved.')} /></div>}
-            </form>
-          </Card>
-        )}
-        <Card label="Test cases">
+        <Card label="By work item">
           {cases.isError && <ErrorNotice message="Test cases could not be loaded." onRetry={() => void cases.refetch()} />}
-          {cases.data && cases.data.items.length === 0 && <p>No test cases yet.</p>}
-          {cases.data && cases.data.items.length > 0 && (
-            <ul className="space-y-2">
-              {cases.data.items.map((item) => (
-                <li key={item.id}>
-                  <Link to="/test-cases/$id" params={{ id: item.id }} className="text-blue-700 underline dark:text-blue-300">{item.name}</Link>
-                  {item.workItem ? ` · ${item.workItem}` : ''}
-                  {' · version '}{item.version}
-                  {item.summary ? ` · ${item.summary}` : ''}
-                </li>
-              ))}
-            </ul>
-          )}
+          {cases.data && items.length === 0 && <p>No test cases yet. Run a requirement-validation workflow. It stores the generated cases under the work item.</p>}
+          {[...groups].map(([workItem, group]) => {
+            const collection = collections.data?.items.find((item) => item.name === workItem);
+            return (
+              <section key={workItem} className="mt-4">
+                <h2 className="font-medium">{workItem}</h2>
+                <ul className="mt-2 space-y-2">
+                  {group.map((item) => (
+                    <li key={item.id}>
+                      <Link to="/test-cases/$id" params={{ id: item.id }} className="text-blue-700 underline dark:text-blue-300">{item.name}</Link>
+                      {' · version '}{item.version}
+                      {item.summary ? ` · ${item.summary}` : ''}
+                    </li>
+                  ))}
+                </ul>
+                {collection && (
+                  <p className="mt-2">
+                    <Link to="/test-collections/$id" params={{ id: collection.id }} className="text-blue-700 underline dark:text-blue-300">Open the collection</Link>
+                    {' · '}{collection.size} {collection.size === 1 ? 'case' : 'cases'}
+                  </p>
+                )}
+              </section>
+            );
+          })}
         </Card>
-        {canEdit && (
-          <Card label="New collection">
-            <form onSubmit={(e) => { e.preventDefault(); addCollection.mutate(); }}>
-              <Field id="collection-name" label="Name"><input id="collection-name" required className={fieldClass} value={collectionName} onChange={(e) => setCollectionName(e.target.value)} /></Field>
-              <button type="submit" className={`${primaryButtonClass} mt-3`} disabled={addCollection.isPending}>Save collection</button>
-              {addCollection.isError && <div className="mt-3"><ErrorNotice message={errorText(addCollection.error, 'The collection could not be saved.')} /></div>}
-            </form>
-          </Card>
-        )}
         <Card label="Collections">
           {collections.isError && <ErrorNotice message="Collections could not be loaded." onRetry={() => void collections.refetch()} />}
           {collections.data && collections.data.items.length === 0 && <p>No collections yet.</p>}

@@ -1,54 +1,29 @@
-# Phases for the requirement-validation plan
+# Phases for requirement validation
 
-Written 19 Nov 2026. This splits [requirement-validation-implementation.md](requirement-validation-implementation.md) into phases that follow Phase 6. A phase starts when the one before it is confirmed. The slice numbers below are the numbers in that plan.
+Written 19 Nov 2026. Updated the same day after the screens were compared with the agreed flow.
 
-Phases 1 to 5 stay as they are. Phase 6 stays the current phase until the generated cases are confirmed in Test Cases and in Squash.
+A requirement-validation workflow ends when the test cases are created and stored in Squash. The cases stay under the work item. Execution is a later action, one work item at a time, and the environment is chosen then. Regression comes after that: it runs the cases already stored in Squash and does not generate new ones.
 
-The menu still shows older phase numbers on AI Agents, AI Models, Automation Mapping, Evidence, and Reports. Those labels change when the phase that builds the screen is started.
+The earlier draft of this page put execution, screenshots, and the report inside the same workflow, as Phases 7 to 11. That is not the product. Those steps are no longer part of the requirement-validation template, and an already published workflow stops after the cases are stored.
 
-## Phase 6 — Executions and stored cases
-Already started. Executions lists runs and their Done lines. Test Cases keeps the library. A requirement-validation run writes scenarios with `playwright-test-planner`, writes Playwright tests with `playwright-test-generator`, and stores the cases in Test Cases and in Squash.
+## Phase 6 — Store the cases, then execute by work item
 
-This phase adds no new slice. It closes when a published run is confirmed: the Done lines are visible, and the cases for that work item are in Test Cases and in Squash.
+This is the current phase.
 
-## Phase 7 — Read the work item and call the agents
-Slices 1 and 2.
+A requirement-validation run reads the story, plans with `playwright-test-planner`, and writes the cases with `playwright-test-generator`. Publish stores them in Test Cases, in a collection named for the work item, and in Squash when that connector has a READ_WRITE token. The run stops there. It does not walk empty execute, sync, or report steps, including on a workflow that was published before this change. Starting the run does not ask for an environment.
 
-The Run tab takes a work item id. The worker reads the description, acceptance criteria, and attachments from the bound Azure Boards or Jira connector. With no work-item connector, the typed story stays the input.
+Test Cases opens on the work items. It does not ask anyone to type a case by hand.
 
-When a local model is configured, `playwright-test-planner` and `playwright-test-generator` answer in a fixed shape. A bad answer is repaired once, then the stage fails. With no model, the current rules stay and the Done line says the plan was written from the story. The AI Agents and AI Models screens leave their placeholders in this phase. The run is not blocked on those screens.
+Executions asks for the work item and the environment. That row is marked prepared. The runner does not execute the Playwright file yet, so the page does not say the tests passed and it does not show a screenshot. Older workflow runs stay on the same page, labelled as the runs that created the cases.
 
-Done when a run of a real work item id shows that work item's criteria, and a run with a local model still stores the cases in Test Cases and in Squash.
+This phase closes when a new run is confirmed: the cases for that work item are in Test Cases and in Squash. Run 1436518e, from 18 Nov 2026, is the old empty success. Rebuilding does not change that row.
 
-## Phase 8 — Explore the UI and the source
-Slices 3, 4, and 5. Slices 3 and 4 are built together. Slice 5 starts after both.
+## After Phase 6
 
-The Playwright browser opens the environment, follows the plan, and keeps a screenshot for each scenario. It opens only the addresses on the browser connector. GitHub or Azure DevOps is read for the matching files. The repository stays read-only. The generator then receives the story, the UI notes, and the source notes. The Squash reference for a scenario stays the same.
+Execute the stored cases for one work item on the environment chosen on Executions. Each case gets a real status and a screenshot, and that result is written to Squash. Until that exists, an execution stays prepared.
 
-Done when the UI Done line names the pages, the source Done line names the files, each scenario has a screenshot from the walk, and a changed finding changes the generated test text.
+Regression is the next workflow. It reads the system's cases from Squash and runs them. It does not plan or generate.
 
-## Phase 9 — Keep the Playwright file
-Slice 6. This is the Automation Mapping screen.
+Reading a work item from Azure Boards or Jira, calling a model for the two agents, walking the UI, and reading the source are how the generated cases get better. They happen before the cases are stored. Source repositories stay read-only. No healer rewrites a failing test.
 
-The generator writes `tests/{application}/{work-item}.spec.js` into the platform workspace. The file may import `@playwright/test` and the platform helper only. The work item, the Squash case id, the file path, and the Playwright test name are stored together and shown on the test case. The file is never written to the connected repository.
-
-Done when the test case shows that path and the Squash id, and the workspace holds the file.
-
-## Phase 10 — Run the file and send the result
-Slices 7 and 8. This is the Evidence screen, and Executions gains the screenshot for each test.
-
-The runner runs the workspace file against the selected environment. Each test gets one status and one screenshot: Passed, Failed, Blocked, or Skipped. The worker records that execution in Squash, sets the status, and uploads the screenshot. The same run does not create a second execution for the same case. If Squash has no iteration the token can use, the Done line says so and the screenshot stays on Executions.
-
-Done when Executions and the Squash case show the same status and the same screenshot for that work item.
-
-## Phase 11 — QA report
-Slice 9. This is the Reports screen for this workflow.
-
-The report counts the acceptance criteria, the scenarios, and the results. It links the screenshots and says whether Squash accepted the status. It is stored with the run and opened from that run.
-
-Done when the report matches the statuses and the screenshots from Phase 10.
-
-## After this sequence
-Regression stays its own workflow. It runs cases already in Squash and does not plan or generate. No healer rewrites a failing test. Source repositories stay read-only.
-
-Kubernetes was called Phase 11 in the earlier notes. It is Phase 12, after this sequence.
+Kubernetes stays later, after this sequence. It was called Phase 11 in the earlier notes and Phase 12 in the notes that followed.

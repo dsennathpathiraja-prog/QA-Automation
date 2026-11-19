@@ -288,6 +288,7 @@ export class WorkflowService {
     const def = asDef(version.definition);
     for (const p of def.spec?.parameters ?? []) {
       const missing = params[p.name] === undefined || params[p.name] === '';
+      if (current.type === 'requirement-validation' && p.name === 'environment') continue;
       if (p.required && (p.pinned === undefined || p.pinned === null) && missing) throw new PlatformError('validation', `${p.name} is required to start this workflow.`);
     }
     const run = await this.executions().insert({ id: randomUUID(), workflowId: id, versionId: version.id, definition: version.definition, params });

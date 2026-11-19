@@ -49,16 +49,13 @@ function rvSteps(mode: 'standard' | 'ui' | 'code' | 'both'): WfStep[] {
     step('consolidate', 'rv.consolidate-findings', { locked: true, dependsOn: exploreDeps, inputs: findings }),
     step('generate_tests', 'rv.generate-tests', { locked: true, dependsOn: ['consolidate'], pause: 'safe', config: { language: 'javascript', maxTests: 60 }, inputs: { plan: '${steps.plan.outputs.planArtifact}', findings: '${steps.consolidate.outputs.combined}' }, timeoutMinutes: 30 }),
     step('publish_testcases', 'rv.publish-testcases', { locked: true, dependsOn: ['generate_tests'], pause: 'safe', inputs: { cases: '${steps.generate_tests.outputs.cases}' } }),
-    step('execute', 'rv.execute-tests', { locked: true, dependsOn: ['publish_testcases'], pause: 'safe', inputs: { tests: '${steps.generate_tests.outputs.tests}', environment: '${params.environment}' }, timeoutMinutes: 60 }),
-    step('sync', 'rv.sync-results', { locked: true, dependsOn: ['execute'], pause: 'safe', retry: { maxAttempts: 5, backoff: 'exponential', initialDelaySec: 3, retryOn: ['transient', 'rate-limited'] }, inputs: { results: '${steps.execute.outputs.results}' } }),
-    step('report', 'rv.qa-report', { locked: true, dependsOn: ['sync'], inputs: { all: '${steps.*.outputs}' }, timeoutMinutes: 15 }),
   );
   return steps;
 }
 
 const rvParams: WfParameter[] = [
   { name: 'story', type: 'work-item-ref', required: true },
-  { name: 'environment', type: 'environment-ref', required: true },
+  { name: 'environment', type: 'environment-ref', required: false },
   { name: 'applicationName', type: 'string', required: true },
 ];
 
@@ -132,7 +129,7 @@ function rg(key: string, name: string, summary: string, mode: 'all' | 'selected'
 }
 
 export const TEMPLATES: readonly TemplateInfo[] = [
-  rv('tpl-rv-standard', 'Standard Requirement Validation', 'Read a story, explore the UI (code is optional), generate tests, and report.', 'standard', 'optional', 'optional'),
+  rv('tpl-rv-standard', 'Standard Requirement Validation', 'Read a story, explore the UI (code is optional), generate test cases, and store them in Squash.', 'standard', 'optional', 'optional'),
   rv('tpl-rv-ui-only', 'UI-Only Requirement Validation', 'Explore the UI only. Code exploration is not offered.', 'ui', true, 'off'),
   rv('tpl-rv-code-only', 'Code-Only Requirement Validation', 'Explore the repository only. UI exploration is not offered.', 'code', 'off', true),
   rv('tpl-rv-ui-code', 'UI + Code Requirement Validation', 'Explore the UI and the repository. Both stay on.', 'both', true, true, 150),

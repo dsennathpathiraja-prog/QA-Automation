@@ -66,6 +66,19 @@ describe('workflow engine chaos', () => {
     expect(store.events.some((e) => e.kind === 'step.completed')).toBe(true);
   });
 
+  it('stops a requirement-validation run once the cases are stored', async () => {
+    const store = new MemoryStore();
+    store.add({ spec: { steps: [
+      { id: 'publish_testcases', type: 'rv.publish-testcases' },
+      { id: 'execute', type: 'rv.execute-tests' },
+      { id: 'sync', type: 'rv.sync-results' },
+      { id: 'report', type: 'rv.qa-report' },
+    ] } });
+    expect(await tick(store, { owner: 'w1', now: at })).toBe('busy');
+    expect(store.runs[0]?.status).toBe('succeeded');
+    expect(store.effects.map((e) => e.stepId)).toEqual(['publish_testcases']);
+  });
+
   it('runs the rest of the demo to success, and a second pass does not add effects', async () => {
     const store = new MemoryStore();
     store.add(definition);

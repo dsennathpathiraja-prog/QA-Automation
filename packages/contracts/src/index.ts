@@ -286,6 +286,21 @@ export const TestCollectionCaseSchema = z.object({ id: z.string(), name: z.strin
 export const TestCollectionSchema = z.object({ id: z.string(), name: z.string(), description: z.string(), cases: z.array(TestCollectionCaseSchema) });
 export const CreateTestCollectionRequest = z.object({ name: z.string(), description: z.string().optional() });
 export const AddCollectionCaseRequest = z.object({ testCaseId: z.string() });
+export const WorkItemExecutionSchema = z.object({
+  id: z.string(),
+  workItem: z.string(),
+  environmentId: z.string(),
+  environmentName: z.string(),
+  caseCount: z.number(),
+  status: z.literal('prepared'),
+  createdAt: z.string(),
+});
+export const WorkItemExecutionBoard = z.object({
+  workItems: z.array(z.object({ workItem: z.string(), caseCount: z.number() })),
+  environments: z.array(z.object({ id: z.string(), name: z.string(), kind: z.string() })),
+  items: z.array(WorkItemExecutionSchema),
+});
+export const StartWorkItemExecutionRequest = z.object({ workItem: z.string(), environmentId: z.string() });
 
 export const ValidateEnvironmentRequest = z.object({
   workflowType: z.enum(['requirement-validation', 'regression-testing']).optional(),

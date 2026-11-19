@@ -48,6 +48,17 @@ export interface TestCaseRepository {
   insertCollection(row: { id: string; name: string; description: string }): Promise<TestCollectionRecord>;
   addCase(collectionId: string, testCaseId: string): Promise<'added' | 'exists'>;
   removeCase(collectionId: string, testCaseId: string): Promise<boolean>;
+  listWorkItemRuns(): Promise<WorkItemRunRecord[]>;
+  insertWorkItemRun(row: { id: string; workItem: string; environmentId: string; environmentName: string; caseCount: number }): Promise<WorkItemRunRecord>;
+}
+
+export interface WorkItemRunRecord {
+  id: string;
+  workItem: string;
+  environmentId: string;
+  environmentName: string;
+  caseCount: number;
+  createdAt: Date;
 }
 
 export interface TestCaseView {
@@ -150,6 +161,62 @@ export class TestCaseService {
     if (added === 'exists') throw new PlatformError('conflict', 'That case is already in this collection.');
     await this.d.audit.append({ actorId: actor.id, action: 'testcase.collection.add', subjectType: 'test_collection', subjectId: collectionId, detail: { testCaseId } });
     return this.collection(collectionId);
+  }
+
+  /** Keeps a generated case under a collection named for its work item. A repeat of the same case stays in that collection. */
+  async fileUnderWorkItem(actor: ActorRef, input: { name: string; summary?: string; steps: string; expected: string; workItem?: string }): Promise<void> {
+    const workItem = this.summary(input.workItem ?? '');
+    if (!workItem) throw new PlatformError('validation', 'A generated case needs a work item.');
+    let id: string;
+    try {
+      id = (await this.create(actor, { ...input, workItem })).id;
+    } catch (e) {
+      if (!(e instanceof PlatformError) || e.errorClass !== 'conflict') throw e;
+      const existing = await this.d.cases.findKey(this.key(`${workItem} ${this.name(input.name)}`));
+      if (!existing) throw e;
+      id = existing.id;
+    }
+    const collection = await this.ensureWorkItemCollection(actor, workItem.slice(0, 120));
+    await this.d.cases.addCase(collection.id, id);
+  }
+
+  async executionBoard() {
+    const counts = new Map<string, number>();
+    for (const item of await this.list()) if (item.workItem) counts.set(item.workItem, (counts.get(item.workItem) ?? 0) + 1);
+    const items = (await this.d.cases.listWorkItemRuns()).map((row) => ({
+      id: row.id,
+      workItem: row.workItem,
+      environmentId: row.environmentId,
+      environmentName: row.environmentName,
+      caseCount: row.caseCount,
+      status: 'prepared' as const,
+      createdAt: row.createdAt.toISOString(),
+    }));
+    return { workItems: [...counts].map(([workItem, caseCount]) => ({ workItem, caseCount })), items };
+  }
+
+  async startWorkItemExecution(actor: ActorRef, input: { workItem: string; environmentId: string; environmentName: string }) {
+    const workItem = this.summary(input.workItem);
+    if (!workItem) throw new PlatformError('validation', 'Choose a work item.');
+    const caseCount = (await this.list()).filter((item) => item.workItem === workItem).length;
+    if (caseCount === 0) throw new PlatformError('validation', 'That work item has no test cases.');
+    const row = await this.d.cases.insertWorkItemRun({ id: randomUUID(), workItem, environmentId: input.environmentId, environmentName: input.environmentName, caseCount });
+    await this.d.audit.append({ actorId: actor.id, action: 'workitem.execution.prepare', subjectType: 'work_item_execution', subjectId: row.id, detail: { workItem, environmentId: input.environmentId, caseCount } });
+    return { id: row.id, workItem: row.workItem, environmentId: row.environmentId, environmentName: row.environmentName, caseCount: row.caseCount, status: 'prepared' as const, createdAt: row.createdAt.toISOString() };
+  }
+
+  private async ensureWorkItemCollection(actor: ActorRef, workItem: string) {
+    const named = async () => (await this.d.cases.listCollections()).find((c) => c.name.toLowerCase() === workItem.toLowerCase());
+    const found = await named();
+    if (found) return found;
+    try {
+      return await this.createCollection(actor, { name: workItem, description: `Cases generated for ${workItem}` });
+    } catch (e) {
+      if (!(e instanceof PlatformError) || e.errorClass !== 'conflict') throw e;
+      const again = await named();
+      if (!again) throw e;
+      return again;
+    }
   }
 
   async removeFromCollection(actor: ActorRef, collectionId: string, testCaseId: string) {

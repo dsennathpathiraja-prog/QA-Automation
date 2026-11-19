@@ -38,4 +38,19 @@ describe('test case library', () => {
     expect(added.json().cases).toEqual([{ id, name: 'Login', version: 2, position: 1 }]);
     expect((await call('GET', '/api/v1/test-cases', business)).json().items).toHaveLength(1);
   });
+
+  it('keeps generated cases under the work item', async () => {
+    const cases = new TestCaseService({ cases: new InMemoryTestCaseRepository(), audit: new InMemoryAuditSink() });
+    const local = buildApp({ sessions: new DevHeaderSessionResolver('test'), profile: 'standard', testCases: cases });
+    const input = { name: 'Saved card is listed', steps: 'Open the page', expected: 'The card is listed', workItem: 'QA-1', summary: 'Squash 9' };
+    await cases.fileUnderWorkItem({ id: 'worker' }, input);
+    await cases.fileUnderWorkItem({ id: 'worker' }, input);
+    const board = await local.inject({ method: 'GET', url: '/api/v1/work-item-executions', headers: engineer });
+    expect(board.json()).toMatchObject({ workItems: [{ workItem: 'QA-1', caseCount: 1 }], environments: [], items: [] });
+    const collections = await local.inject({ method: 'GET', url: '/api/v1/test-collections', headers: engineer });
+    expect(collections.json().items).toEqual([expect.objectContaining({ name: 'QA-1', size: 1 })]);
+    const missing = await local.inject({ method: 'POST', url: '/api/v1/work-item-executions', headers: engineer, payload: { workItem: 'QA-1', environmentId: '11111111-1111-4111-8111-111111111111' } });
+    expect(missing.statusCode).toBe(400);
+    await local.close();
+  });
 });
