@@ -12,6 +12,7 @@ export interface GeneratedCase {
 interface SquashResult {
   id: string;
   created: boolean;
+  projectId?: string;
 }
 
 /**
@@ -27,6 +28,8 @@ export async function publishGeneratedCases(input: {
   const workItem = input.workItem || 'work-item';
   if (input.cases.length === 0) return { summary: `No test cases were generated for ${workItem}. Nothing was sent to Squash.` };
   const squashIds: string[] = [];
+  const references: string[] = [];
+  let projectId = '';
   let squashError = '';
   for (const item of input.cases) {
     let squashId = '';
@@ -35,8 +38,15 @@ export async function publishGeneratedCases(input: {
         const saved = await input.squash(item);
         squashId = saved.id;
         squashIds.push(saved.id);
+        references.push(item.reference);
+        if (!projectId && saved.projectId) projectId = saved.projectId;
       } catch (e) {
         squashError = e instanceof PlatformError ? e.message : 'Squash did not accept the test case.';
+        if (/not bound/i.test(squashError)) {
+          squashError = 'No Squash connector is bound on this workflow run. On the workflow Connectors tab choose Squash, then republish and run again.';
+        } else if (/read-only/i.test(squashError)) {
+          squashError = 'The Squash connector is still read-only. Rebuild so migration 0010 applies, or recreate the connector, then Switch on and run again.';
+        }
       }
     }
     await input.testCases.fileUnderWorkItem(
@@ -56,5 +66,7 @@ export async function publishGeneratedCases(input: {
   if (!input.squash) return { summary: `${kept} in Test Cases. No Squash connector is selected on this workflow.` };
   if (squashError && squashIds.length === 0) return { summary: `${kept} in Test Cases. Squash did not store them: ${squashError}` };
   if (squashError) return { summary: `${kept} in Test Cases. Squash stored ${squashIds.length} and then stopped: ${squashError}` };
-  return { summary: `${kept} in Test Cases and in Squash.` };
+  const where = projectId ? `Squash project ${projectId}` : 'Squash';
+  const refs = references.length > 0 ? ` References: ${references.join(', ')}. Squash ids: ${squashIds.join(', ')}.` : '';
+  return { summary: `${kept} in Test Cases and in ${where}.${refs}` };
 }

@@ -115,7 +115,7 @@ const loop = new WorkerLoop({
           cases,
           testCases,
           squash: squash
-            ? async (item) => squash.invoke<{ id: string; created: boolean }>({
+            ? async (item) => squash.invoke<{ id: string; created: boolean; projectId?: string }>({
                 role: 'testManagement',
                 capability: 'tm.testcase.upsert',
                 input: { reference: item.reference, name: item.name, steps: [{ action: item.steps, expected: item.expected }] },
