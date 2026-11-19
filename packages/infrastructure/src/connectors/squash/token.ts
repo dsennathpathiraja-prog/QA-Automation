@@ -1,6 +1,18 @@
+import { PlatformError } from '@qa/domain';
+
 export interface TokenClaims {
   permissions?: string;
   expiresAt?: Date;
+}
+
+/**
+ * Squash 15.x REST accepts only `Authorization: Bearer <token>`.
+ * Trim paste noise on save and on lease; reject empty after trim.
+ */
+export function normalizeSquashToken(raw: unknown): string {
+  const token = typeof raw === 'string' ? raw.trim() : '';
+  if (!token) throw new PlatformError('validation', 'API token is required');
+  return token;
 }
 
 /**

@@ -164,4 +164,24 @@ describe('approved hosts', () => {
     await s.service.approveHost(actor, { hostPattern: '*.corp.local', internal: true, allowHttp: false });
     expect((await s.service.get(c.id, { includeConfig: true })).hostIssues).toEqual([{ host: 'squash.corp.local', reason: 'http-not-allowed', suggestion: { hostPattern: '*.corp.local', internal: true, allowHttp: true } }]);
   });
+
+  it('trims the Squash API token on save and rejects whitespace-only', async () => {
+    const s = setup();
+    const token = `${'b'.repeat(30)}`;
+    const c = await s.service.create(actor, {
+      providerKey: 'squash-tm',
+      name: 'Squash trim',
+      config: { baseUrl: 'http://squash.corp.local/squash' },
+      secrets: { token: `  ${token}\n` },
+    });
+    expect((await s.secrets.lease(connectorSecretLocator(c.id))).value.token).toBe(token);
+    await expect(
+      s.service.create(actor, {
+        providerKey: 'squash-tm',
+        name: 'Squash blank',
+        config: { baseUrl: 'http://squash.corp.local/squash' },
+        secrets: { token: '   ' },
+      }),
+    ).rejects.toMatchObject({ errorClass: 'validation' });
+  });
 });
