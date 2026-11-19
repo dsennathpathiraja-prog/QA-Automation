@@ -152,6 +152,15 @@ class SquashClient implements ConnectorClient {
         out.push({ capability, support: 'unsupported', reason: err.errorClass === 'denied' ? 'The token owner cannot read this resource' : err.message, evidence: { endpoint: `GET ${path}`, errorClass: err.errorClass } });
       }
     }
+    if (!out.some((o) => o.capability === 'tm.testcase.list' && o.support === 'supported')) {
+      const fallback = await this.projectTestCases();
+      const row = out.find((o) => o.capability === 'tm.testcase.list');
+      if (fallback && row) {
+        row.support = 'supported';
+        row.reason = undefined;
+        row.evidence = { endpoint: fallback };
+      }
+    }
     const supported = new Set(out.filter((o) => o.support === 'supported').map((o) => o.capability));
     out.push({
       capability: 'tm.testcase.read',
@@ -372,6 +381,20 @@ class SquashClient implements ConnectorClient {
     const path = project ? `/projects/${project}/test-cases` : '/test-cases';
     const all = await this.collect(path, 'test-cases', signal);
     return all.find((item) => String(item.reference ?? '').toLowerCase() === reference.toLowerCase());
+  }
+
+  /** Some tokens can list one project's cases when the global test-case list is refused. */
+  private async projectTestCases(): Promise<string | undefined> {
+    try {
+      const body = await this.get('/projects', { size: 1 });
+      const first = ((body._embedded?.projects ?? []) as Json[])[0];
+      const id = String(first?.id ?? '');
+      if (!/^\d+$/.test(id)) return undefined;
+      await this.get(`/projects/${id}/test-cases`, { size: 1 });
+      return `GET /projects/${id}/test-cases`;
+    } catch {
+      return undefined;
+    }
   }
 
   private async onlyProject(signal?: AbortSignal): Promise<string> {

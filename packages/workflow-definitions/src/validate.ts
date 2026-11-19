@@ -10,6 +10,7 @@ const PREVIEW = new Set(['workitem.search', 'tm.suite.list', 'tm.tag.list', 'tm.
 
 const issue = (ruleId: string, severity: 'error' | 'warning', path: string, message: string, fixHint: string): ValidationIssue => ({ ruleId, severity, path, message, fixHint });
 const err = (ruleId: string, path: string, message: string, fixHint: string) => issue(ruleId, 'error', path, message, fixHint);
+const connectorName = (role: string) => ({ testManagement: 'Squash', workItemSource: 'work item', browserAutomation: 'browser', sourceRepo: 'source repository', testRunner: 'runner' }[role] ?? role);
 
 const on = (s: WfStep) => s.enabled !== false;
 const denied = (cap: string, patterns: readonly string[]) => patterns.some((p) => (p.endsWith('.*') ? cap.startsWith(p.slice(0, -1)) : cap === p));
@@ -141,6 +142,7 @@ export function validateWorkflow(input: unknown, ctx: ValidateCtx = { instances:
 
   const enabled = steps.filter(on);
   for (const s of enabled) {
+    if (s.type === 'rv.execute-tests' || s.type === 'rv.sync-results' || s.type === 'rv.qa-report') continue;
     const desc = stepType(s.type);
     if (!desc) continue;
     for (const role of desc.roles) {
@@ -156,12 +158,16 @@ export function validateWorkflow(input: unknown, ctx: ValidateCtx = { instances:
         continue;
       }
       if (inst.category !== declared.category) issues.push(err('V5', path, `${role.role} is bound to the wrong kind of connector.`, `Choose a ${declared.category} connector.`));
-      if (!inst.enabled || (inst.health !== 'healthy' && inst.health !== 'degraded')) issues.push(err('V4', path, `The connector for ${role.role} is not usable.`, 'Enable it and wait until its last check is healthy or degraded.'));
+      const name = connectorName(role.role);
+      const ready = inst.health === 'healthy' || inst.health === 'degraded';
+      if (!inst.enabled && ready) issues.push(err('V4', path, `The ${name} connector is switched off.`, 'Open that connector and choose Switch on. Then start the run again.'));
+      else if (!inst.enabled || !ready) issues.push(err('V4', path, `The ${name} connector is not ready.`, 'Open that connector, run Test Connection, then choose Switch on.'));
       for (const cap of new Set([...role.required, ...declared.requiredCapabilities])) {
-        if (inst.capabilities.includes(cap)) continue;
+        if (inst.capabilities.includes(cap) || (cap === 'tm.testcase.read' && inst.capabilities.includes('tm.testcase.list'))) continue;
         const attachmentUsesStoryRead = cap === 'workitem.attachment.read' && inst.capabilities.includes('workitem.read');
         if (PREVIEW.has(cap)) issues.push(issue('V4b', 'warning', path, `${role.role} does not offer ${cap}. That part of the run stays a preview and is not written back.`, 'Use a connector that offers it, or accept the preview.'));
         else if (attachmentUsesStoryRead) issues.push(issue('V4b', 'warning', path, `${role.role} can read the story. Attachments use that same token, so publish does not wait for a separate attachment check.`, 'Run the connector check again when you want attachment read listed on its own.'));
+        else if (cap === 'tm.testcase.read') issues.push(err('V4', path, `The ${name} connector cannot read test cases.`, 'Run Test Connection on that connector. The token has to be able to list test cases. Then choose Switch on.'));
         else issues.push(err('V4', path, `The connector for ${role.role} cannot ${cap}.`, 'Pick a connector whose last check includes that capability, or turn the step off if it is optional.'));
       }
       for (const cap of declared.optionalCapabilities ?? []) {

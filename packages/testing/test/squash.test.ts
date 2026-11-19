@@ -71,6 +71,14 @@ describe('Squash provider against the documentation-based mock', () => {
     expect(mock.nonGetRequests()).toEqual([]);
   });
 
+  it('reads test cases through a project when the global list is refused', async () => {
+    await mock.close();
+    mock = await startSquashMock({ token, override: (r) => (r.path.startsWith('/squash/api/rest/latest/test-cases') ? { status: 403 } : undefined) });
+    const probe = await connect().probeCapabilities();
+    expect(probe.find((p) => p.capability === 'tm.testcase.list')).toMatchObject({ support: 'supported', evidence: { endpoint: 'GET /projects/1/test-cases' } });
+    expect(probe.find((p) => p.capability === 'tm.testcase.read')).toMatchObject({ support: 'supported' });
+  });
+
   it('reports a resource as unsupported when the token owner cannot read it', async () => {
     await mock.close();
     mock = await startSquashMock({ token, override: (r) => (r.path.startsWith('/squash/api/rest/latest/campaigns') ? { status: 403 } : undefined) });

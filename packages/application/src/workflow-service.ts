@@ -364,14 +364,26 @@ export class WorkflowService {
       }
       const states = await this.d.connectors!.capabilityStates(id);
       const health = row.status === 'connected' ? 'healthy' : row.status === 'degraded' ? 'degraded' : 'unhealthy';
-      out.push({ role: c.role, category: row.category, enabled: row.enabled, health, accessMode: row.accessMode, capabilities: states.filter((s) => s.granted).map((s) => s.capability) });
+      const capabilities = states.filter((s) => s.granted).map((s) => s.capability);
+      if (row.category === 'test-management' && capabilities.includes('tm.testcase.list') && !capabilities.includes('tm.testcase.read')) capabilities.push('tm.testcase.read');
+      out.push({ role: c.role, category: row.category, enabled: row.enabled, health, accessMode: row.accessMode, capabilities });
     }
     return out;
   }
 
   private ready(issues: ValidationIssue[]) {
     const errors = errorsOf(issues);
-    if (errors.length > 0) throw new PlatformError('validation', errors.slice(0, 3).map((e) => e.message).join(' '));
+    if (errors.length === 0) return;
+    const seen = new Set<string>();
+    const lines: string[] = [];
+    for (const e of errors) {
+      const line = `${e.message} ${e.fixHint}`;
+      if (seen.has(line)) continue;
+      seen.add(line);
+      lines.push(line);
+      if (lines.length === 3) break;
+    }
+    throw new PlatformError('validation', lines.join(' '));
   }
 
   private versions() {

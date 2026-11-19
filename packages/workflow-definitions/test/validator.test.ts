@@ -56,6 +56,16 @@ describe('workflow validator', () => {
     expect(issues(rv).some((i) => i.ruleId === 'V11')).toBe(true);
   });
 
+  it('tells the user to switch Squash on, and does not judge the steps that run later', () => {
+    const def = templateDefinition('tpl-rv-ui-code')!;
+    const instances = bind(def).map((i) => i.role === 'testManagement' ? { ...i, enabled: false, health: 'healthy' as const, capabilities: ['tm.testcase.list'] } : i);
+    const report = validateWorkflow(def, { instances });
+    const errors = errorsOf(report);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.message).toMatch(/Squash connector is switched off/);
+    expect(errors.some((i) => i.message.includes('cannot read test cases'))).toBe(false);
+  });
+
   it('publishes against a read-only Squash when the work-item connector can read a story and its attachments', () => {
     const def = templateDefinition('tpl-rv-standard')!;
     const work = def.spec.connectors.find((c) => c.role === 'workItemSource')!;
