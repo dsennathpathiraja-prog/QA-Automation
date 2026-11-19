@@ -60,8 +60,21 @@ describe('route guard', () => {
   });
 
   it('placeholder pages say which phase delivers them', async () => {
-    renderApp('/test-cases', { me: { status: 200, body: meFor('qa_lead') } });
-    expect(await screen.findByText(/Phase 6/)).toBeTruthy();
+    renderApp('/automation', { me: { status: 200, body: meFor('qa_lead') } });
+    expect(await screen.findByText(/Phase 7/)).toBeTruthy();
+  });
+
+  it('lists test cases kept in this platform', async () => {
+    renderApp('/test-cases', {
+      me: { status: 200, body: meFor('business_user') },
+      routes: {
+        '/api/v1/test-cases': { status: 200, body: { items: [{ id: '22222222-2222-4222-8222-222222222222', key: 'login', name: 'Login', summary: 'A customer signs in', version: 1, updatedAt: '2026-11-19T09:00:00.000Z' }] } },
+        '/api/v1/test-collections': { status: 200, body: { items: [] } },
+      },
+    });
+    expect(await screen.findByText('Login')).toBeTruthy();
+    expect(screen.getByText(/not written to Squash/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Save test case' })).toBeNull();
   });
 
   it('lists workflow runs on Executions', async () => {

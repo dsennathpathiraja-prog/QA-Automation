@@ -8,4 +8,5 @@ export * from './in-memory-connectors';
 export * from './in-memory-environments';
 export * from './in-memory-workflows';
 export * from './in-memory-executions';
+export * from './in-memory-test-cases';
 export * from './connector-storage-contract';

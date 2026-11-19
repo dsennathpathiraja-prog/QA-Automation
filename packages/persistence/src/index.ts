@@ -16,3 +16,4 @@ export * from './environment-repository';
 export * from './workflow-repository';
 export * from './workflow-version-repository';
 export * from './execution-repository';
+export * from './test-case-repository';

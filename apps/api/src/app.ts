@@ -10,7 +10,8 @@ import { registerAuthRoutes, type AuthConfig, type OidcSessionResolver } from '.
 import { registerConnectorRoutes, type ConnectorRouteDeps } from './connector-routes';
 import { registerEnvironmentRoutes } from './environment-routes';
 import { registerWorkflowRoutes } from './workflow-routes';
-import type { EnvironmentService, WorkflowService } from '@qa/application';
+import { registerTestCaseRoutes } from './test-case-routes';
+import type { EnvironmentService, TestCaseService, WorkflowService } from '@qa/application';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -35,6 +36,7 @@ export interface AppDeps {
   /** Environment management. Without it the environment list stays empty. */
   environments?: EnvironmentService;
   workflows?: WorkflowService;
+  testCases?: TestCaseService;
 }
 
 const CLIENT_ERRORS: Partial<Record<string, number>> = { validation: 400, 'not-found': 404, conflict: 409, unsupported: 400 };
@@ -112,6 +114,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   if (deps.workflows) registerWorkflowRoutes(app, deps.workflows);
   else app.get('/api/v1/workflows', { config: { access: requires('workflow.view_published') } }, async () => ({ items: [] }));
+
+  if (deps.testCases) registerTestCaseRoutes(app, deps.testCases);
+  else {
+    app.get('/api/v1/test-cases', { config: { access: requires('testcase.view') } }, async () => ({ items: [] }));
+    app.get('/api/v1/test-collections', { config: { access: requires('testcase.view') } }, async () => ({ items: [] }));
+  }
 
   app.get('/api/v1/llm/providers', { config: { access: requires('llm.view') } }, async () =>
     LlmProvidersResponse.parse({ items: deps.llm ? await deps.llm.providers() : [] }),

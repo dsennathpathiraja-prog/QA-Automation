@@ -13,6 +13,7 @@ import { Dashboard } from './pages/Dashboard';
 import { Executions } from './pages/Executions';
 import { EnvironmentPage } from './pages/environments/EnvironmentPage';
 import { Environments } from './pages/Environments';
+import { TestCasePage, TestCases, TestCollectionPage } from './pages/TestCases';
 import { Workflows } from './pages/Workflows';
 import { WorkflowPage } from './pages/workflows/WorkflowPage';
 import { IdentityMapping } from './pages/IdentityMapping';
@@ -33,7 +34,7 @@ const NotFound = () => (
   </>
 );
 
-const real: Record<string, () => ReactNode> = { dashboard: () => <Dashboard />, workflows: () => <Workflows />, executions: () => <Executions />, connectors: () => <Connectors />, environments: () => <Environments />, identity: () => <IdentityMapping />, hosts: () => <ApprovedHosts />, models: () => <AiModels /> };
+const real: Record<string, () => ReactNode> = { dashboard: () => <Dashboard />, workflows: () => <Workflows />, executions: () => <Executions />, 'test-cases': () => <TestCases />, connectors: () => <Connectors />, environments: () => <Environments />, identity: () => <IdentityMapping />, hosts: () => <ApprovedHosts />, models: () => <AiModels /> };
 
 export interface RouterOptions {
   history?: Parameters<typeof createRouter>[0]['history'];
@@ -79,8 +80,11 @@ export function buildRouter(opts: RouterOptions = {}): AnyRouter {
   const environmentDetail = createRoute({ getParentRoute: () => shell, path: '/environments/$id', component: () => <Guarded item={environmentItem}><EnvironmentPage /></Guarded> });
   const workflowItem = NAV_ITEMS.find((i) => i.id === 'workflows')!;
   const workflowDetail = createRoute({ getParentRoute: () => shell, path: '/workflows/$id', component: () => <Guarded item={workflowItem}><WorkflowPage /></Guarded> });
+  const testCaseItem = NAV_ITEMS.find((i) => i.id === 'test-cases')!;
+  const testCaseDetail = createRoute({ getParentRoute: () => shell, path: '/test-cases/$id', component: () => <Guarded item={testCaseItem}><TestCasePage /></Guarded> });
+  const testCollectionDetail = createRoute({ getParentRoute: () => shell, path: '/test-collections/$id', component: () => <Guarded item={testCaseItem}><TestCollectionPage /></Guarded> });
 
-  return createRouter({ routeTree: root.addChildren([signInError, shell.addChildren([...pages, connectorNew, connectorDetail, environmentDetail, workflowDetail])]), history: opts.history, defaultPreload: false });
+  return createRouter({ routeTree: root.addChildren([signInError, shell.addChildren([...pages, connectorNew, connectorDetail, environmentDetail, workflowDetail, testCaseDetail, testCollectionDetail])]), history: opts.history, defaultPreload: false });
 }
 
 declare module '@tanstack/react-router' {

@@ -9,7 +9,7 @@ Phases 1, 2, 3, 4, and 5 are done. Phase 4 covers workflow drafts, the step vali
 
 Phase 5 places the reachability check in a runner when the local runners profile is up. On 19 Nov 2026 the page showed "The runner finished. The application answered 200." Without that profile the worker still checks the address itself, and earlier the same day that check showed "The application answered 200." Workflow steps still do not run a test suite. The plan is in [`docs/phase5-plan.md`](docs/phase5-plan.md).
 
-Phase 6 is the Executions and Test Cases screens. Executions now lists runs that have already been started. Test Cases is still a placeholder and will be a library in this platform, not a write into the current Squash. The plan is in [`docs/phase6-plan.md`](docs/phase6-plan.md).
+Phase 6 is the Executions and Test Cases screens. Executions lists runs that have already been started. Test Cases is a library in this platform: cases, versions, and collections. It does not write to the current Squash. The plan is in [`docs/phase6-plan.md`](docs/phase6-plan.md).
 
 Connectors can be added from the UI (GitHub, Azure DevOps Repos, Jira, Azure Boards, Squash, the managed Playwright server, and an offline demo). GitHub, Azure Boards, and the current Squash instance have been used live. Azure DevOps Repos and Jira remain labelled "not verified against a live instance" until someone runs them against a reachable server. What is in each slice is in [`docs/phase2-plan.md`](docs/phase2-plan.md). Phase 1 sign-off notes remain in [`docs/phase1-status.md`](docs/phase1-status.md).
 

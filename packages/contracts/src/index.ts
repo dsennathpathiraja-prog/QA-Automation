@@ -273,6 +273,20 @@ export const StartRunRequest = z.object({ parameters: z.record(z.unknown()).opti
 export const ExecutionEventSchema = z.object({ seq: z.number(), kind: z.string(), at: z.string(), payload: z.record(z.unknown()) });
 export const ExecutionEventList = z.object({ items: z.array(ExecutionEventSchema) });
 
+export const TestCaseListItemSchema = z.object({ id: z.string(), key: z.string(), name: z.string(), summary: z.string(), version: z.number(), updatedAt: z.string() });
+export const TestCaseListResponse = z.object({ items: z.array(TestCaseListItemSchema) });
+export const TestCaseSchema = TestCaseListItemSchema.extend({ steps: z.string(), expected: z.string() });
+export const CreateTestCaseRequest = z.object({ name: z.string(), summary: z.string().optional(), steps: z.string(), expected: z.string() });
+export const ReviseTestCaseRequest = z.object({ summary: z.string().optional(), steps: z.string(), expected: z.string() });
+export const TestCaseVersionSchema = z.object({ version: z.number(), steps: z.string(), expected: z.string(), createdAt: z.string() });
+export const TestCaseVersionList = z.object({ items: z.array(TestCaseVersionSchema) });
+export const TestCollectionListItemSchema = z.object({ id: z.string(), name: z.string(), description: z.string(), size: z.number() });
+export const TestCollectionListResponse = z.object({ items: z.array(TestCollectionListItemSchema) });
+export const TestCollectionCaseSchema = z.object({ id: z.string(), name: z.string(), version: z.number(), position: z.number() });
+export const TestCollectionSchema = z.object({ id: z.string(), name: z.string(), description: z.string(), cases: z.array(TestCollectionCaseSchema) });
+export const CreateTestCollectionRequest = z.object({ name: z.string(), description: z.string().optional() });
+export const AddCollectionCaseRequest = z.object({ testCaseId: z.string() });
+
 export const ValidateEnvironmentRequest = z.object({
   workflowType: z.enum(['requirement-validation', 'regression-testing']).optional(),
   parallelism: z.number().optional(),

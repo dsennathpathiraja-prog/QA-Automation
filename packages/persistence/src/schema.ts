@@ -437,6 +437,59 @@ export const workflowEffect = pgTable(
   (t) => [primaryKey({ columns: [t.executionId, t.stepId, t.effectKey] })],
 );
 
+/* ---------- test cases ---------- */
+
+export const testCase = pgTable(
+  'test_case',
+  {
+    id: id(),
+    key: text('key').notNull(),
+    name: text('name').notNull(),
+    summary: text('summary').notNull().default(''),
+    currentVersion: integer('current_version').notNull().default(1),
+    deletedAt: ts('deleted_at'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('test_case_key_uq').on(t.key).where(sql`${t.deletedAt} is null`)],
+);
+
+export const testCaseVersion = pgTable(
+  'test_case_version',
+  {
+    id: id(),
+    testCaseId: uuid('test_case_id').notNull(),
+    version: integer('version').notNull(),
+    steps: text('steps').notNull(),
+    expected: text('expected').notNull().default(''),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('test_case_version_uq').on(t.testCaseId, t.version)],
+);
+
+export const testCollection = pgTable(
+  'test_collection',
+  {
+    id: id(),
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    deletedAt: ts('deleted_at'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('test_collection_name_uq').on(t.name).where(sql`${t.deletedAt} is null`)],
+);
+
+export const testCollectionCase = pgTable(
+  'test_collection_case',
+  {
+    collectionId: uuid('collection_id').notNull(),
+    testCaseId: uuid('test_case_id').notNull(),
+    position: integer('position').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.collectionId, t.testCaseId] })],
+);
+
 /* ---------- governance ---------- */
 
 /** Append-only hash chain. Writers serialise through an advisory lock so seq and prev_hash never fork. */
