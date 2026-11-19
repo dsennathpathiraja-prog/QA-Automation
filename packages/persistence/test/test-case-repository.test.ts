@@ -15,4 +15,22 @@ describe('test case library storage', () => {
     expect(await cases.addCase(collection.id, created.id)).toBe('added');
     expect((await cases.getCollection(collection.id))?.cases).toEqual([{ id: created.id, name: 'Login', version: 2, position: 1 }]);
   });
+
+  it('soft-deletes a case and a collection with its members', async () => {
+    const { db } = await freshDb({ seed: false });
+    const cases = new PgTestCaseRepository(db);
+    const a = await cases.insert({ id: '11111111-1111-4111-8111-111111111111', key: 'qap-qa-1-1', name: 'Login', summary: '', workItem: 'QA-1', steps: 'Open', expected: 'Form' });
+    const b = await cases.insert({ id: '22222222-2222-4222-8222-222222222222', key: 'qap-qa-1-2', name: 'Logout', summary: '', workItem: 'QA-1', steps: 'Click', expected: 'Out' });
+    const collection = await cases.insertCollection({ id: '33333333-3333-4333-8333-333333333333', name: 'QA-1', description: 'Cases generated for QA-1' });
+    await cases.addCase(collection.id, a.id);
+    await cases.addCase(collection.id, b.id);
+    expect(await cases.softDelete(a.id)).toBe(true);
+    expect(await cases.get(a.id)).toBeUndefined();
+    expect((await cases.getCollection(collection.id))?.cases).toEqual([{ id: b.id, name: 'Logout', version: 1, position: 2 }]);
+    expect(await cases.softDeleteCollection(collection.id)).toBe(true);
+    expect(await cases.getCollection(collection.id)).toBeUndefined();
+    expect(await cases.get(b.id)).toBeUndefined();
+    expect(await cases.list()).toEqual([]);
+    expect(await cases.listCollections()).toEqual([]);
+  });
 });

@@ -83,6 +83,32 @@ export class PgTestCaseRepository implements TestCaseRepository {
     return caseOf(saved);
   }
 
+  async saveIdentity(id: string, patch: { name?: string; key?: string }) {
+    const set: Partial<typeof testCase.$inferInsert> = { updatedAt: new Date() };
+    if (patch.name !== undefined) set.name = patch.name;
+    if (patch.key !== undefined) set.key = patch.key;
+    try {
+      const [saved] = await this.db.update(testCase).set(set).where(and(eq(testCase.id, id), sql`${testCase.deletedAt} is null`)).returning();
+      if (!saved) throw new PlatformError('not-found', 'Test case not found');
+      return caseOf(saved);
+    } catch (e) {
+      if (unique(e)) throw new PlatformError('conflict', 'A test case with that name already exists.');
+      throw e;
+    }
+  }
+
+  async softDelete(id: string) {
+    return this.db.transaction(async (tx) => {
+      await tx.delete(testCollectionCase).where(eq(testCollectionCase.testCaseId, id));
+      const [saved] = await tx
+        .update(testCase)
+        .set({ deletedAt: new Date(), updatedAt: new Date() })
+        .where(and(eq(testCase.id, id), sql`${testCase.deletedAt} is null`))
+        .returning({ id: testCase.id });
+      return Boolean(saved);
+    });
+  }
+
   async listCollections() {
     const rows = await this.db.select().from(testCollection).where(sql`${testCollection.deletedAt} is null`).orderBy(desc(testCollection.updatedAt));
     const counts = await this.db.select({ collectionId: testCollectionCase.collectionId, n: sql<number>`count(*)::int` }).from(testCollectionCase).groupBy(testCollectionCase.collectionId);
@@ -126,6 +152,28 @@ export class PgTestCaseRepository implements TestCaseRepository {
   async removeCase(collectionId: string, testCaseId: string) {
     const removed = await this.db.delete(testCollectionCase).where(and(eq(testCollectionCase.collectionId, collectionId), eq(testCollectionCase.testCaseId, testCaseId))).returning();
     return removed.length > 0;
+  }
+
+  /**
+   * Soft-deletes the collection and every member case on the platform.
+   * Version rows stay; Squash copies are not touched.
+   */
+  async softDeleteCollection(id: string) {
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx.select({ id: testCollection.id }).from(testCollection).where(and(eq(testCollection.id, id), sql`${testCollection.deletedAt} is null`)).limit(1);
+      if (!row) return false;
+      const members = await tx.select({ testCaseId: testCollectionCase.testCaseId }).from(testCollectionCase).where(eq(testCollectionCase.collectionId, id));
+      await tx.delete(testCollectionCase).where(eq(testCollectionCase.collectionId, id));
+      for (const member of members) {
+        await tx.delete(testCollectionCase).where(eq(testCollectionCase.testCaseId, member.testCaseId));
+        await tx
+          .update(testCase)
+          .set({ deletedAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(testCase.id, member.testCaseId), sql`${testCase.deletedAt} is null`));
+      }
+      await tx.update(testCollection).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(testCollection.id, id));
+      return true;
+    });
   }
 
   async listWorkItemRuns() {

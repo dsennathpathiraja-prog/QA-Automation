@@ -42,15 +42,34 @@ describe('test case library', () => {
   it('keeps generated cases under the work item', async () => {
     const cases = new TestCaseService({ cases: new InMemoryTestCaseRepository(), audit: new InMemoryAuditSink() });
     const local = buildApp({ sessions: new DevHeaderSessionResolver('test'), profile: 'standard', testCases: cases });
-    const input = { name: 'Saved card is listed', steps: 'Open the page', expected: 'The card is listed', workItem: 'QA-1', summary: 'Squash 9' };
+    const input = { name: 'Saved card is listed', steps: 'Open the page', expected: 'The card is listed', workItem: 'QA-1', summary: 'Squash 9', reference: 'QAP-qa-1-1' };
     await cases.fileUnderWorkItem({ id: 'worker' }, input);
-    await cases.fileUnderWorkItem({ id: 'worker' }, input);
+    await cases.fileUnderWorkItem({ id: 'worker' }, { ...input, name: 'Positive: Saved card is listed', steps: 'Open the page again', expected: 'The card is still listed' });
     const board = await local.inject({ method: 'GET', url: '/api/v1/work-item-executions', headers: engineer });
     expect(board.json()).toMatchObject({ workItems: [{ workItem: 'QA-1', caseCount: 1 }], environments: [], items: [] });
+    const listed = await local.inject({ method: 'GET', url: '/api/v1/test-cases', headers: engineer });
+    expect(listed.json().items).toEqual([expect.objectContaining({ name: 'Positive: Saved card is listed', version: 2, summary: 'Squash 9' })]);
     const collections = await local.inject({ method: 'GET', url: '/api/v1/test-collections', headers: engineer });
     expect(collections.json().items).toEqual([expect.objectContaining({ name: 'QA-1', size: 1 })]);
     const missing = await local.inject({ method: 'POST', url: '/api/v1/work-item-executions', headers: engineer, payload: { workItem: 'QA-1', environmentId: '11111111-1111-4111-8111-111111111111' } });
     expect(missing.statusCode).toBe(400);
+    await local.close();
+  });
+
+  it('deletes a case and a collection anytime for editors', async () => {
+    const cases = new TestCaseService({ cases: new InMemoryTestCaseRepository(), audit: new InMemoryAuditSink() });
+    const local = buildApp({ sessions: new DevHeaderSessionResolver('test'), profile: 'standard', testCases: cases });
+    await cases.fileUnderWorkItem({ id: 'worker' }, { name: 'Login', steps: 'Open', expected: 'Form', workItem: 'QA-1', reference: 'QAP-qa-1-1' });
+    await cases.fileUnderWorkItem({ id: 'worker' }, { name: 'Logout', steps: 'Click', expected: 'Signed out', workItem: 'QA-1', reference: 'QAP-qa-1-2' });
+    const listed = await local.inject({ method: 'GET', url: '/api/v1/test-cases', headers: engineer });
+    const caseId = listed.json().items[0].id as string;
+    expect((await local.inject({ method: 'DELETE', url: `/api/v1/test-cases/${caseId}`, headers: business })).statusCode).toBe(403);
+    expect((await local.inject({ method: 'DELETE', url: `/api/v1/test-cases/${caseId}`, headers: engineer })).statusCode).toBe(204);
+    expect((await local.inject({ method: 'GET', url: '/api/v1/test-cases', headers: engineer })).json().items).toHaveLength(1);
+    const collectionId = (await local.inject({ method: 'GET', url: '/api/v1/test-collections', headers: engineer })).json().items[0].id as string;
+    expect((await local.inject({ method: 'DELETE', url: `/api/v1/test-collections/${collectionId}`, headers: engineer })).statusCode).toBe(204);
+    expect((await local.inject({ method: 'GET', url: '/api/v1/test-cases', headers: engineer })).json().items).toHaveLength(0);
+    expect((await local.inject({ method: 'GET', url: '/api/v1/test-collections', headers: engineer })).json().items).toHaveLength(0);
     await local.close();
   });
 

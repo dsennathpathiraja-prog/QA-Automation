@@ -37,6 +37,11 @@ export function registerTestCaseRoutes(app: FastifyInstance, cases: TestCaseServ
     return TestCaseSchema.parse(saved);
   });
 
+  app.delete('/api/v1/test-cases/:id', { config: { access: requires('testcase.edit') } }, async (req, reply) => {
+    await cases.remove({ id: req.principal!.id }, idOf((req.params as { id: string }).id, 'Test case'));
+    return reply.code(204).send();
+  });
+
   app.get('/api/v1/test-collections', { config: { access: requires('testcase.view') } }, async () => TestCollectionListResponse.parse({ items: await cases.collections() }));
 
   app.post('/api/v1/test-collections', { config: { access: requires('testcase.edit') } }, async (req, reply) => {
@@ -45,6 +50,11 @@ export function registerTestCaseRoutes(app: FastifyInstance, cases: TestCaseServ
   });
 
   app.get('/api/v1/test-collections/:id', { config: { access: requires('testcase.view') } }, async (req) => TestCollectionSchema.parse(await cases.collection(idOf((req.params as { id: string }).id, 'Collection'))));
+
+  app.delete('/api/v1/test-collections/:id', { config: { access: requires('testcase.edit') } }, async (req, reply) => {
+    await cases.removeCollection({ id: req.principal!.id }, idOf((req.params as { id: string }).id, 'Collection'));
+    return reply.code(204).send();
+  });
 
   app.post('/api/v1/test-collections/:id/cases', { config: { access: requires('testcase.edit') } }, async (req) => {
     const input = body(AddCollectionCaseRequest, req.body, 'add test case');
