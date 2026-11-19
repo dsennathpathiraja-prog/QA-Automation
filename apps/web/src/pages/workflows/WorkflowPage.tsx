@@ -138,8 +138,10 @@ export function WorkflowPage() {
               {workflow.data?.status === 'published' && session.can('execution.start') && (
                 <form onSubmit={(e) => { e.preventDefault(); start.mutate(); }}>
                   {(def.spec?.parameters ?? []).filter((p) => p.required && (p.pinned === undefined || p.pinned === null)).map((p) => (
-                    <Field key={p.name} id={`param-${p.name}`} label={`${p.name} (${p.type})`}>
-                      <input id={`param-${p.name}`} className={fieldClass} value={params[p.name] ?? ''} onChange={(e) => setParams({ ...params, [p.name]: e.target.value })} />
+                    <Field key={p.name} id={`param-${p.name}`} label={`${p.name} (${p.type})`} hint={p.type === 'work-item-ref' ? 'First line is the work item id. Add a heading Acceptance criteria, then one criterion on each line. Each line becomes a test case.' : undefined}>
+                      {p.type === 'work-item-ref'
+                        ? <textarea id={`param-${p.name}`} rows={6} className={fieldClass} value={params[p.name] ?? ''} onChange={(e) => setParams({ ...params, [p.name]: e.target.value })} />
+                        : <input id={`param-${p.name}`} className={fieldClass} value={params[p.name] ?? ''} onChange={(e) => setParams({ ...params, [p.name]: e.target.value })} />}
                     </Field>
                   ))}
                   <button type="submit" className={`${primaryButtonClass} mt-3`} disabled={start.isPending}>Start run</button>
