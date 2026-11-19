@@ -100,9 +100,26 @@ describe('source and work-item providers', () => {
     const conn = await client.testConnection();
     expect(conn.ok).toBe(true);
     expect(conn.message).toMatch(/did not report token scopes/);
+    expect(m.hits[0]?.path).toContain('api-version=7.1-preview.1');
+    expect(m.hits[1]?.path).toContain('api-version=7.1');
+    expect(m.hits[1]?.path).not.toContain('preview');
     expect((await client.inspectPermissions()).writePermissionsDetected).toEqual([]);
     expect(await client.handle({ id: 'scm.branch.list' } as never, {}, {} as never)).toMatchObject({ items: [{ name: 'main' }] });
     expect(m.hits.every((h) => h.method === 'GET')).toBe(true);
+  });
+
+  it('names the repositories when the configured Azure DevOps repository is missing', async () => {
+    const m = await mock((hit) => {
+      const path = pathOf(hit);
+      if (path.endsWith('/connectionData')) return { body: { authenticatedUser: { providerDisplayName: 'Ada' } } };
+      if (path.endsWith('/repositories')) return { body: { value: [{ id: 'r1', name: 'shop' }] } };
+      return { status: 404, body: {} };
+    });
+    const client = azureDevOpsProvider.create({ baseUrl: `${m.baseUrl}/myorg`, project: 'Web', repo: 'missing' }, lease, { http: m.http });
+    const conn = await client.testConnection();
+    expect(conn.ok).toBe(false);
+    expect(conn.message).toMatch(/missing/);
+    expect(conn.message).toMatch(/shop/);
   });
 
   it('reads Jira acceptance criteria from the description', async () => {

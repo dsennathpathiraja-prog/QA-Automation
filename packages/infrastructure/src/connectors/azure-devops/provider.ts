@@ -65,6 +65,11 @@ class AzureDevOpsClient implements ConnectorClient {
     return requestJson(this.deps.http, { method: 'GET', url: joinUrl(this.cfg.baseUrl, path, { 'api-version': API, ...query }), headers: { authorization: this.auth, accept: 'application/json' } }, 'Azure DevOps');
   }
 
+  /** connectionData is a preview resource. api-version 7.1 without -preview is rejected with status 400. */
+  private connectionData() {
+    return this.get('/_apis/connectionData', { 'api-version': '7.1-preview.1' });
+  }
+
   private async writesFrom(headers: Record<string, string>, repos: { name?: string; permissions?: Record<string, boolean> }[]): Promise<string[]> {
     const fromHeader = azureDevOpsWriteScopes(headers['x-vss-scopes']);
     const fromRepos = repos.flatMap((r) => Object.entries(r.permissions ?? {}).filter(([, v]) => v === true).map(([k]) => `${r.name ?? 'repository'}.${k}`));
@@ -74,10 +79,15 @@ class AzureDevOpsClient implements ConnectorClient {
   async testConnection(): Promise<ConnectionTestResult> {
     const started = Date.now();
     try {
-      const conn = await this.get('/_apis/connectionData');
+      const conn = await this.connectionData();
       const repos = await this.get(`/${encodeURIComponent(this.cfg.project)}/_apis/git/repositories`);
       const list = (repos.body?.value ?? []) as { name?: string; permissions?: Record<string, boolean> }[];
-      const writes = await this.writesFrom({ ...conn.headers, ...repos.headers }, this.cfg.repo ? list.filter((r) => r.name === this.cfg.repo) : list);
+      if (this.cfg.repo && !list.some((r) => r.name?.toLowerCase() === this.cfg.repo!.toLowerCase())) {
+        const names = list.map((r) => r.name).filter((n): n is string => Boolean(n)).slice(0, 8);
+        const seen = names.length > 0 ? ` Repositories in ${this.cfg.project}: ${names.join(', ')}.` : '';
+        return { ok: false, message: `Repository "${this.cfg.repo}" is not in project ${this.cfg.project}.${seen}`, latencyMs: Date.now() - started };
+      }
+      const writes = await this.writesFrom({ ...conn.headers, ...repos.headers }, this.cfg.repo ? list.filter((r) => r.name?.toLowerCase() === this.cfg.repo!.toLowerCase()) : list);
       const reported = Boolean(conn.headers['x-vss-scopes'] || list.some((r) => r.permissions));
       return {
         ok: true,
@@ -91,7 +101,7 @@ class AzureDevOpsClient implements ConnectorClient {
   }
 
   async inspectPermissions(): Promise<PermissionReport> {
-    const conn = await this.get('/_apis/connectionData');
+    const conn = await this.connectionData();
     const repos = await this.get(`/${encodeURIComponent(this.cfg.project)}/_apis/git/repositories`);
     const list = (repos.body?.value ?? []) as { name?: string; permissions?: Record<string, boolean> }[];
     const writes = await this.writesFrom({ ...conn.headers, ...repos.headers }, list);
