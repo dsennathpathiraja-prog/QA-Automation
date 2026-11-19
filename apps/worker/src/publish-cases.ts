@@ -44,7 +44,7 @@ export async function publishGeneratedCases(input: {
         squashError = e instanceof PlatformError ? e.message : 'Squash did not accept the test case.';
         if (/not bound/i.test(squashError)) {
           squashError = 'No Squash connector is bound on this workflow run. On the workflow Connectors tab choose Squash, then republish and run again.';
-        } else if (/read-only/i.test(squashError)) {
+        } else if (/read-only/i.test(squashError) && !/token is READ-only/i.test(squashError) && !/READ_WRITE/i.test(squashError)) {
           squashError = 'The Squash connector is still read-only. Rebuild so migration 0010 applies, or recreate the connector, then Switch on and run again.';
         }
       }

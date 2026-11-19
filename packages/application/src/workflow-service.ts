@@ -272,11 +272,32 @@ export class WorkflowService {
     return this.present(rec);
   }
 
-  async remove(actor: ActorRef, id: string): Promise<void> {
+  /**
+   * Soft-deletes a workflow the user added.
+   * Drafts, in-review, and disabled rows delete freely.
+   * A published workflow deletes when nothing is queued/running/paused, or when `force` confirms over active runs.
+   */
+  async remove(actor: ActorRef, id: string, opts: { force?: boolean } = {}): Promise<void> {
     const rec = await this.require(id);
-    if (rec.enabled && rec.status !== 'disabled') throw new PlatformError('conflict', 'Disable this workflow before removing it.');
+    if (rec.status === 'published') {
+      const active = this.d.executions
+        ? (await this.d.executions.listForWorkflow(id)).filter((r) => r.status === 'queued' || r.status === 'running' || r.status === 'paused')
+        : [];
+      if (active.length > 0 && !opts.force) {
+        throw new PlatformError(
+          'conflict',
+          `${active.length} run${active.length === 1 ? ' is' : 's are'} still active on this published workflow. Cancel ${active.length === 1 ? 'it' : 'them'} first, or confirm delete anyway.`,
+        );
+      }
+    }
     await this.d.workflows.softDelete(id);
-    await this.d.audit.append({ actorId: actor.id, action: 'workflow.delete', subjectType: 'workflow', subjectId: id, detail: { key: rec.key } });
+    await this.d.audit.append({
+      actorId: actor.id,
+      action: 'workflow.delete',
+      subjectType: 'workflow',
+      subjectId: id,
+      detail: { key: rec.key, status: rec.status, force: !!opts.force },
+    });
   }
 
   async start(actor: ActorRef, id: string, params: Record<string, unknown>): Promise<ExecutionView> {

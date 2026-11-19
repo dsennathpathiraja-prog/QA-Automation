@@ -487,7 +487,23 @@ class SquashClient implements ConnectorClient {
       return res.json<Json>();
     }
     const where = path.split('?')[0];
-    if (res.status === 401) throw new PlatformError('auth', 'SquashTM rejected the API token (expired, revoked, or not a token)');
+    if (res.status === 401) {
+      // Squash returns 401 for a READ token on POST/PATCH/DELETE (Test Connection only GETs, so it still succeeds).
+      const claims = readTokenClaims(this.token);
+      if (method !== 'GET' && claims.permissions && !/WRITE/i.test(claims.permissions)) {
+        throw new PlatformError(
+          'auth',
+          'SquashTM refused the write because this token is READ-only. Create a READ_WRITE personal token, replace credentials on the same Squash connector, Test Connection, Switch on, restart the worker if it was already running, and run again.',
+        );
+      }
+      if (method !== 'GET') {
+        throw new PlatformError(
+          'auth',
+          'SquashTM rejected the API token for a write (expired, revoked, READ-only, or not a token). Test Connection only checks read; storing cases needs a READ_WRITE token on this connector.',
+        );
+      }
+      throw new PlatformError('auth', 'SquashTM rejected the API token (expired, revoked, or not a token)');
+    }
     if (res.status === 403) throw new PlatformError('denied', method === 'GET' ? `The token owner cannot read ${where}` : `The token cannot change ${where}. Store generated test cases with a READ_WRITE token.`);
     if (res.status === 404) throw new PlatformError('not-found', `SquashTM has nothing at ${where}`);
     if (res.status === 429) throw new PlatformError('rate-limited', 'SquashTM is rate limiting requests');

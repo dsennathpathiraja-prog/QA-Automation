@@ -141,7 +141,8 @@ export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock>
       if (auth !== `Bearer ${o.token}`) return send(401, { message: 'Unauthorized' });
       const path = url.pathname.slice(root.length);
       if (req.method !== 'GET') {
-        if (permissions !== 'READ_WRITE') return send(403, { message: 'write refused' });
+        // Real Squash answers 401 when a READ token tries to write (same as a bad token).
+        if (permissions !== 'READ_WRITE') return send(401, { message: 'Unauthorized' });
         let payload: Record<string, unknown> = {};
         try {
           payload = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as Record<string, unknown>;
