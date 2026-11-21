@@ -114,12 +114,14 @@ describe('browser explorer', () => {
   });
 
   it('fails when snapshots stay empty after retries (not Done with empty MD)', async () => {
+    let evaluateCalls = 0;
     const browser: BrowserAutomationPort = {
       async openSession() {},
       async navigate(url) { return { finalUrl: url }; },
       async waitFor() {},
       async snapshot() { return { accessibilityTree: '', url: 'http://sdk.paynsure.internal/shop' }; },
       async evaluate() {
+        evaluateCalls += 1;
         return {
           resultText: JSON.stringify({
             url: 'http://sdk.paynsure.internal/shop',
@@ -145,6 +147,30 @@ describe('browser explorer', () => {
     })).rejects.toMatchObject({
       errorClass: 'transient',
       message: expect.stringMatching(/snapshot content is empty|not useful for test planning/i),
+    });
+    // DOM probe must run at most once (avoid opening the connector circuit breaker).
+    expect(evaluateCalls).toBe(1);
+  });
+
+  it('surfaces circuit-breaker probe errors with Test connection guidance', async () => {
+    const browser: BrowserAutomationPort = {
+      async openSession() {},
+      async navigate(url) { return { finalUrl: url }; },
+      async waitFor() {},
+      async snapshot() { return { accessibilityTree: '', url: 'http://sdk.paynsure.internal/shop' }; },
+      async evaluate() {
+        throw new PlatformError('transient', 'circuit breaker is open for this connector');
+      },
+      async screenshot() { return { artifactBase64: '' }; },
+      async closeSession() {},
+    };
+    await expect(createBrowserExplorer(browser).explore({
+      application: 'PayNSure',
+      url: 'http://sdk.paynsure.internal/shop',
+      scenarios: [],
+    })).rejects.toMatchObject({
+      errorClass: 'transient',
+      message: expect.stringMatching(/circuit breaker|Test connection/i),
     });
   });
 

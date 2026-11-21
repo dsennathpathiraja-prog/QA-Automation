@@ -29,7 +29,7 @@ Execution of prepared cases against an environment remains a **separate** Execut
 4. `browser.navigate` / `browser.wait` / `browser.snapshot` / optional `browser.evaluate` (DOM/iframe probe) / `browser.screenshot` / `browser.session.close` all pass that `sessionId` (catalog requirement).
 5. Findings (page labels + accessibility excerpts, or DOM-probe cues when the aria tree is empty) go into consolidate → planner.
 
-If the browser connector is unbound, the URL is missing, navigate fails validation, or the snapshot stays empty after settle/retry **and** DOM probe, Explore UI **fails** (not a fake Done with `Snapshot: _(empty)_`). Failures name blank vs opaque iframe vs Chromium DNS/network (private hosts need `playwright-mcp` `extra_hosts` — host `/etc/hosts` is not inherited). A successful Explore UI MD artifact includes page title, cues (links/buttons/fields), and a fenced YAML accessibility tree for the planner (e.g. PayNSure shop: Search products, Add to cart, Proceed to checkout).
+If the browser connector is unbound, the URL is missing, navigate fails validation, or the snapshot stays empty after settle/retry **and** DOM probe, Explore UI **fails** (not a fake Done with `Snapshot: _(empty)_`). Failures name blank vs opaque iframe vs Chromium DNS/network (private hosts need `playwright-mcp` `extra_hosts` — host `/etc/hosts` is not inherited). A successful **Test connection** clears the connector circuit breaker so `browser.evaluate` stays usable for the DOM probe. A successful Explore UI MD artifact includes page title, cues (links/buttons/fields), and a fenced YAML accessibility tree for the planner (e.g. PayNSure shop: Search products, Add to cart, Proceed to checkout).
 
 ### Explore code (bound source repo)
 

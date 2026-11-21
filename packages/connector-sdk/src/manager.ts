@@ -24,6 +24,12 @@ import type {
 const INVOKE_COUNT = counter('qa.connector.invocations', 'Connector capability calls by capability and outcome');
 const INVOKE_MS = histogram('qa.connector.duration', 'Connector capability call duration');
 
+/**
+ * Explore UI enrichment helpers. Failures here must not open the instance breaker —
+ * otherwise a few empty aria / evaluate retries block navigate/snapshot for the whole connector.
+ */
+const BREAKER_SOFT_FAIL_CAPS = new Set(['browser.evaluate', 'browser.wait']);
+
 export interface ConnectorExecutionManagerDeps {
   capabilities: CapabilityRegistry;
   providers: ProviderRegistry;
@@ -146,7 +152,7 @@ export class ConnectorExecutionManager implements CapabilityInvoker {
           await finish('ok');
           return redacted;
         } catch (e) {
-          breaker.failure(e);
+          if (!BREAKER_SOFT_FAIL_CAPS.has(descriptor.id)) breaker.failure(e);
           throw e;
         } finally {
           clearTimeout(timer);
@@ -162,6 +168,17 @@ export class ConnectorExecutionManager implements CapabilityInvoker {
       else await finish('error', { errorClass: err.errorClass });
       throw err;
     }
+  }
+
+  /**
+   * Close the per-instance circuit after a successful Test connection (or Switch on).
+   * Test connection talks to the provider directly and does not go through invoke(),
+   * so without this Explore UI can keep seeing "circuit breaker is open" until cooldown.
+   */
+  resetCircuit(instanceId: string): void {
+    const id = instanceId?.trim();
+    if (!id) return;
+    this.breaker(id).reset();
   }
 
   private async resolveInstance(req: InvokeRequest, policy: ExecutionPolicy | undefined): Promise<ResolvedInstance> {
