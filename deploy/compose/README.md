@@ -12,10 +12,10 @@ cp .env.example .env            # non-secret settings only
 ./scripts/install.sh            # bootstrap secrets, init OpenBao (run twice: init, then configure)
 docker compose up -d            # core services
 docker compose --profile llm up -d ollama    # local LLM host (add -f docker-compose.gpu.yml for GPU)
-docker compose --profile browser up --build -d playwright-mcp   # managed Playwright MCP (http://playwright-mcp:8931)
+docker compose --profile browser up --build -d playwright-mcp   # managed Playwright MCP (DNS: playwright-mcp → :8931)
 ```
 
-Playwright **Test connection** needs the browser profile running and connector URL `http://playwright-mcp:8931` (approve that host for plain http). The service builds `deploy/images/playwright-mcp.Dockerfile` (Chromium baked in; rebuild after Dockerfile changes). Details: `local/README.md` and `docs/playwright-agents-mcp.md`.
+Playwright **Test connection** / Explore UI need the browser profile running on the **same Compose project** as the worker. Connector URL from the worker: `http://playwright-mcp:8931` (`PLAYWRIGHT_MCP_URL`; approve host `playwright-mcp` for plain http). Image tag `qa-playwright-mcp:local` is not a DNS name. The service builds `deploy/images/playwright-mcp.Dockerfile` (Chromium baked in; rebuild after Dockerfile changes). Details: `local/README.md` and `docs/playwright-agents-mcp.md`.
 
 
 Identity (decision Q2a, default accepted): a new Keycloak is deployed with the stack and imported with realm

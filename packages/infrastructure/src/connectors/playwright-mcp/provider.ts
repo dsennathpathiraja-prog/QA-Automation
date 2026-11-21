@@ -36,7 +36,7 @@ export const playwrightMcpProvider: ConnectorProvider = {
     requiresInternet: false,
     verification: 'live-capable',
     wizard: [
-      { key: 'connection', title: 'Browser server', fields: [{ name: 'baseUrl', label: 'Playwright server address (from the worker: http://playwright-mcp:8931 — start Compose profile browser first)', type: 'url', required: true }, { name: 'allowedOrigins', label: 'Application addresses or host names the browser may open, separated by commas', type: 'text', required: true }, { name: 'savedSessionName', label: 'Saved browser session (optional, used for MFA)', type: 'text', required: false }] },
+      { key: 'connection', title: 'Browser server', fields: [{ name: 'baseUrl', label: 'Playwright server address (from the worker: http://playwright-mcp:8931 / PLAYWRIGHT_MCP_URL — not localhost; start Compose profile browser on the worker network first)', type: 'url', required: true }, { name: 'allowedOrigins', label: 'Application addresses or host names the browser may open, separated by commas', type: 'text', required: true }, { name: 'savedSessionName', label: 'Saved browser session (optional, used for MFA)', type: 'text', required: false }] },
       { key: 'test', title: 'Test connection', action: 'test-connection' },
       { key: 'probe', title: 'Check what this server can do', action: 'probe-capabilities' },
       { key: 'review', title: 'Review', action: 'review' },
@@ -88,7 +88,16 @@ class PlaywrightClient implements ConnectorClient {
   }
 
   private async post(payload: unknown) {
-    const res = await requestJson(this.deps.http, { method: 'POST', url: joinUrl(this.cfg.baseUrl, '/mcp'), headers: this.headers(), body: JSON.stringify(payload) }, 'Playwright');
+    let res;
+    try {
+      res = await requestJson(this.deps.http, { method: 'POST', url: joinUrl(this.cfg.baseUrl, '/mcp'), headers: this.headers(), body: JSON.stringify(payload) }, 'Playwright');
+    } catch (e) {
+      // Explore UI and other live calls must get the same reachability guidance as Test connection.
+      if (e instanceof PlatformError && /could not resolve|network error|Could not reach|timed out|aborted/i.test(e.message)) {
+        throw new PlatformError(e.errorClass, this.connectionFailureMessage(e), e.details, e);
+      }
+      throw e;
+    }
     const session = res.headers['mcp-session-id'];
     if (session) this.sessionId = session;
     return rpcMessage(res.body, res.text);
@@ -133,14 +142,14 @@ class PlaywrightClient implements ConnectorClient {
     }
   }
 
-  /** Turn reachability / policy failures into an actionable message for Test Connection. */
+  /** Turn reachability / policy failures into an actionable message for Test Connection / Explore UI. */
   private connectionFailureMessage(e: unknown): string {
     const msg = e instanceof PlatformError ? e.message : 'Could not reach Playwright';
     if (/could not resolve|network error|Could not reach|timed out|aborted/i.test(msg)) {
       return (
         `Could not reach Playwright at ${this.cfg.baseUrl}. ` +
-        'Start the managed browser service (Compose profile "browser"; address http://playwright-mcp:8931 from the worker), ' +
-        'approve that host for plain http if the UI asks, then test again.'
+        'From the worker container use http://playwright-mcp:8931 (Compose DNS / PLAYWRIGHT_MCP_URL — not localhost, not the image name qa-playwright-mcp). ' +
+        'Start Compose profile "browser" on the same project network as the worker, approve host playwright-mcp for plain http if asked, then retry.'
       );
     }
     if (e instanceof PlatformError && e.errorClass === 'denied') {
