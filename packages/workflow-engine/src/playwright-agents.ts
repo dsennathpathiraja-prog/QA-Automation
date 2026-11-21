@@ -40,11 +40,15 @@ const priorityFor = (kind: ScenarioKind): ScenarioPriority => {
   return 'medium';
 };
 
-const caseTitle = (kind: ScenarioKind, label: string): string => {
-  const line = clip(label, 90);
-  if (kind === 'negative') return clip(`Negative: ${line}`, 120);
-  if (kind === 'edge') return clip(`Edge: ${line}`, 120);
-  return clip(`Positive: ${line}`, 120);
+const caseTitle = (kind: ScenarioKind, label: string, workItemTitle = ''): string => {
+  const goal = clip(label, 90);
+  const title = workItemTitle.trim();
+  const body = !title || goal.toLowerCase().includes(title.toLowerCase())
+    ? goal
+    : `${title} — ${goal}`;
+  const prefix = kind === 'negative' ? 'Negative' : kind === 'edge' ? 'Edge' : 'Positive';
+  if (new RegExp(`^${prefix}\\s*:`, 'i').test(body)) return clip(body, 120);
+  return clip(`${prefix}: ${body}`, 120);
 };
 
 const focusOf = (criterion: string): string => {
@@ -159,13 +163,20 @@ export function planWithPlaywrightPlanner(input: {
   application: string;
   criteria: string[];
   findings?: string;
+  /** Work item title from Read — included in Positive/Negative/Edge case names. */
+  workItemTitle?: string;
 }): { summary: string; scenarios: PlannerScenario[]; planMarkdown: string; planArtifact: string } {
-  const criteria = input.criteria.length > 0 ? input.criteria : [`Verify ${input.application} for ${input.workItem}`];
+  const workItemTitle = (input.workItemTitle ?? '').trim();
+  const criteria = input.criteria.length > 0
+    ? input.criteria
+    : [workItemTitle
+      ? `${workItemTitle} on ${input.application}`
+      : `Verify ${input.application} for ${input.workItem}`];
   const scenarios: PlannerScenario[] = [];
   const push = (kind: ScenarioKind, criterion: string, label: string, steps: string, expected: string) => {
     if (scenarios.length >= MAX_PLAN_SCENARIOS) return;
     scenarios.push({
-      name: caseTitle(kind, label),
+      name: caseTitle(kind, label, workItemTitle),
       kind,
       priority: priorityFor(kind),
       criterion: clip(criterion, 160),

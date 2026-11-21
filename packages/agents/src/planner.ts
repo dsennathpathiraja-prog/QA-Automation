@@ -1,5 +1,6 @@
 import type { LlmGateway } from '@qa/llm';
-import { PLAYWRIGHT_TEST_PLANNER, planHeuristically } from './heuristic';
+import { titledCaseName } from './case-template';
+import { PLAYWRIGHT_TEST_PLANNER, planHeuristically, workItemTitleFromStory } from './heuristic';
 import { MAX_PLAN_SCENARIOS } from './limits';
 import { planArtifactPath, renderPlanMarkdown } from './plan-markdown';
 import { planStructured } from './schemas';
@@ -20,7 +21,8 @@ const PLAN_SYSTEM = [
   'Each acceptance criterion and each distinct Description path should yield multiple scenarios',
   '(several happy paths, several invalid paths, several boundaries) when the text supports them.',
   'A single rich work item may need 100+ scenarios; stay under the schema max.',
-  'Names must start with "Positive:", "Negative:", or "Edge:".',
+  'Names must start with "Positive:", "Negative:", or "Edge:" and include the work item TITLE after the kind',
+  '(e.g. "Positive: PayNSure checkout — saved card is listed"), not only the work item id.',
   'Steps and expected results must reference the criterion or path text — never generic placeholders alone.',
   'Use exploration findings to name real pages and controls when present.',
   'Reply with JSON only matching the schema.',
@@ -37,6 +39,7 @@ export function createLlmTestPlanner(gateway: LlmGateway | undefined): TestPlann
   }
   return {
     async plan(input: PlanRequest): Promise<PlanResult> {
+      const workItemTitle = workItemTitleFromStory(input.story);
       const criteriaBlock = input.criteria.length > 0
         ? input.criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')
         : '(no separate acceptance criteria — derive scenarios from the story Description)';
@@ -46,8 +49,10 @@ export function createLlmTestPlanner(gateway: LlmGateway | undefined): TestPlann
           system: PLAN_SYSTEM,
           instruction: [
             `Work item: ${input.workItem}`,
+            workItemTitle ? `Work item title: ${workItemTitle}` : 'Work item title: (not provided — use the story headline)',
             `Application: ${input.application}`,
             'Write many Positive / Negative / Edge scenarios covering each acceptance criterion and Description path.',
+            'Put the work item title in every scenario name after the kind prefix.',
             'Acceptance criteria:',
             criteriaBlock,
             input.findings ? `Exploration findings:\n${input.findings}` : 'Exploration findings: (none yet)',
@@ -61,7 +66,11 @@ export function createLlmTestPlanner(gateway: LlmGateway | undefined): TestPlann
         { requirements: { structuredOutput: true } },
       );
       const scenarios: PlannerScenario[] = result.data.scenarios.slice(0, MAX_PLAN_SCENARIOS).map((row) => ({
-        name: row.name,
+        name: titledCaseName({
+          kind: row.kind === 'negative' || row.kind === 'edge' ? row.kind : 'positive',
+          title: workItemTitle,
+          goal: row.name.replace(/^(positive|negative|edge)\s*:\s*/i, '').trim() || row.criterion,
+        }),
         kind: row.kind,
         priority: priorityOf(row.kind, row.priority),
         criterion: row.criterion,

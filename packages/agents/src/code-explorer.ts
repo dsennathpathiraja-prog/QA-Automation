@@ -22,6 +22,22 @@ export function searchQueriesFor(application: string, criteria: string[]): strin
 }
 
 /**
+ * Repo-relative paths operators can open. Rejects bare git object ids (SHAs) that
+ * some connectors historically returned as fake "paths" from commit search.
+ */
+export function isHumanFilePath(path: string): boolean {
+  const p = path.trim().replace(/^\.\//, '');
+  if (!p) return false;
+  if (/^[0-9a-f]{7,40}$/i.test(p)) return false;
+  return true;
+}
+
+/** Strip a leading slash so Azure DevOps `/src/a.ts` reads as `src/a.ts`. */
+export function displayFilePath(path: string): string {
+  return path.trim().replace(/^\/+/, '') || path.trim();
+}
+
+/**
  * Read-only source explorer. Searches the bound GitHub / Azure DevOps repo and
  * reads matching files BEFORE the planner so findings feed the Markdown plan.
  * Failures throw — Explore code must succeed with a real connector call.
@@ -47,9 +63,11 @@ export function createCodeExplorer(source: SourceRepoPort | undefined): CodeExpl
         if (byPath.size >= maxFiles) break;
         const found = await source.search({ query, ...repoOpts });
         for (const hit of found.items) {
-          if (!hit.path || byPath.has(hit.path)) continue;
-          byPath.set(hit.path, {
-            path: hit.path,
+          if (!hit.path || !isHumanFilePath(hit.path)) continue;
+          const path = displayFilePath(hit.path);
+          if (!path || byPath.has(path)) continue;
+          byPath.set(path, {
+            path,
             excerpt: (hit.snippet || '').slice(0, 800),
             query,
           });
@@ -57,14 +75,15 @@ export function createCodeExplorer(source: SourceRepoPort | undefined): CodeExpl
         }
       }
 
-      // When search returns nothing (or is partial), list the tree and read a few files.
+      // When search returns nothing (or only non-path hits such as SHAs), list the tree.
       if (byPath.size === 0) {
         const tree = await source.listTree(repoOpts);
-        const files = tree.entries.filter((e) => e.type === 'file').slice(0, maxFiles);
+        const files = tree.entries.filter((e) => e.type === 'file' && isHumanFilePath(e.path)).slice(0, maxFiles);
         for (const entry of files) {
+          const path = displayFilePath(entry.path);
           const file = await source.readFile({ path: entry.path, ...repoOpts });
-          byPath.set(entry.path, {
-            path: entry.path,
+          byPath.set(path, {
+            path,
             excerpt: (file.content || '').slice(0, 800),
           });
         }
@@ -116,8 +135,8 @@ export function sourceRepoPortFromInvoker(
       return {
         items: (out?.items ?? []).flatMap((item) => {
           const path = typeof item?.path === 'string' ? item.path : '';
-          if (!path) return [];
-          return [{ path, snippet: typeof item.snippet === 'string' ? item.snippet : '' }];
+          if (!path || !isHumanFilePath(path)) return [];
+          return [{ path: displayFilePath(path), snippet: typeof item.snippet === 'string' ? item.snippet : '' }];
         }),
       };
     },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PlatformError } from '@qa/domain';
-import { createCodeExplorer, searchQueriesFor, sourceRepoPortFromInvoker } from '../src/code-explorer';
+import { createCodeExplorer, displayFilePath, isHumanFilePath, searchQueriesFor, sourceRepoPortFromInvoker } from '../src/code-explorer';
 import type { SourceRepoPort } from '../src/types';
 
 describe('searchQueriesFor', () => {
@@ -8,6 +8,15 @@ describe('searchQueriesFor', () => {
     expect(searchQueriesFor('PayNSure', ['The saved card is listed on the payment page'])).toEqual(
       expect.arrayContaining(['paynsure', 'saved', 'card', 'listed', 'payment', 'page']),
     );
+  });
+});
+
+describe('human file paths', () => {
+  it('rejects bare git SHAs and normalizes leading slashes', () => {
+    expect(isHumanFilePath('a1b2c3d4e5f6789012345678901234567890abcd')).toBe(false);
+    expect(isHumanFilePath('abcdef0')).toBe(false);
+    expect(isHumanFilePath('src/pay/CardList.tsx')).toBe(true);
+    expect(displayFilePath('/src/pay/CardList.tsx')).toBe('src/pay/CardList.tsx');
   });
 });
 
@@ -67,6 +76,27 @@ describe('code explorer', () => {
     expect(out.source).toBe('repo');
     expect(out.details).toEqual([{ path: 'README.md', excerpt: '# Shop checkout' }]);
     expect(out.summary).toMatch(/Visited files: README\.md/);
+  });
+
+  it('ignores commit SHAs from search and lists real files instead', async () => {
+    const source: SourceRepoPort = {
+      async search() {
+        return { items: [{ path: 'a1b2c3d4e5f6789012345678901234567890abcd', snippet: 'pay fix' }] };
+      },
+      async listTree() {
+        return { entries: [{ path: '/src/pay.ts', type: 'file' }] };
+      },
+      async readFile({ path }) {
+        return { path, content: 'export const pay = 1', truncated: false };
+      },
+    };
+    const out = await createCodeExplorer(source).explore({
+      application: 'PayNSure',
+      criteria: ['pay'],
+    });
+    expect(out.details.map((d) => d.path)).toEqual(['src/pay.ts']);
+    expect(out.summary).toMatch(/Visited files: src\/pay\.ts/);
+    expect(out.summary).not.toMatch(/a1b2c3d4/);
   });
 
   it('omits repo from invoke when relying on connector-bound config', async () => {

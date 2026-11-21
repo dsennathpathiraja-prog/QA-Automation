@@ -105,6 +105,9 @@ describe('source and work-item providers', () => {
     expect(m.hits[1]?.path).not.toContain('preview');
     expect((await client.inspectPermissions()).writePermissionsDetected).toEqual([]);
     expect(await client.handle({ id: 'scm.branch.list' } as never, {}, {} as never)).toMatchObject({ items: [{ name: 'main' }] });
+    expect(await client.handle({ id: 'scm.code.search' } as never, { query: 'readme' }, {} as never)).toMatchObject({
+      items: [{ path: 'README.md', snippet: 'README.md' }],
+    });
     expect(m.hits.every((h) => h.method === 'GET')).toBe(true);
   });
 

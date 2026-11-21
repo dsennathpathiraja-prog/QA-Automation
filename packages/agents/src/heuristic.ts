@@ -1,3 +1,4 @@
+import { titledCaseName } from './case-template';
 import { MAX_GENERATED_CASES, MAX_PLAN_SCENARIOS } from './limits';
 import { planArtifactPath, renderPlanMarkdown } from './plan-markdown';
 import type { GeneratedPlaywrightCase, GenerateRequest, GenerateResult, PlanRequest, PlanResult, PlannerScenario, ScenarioKind, ScenarioPriority } from './types';
@@ -15,12 +16,31 @@ const priorityFor = (kind: ScenarioKind): ScenarioPriority => {
   return 'medium';
 };
 
-const caseTitle = (kind: ScenarioKind, label: string): string => {
-  const line = clip(label, 90);
-  if (kind === 'negative') return clip(`Negative: ${line}`, 120);
-  if (kind === 'edge') return clip(`Edge: ${line}`, 120);
-  return clip(`Positive: ${line}`, 120);
-};
+/** Title line after the work-item id (or `id — title` on the first line). */
+export function workItemTitleFromStory(raw: string): string {
+  const lines = raw.replace(/\r/g, '').split('\n');
+  const firstIdx = lines.findIndex((line) => line.trim());
+  if (firstIdx < 0) return '';
+  const first = (lines[firstIdx] ?? '').trim();
+  const inline = first.match(/^(?:\d{1,10}|[A-Z][A-Z0-9]+-\d+)\s*[—–:\-]\s+(.+)$/i);
+  if (inline?.[1]) {
+    const titled = inline[1].replace(/^[\s>*\-•\d.)]+/, '').trim();
+    if (titled && !/^(#{1,6}\s|acceptance criteria\b)/i.test(titled)) return titled.slice(0, 200);
+  }
+  for (let i = firstIdx + 1; i < lines.length; i += 1) {
+    const rawLine = lines[i] ?? '';
+    if (!rawLine.trim()) return '';
+    const line = rawLine.replace(/^[\s>*\-•\d.)]+/, '').trim();
+    if (!line || /^(#{1,6}\s|acceptance criteria\b|repro(duction)? steps\b|description\b|notes?\b|business rules?\b)/i.test(line)) return '';
+    if (/^(given|when|then|and)\b/i.test(line)) return '';
+    return line.slice(0, 200);
+  }
+  return '';
+}
+
+const caseTitle = (kind: ScenarioKind, label: string, workItemTitle: string): string => (
+  titledCaseName({ kind, title: workItemTitle, goal: clip(label, 90) }).slice(0, 120)
+);
 
 /** Pull actionable nouns from a criterion so steps are not identical boilerplate. */
 function focusOf(criterion: string): string {
@@ -94,6 +114,7 @@ function positiveHints(criterion: string): string[] {
 /** Extra path seeds from Description body (beyond AC bullets). */
 export function descriptionPathSeeds(story: string, criteria: string[]): string[] {
   const criteriaSet = new Set(criteria.map((c) => c.toLowerCase()));
+  const title = workItemTitleFromStory(story).toLowerCase();
   const lines = story.replace(/\r/g, '').split('\n').map((l) => l.trim()).filter(Boolean);
   const seeds: string[] = [];
   for (const raw of lines) {
@@ -101,6 +122,8 @@ export function descriptionPathSeeds(story: string, criteria: string[]): string[
     if (!line || line.length < 12) continue;
     if (/^(#{1,6}\s|acceptance criteria\b|repro(duction)? steps\b|description\b|notes?\b)/i.test(line)) continue;
     if (/^\d{1,10}$/.test(line) || /^[A-Z][A-Z0-9]+-\d+$/i.test(line)) continue;
+    if (/^(?:\d{1,10}|[A-Z][A-Z0-9]+-\d+)\s*[—–:\-]\s+/i.test(line)) continue;
+    if (title && line.toLowerCase() === title) continue;
     if (criteriaSet.has(line.toLowerCase())) continue;
     if (/^(given|when|then|and)\b/i.test(line)) continue;
     seeds.push(clip(line, 160));
@@ -116,10 +139,11 @@ function pushScenario(
   label: string,
   steps: string,
   expected: string,
+  workItemTitle: string,
 ): void {
   if (scenarios.length >= MAX_PLAN_SCENARIOS) return;
   scenarios.push({
-    name: caseTitle(kind, label),
+    name: caseTitle(kind, label, workItemTitle),
     kind,
     priority: priorityFor(kind),
     criterion: clip(criterion, 160),
@@ -134,7 +158,12 @@ function pushScenario(
  * Description path — not a single sparse triple. Prefer the LLM / MCP planner when configured.
  */
 export function planHeuristically(input: PlanRequest): PlanResult {
-  const criteria = input.criteria.length > 0 ? input.criteria : [`Verify ${input.application} for ${input.workItem}`];
+  const workItemTitle = workItemTitleFromStory(input.story);
+  const criteria = input.criteria.length > 0
+    ? input.criteria
+    : [workItemTitle
+      ? `${workItemTitle} on ${input.application}`
+      : `Verify ${input.application} for ${input.workItem}`];
   const pathSeeds = descriptionPathSeeds(input.story, criteria);
   const seeds = [...criteria, ...pathSeeds.filter((s) => !criteria.includes(s))];
   const scenarios: PlannerScenario[] = [];
@@ -154,6 +183,7 @@ export function planHeuristically(input: PlanRequest): PlanResult {
           `Confirm the outcome matches: ${clip(line, 160)}.`,
         ].join(' '),
         `${clip(line, 140)} succeeds with the expected result visible to the user (${hint}).`,
+        workItemTitle,
       );
     }
     for (const hint of negativeHints(line)) {
@@ -169,6 +199,7 @@ export function planHeuristically(input: PlanRequest): PlanResult {
           'Observe the blocked or error state without forcing a bypass.',
         ].join(' '),
         `The invalid path (${hint}) is refused with a clear error or blocked state; "${focusOf(line)}" does not succeed.`,
+        workItemTitle,
       );
     }
     for (const hint of edgeHints(line)) {
@@ -183,6 +214,7 @@ export function planHeuristically(input: PlanRequest): PlanResult {
           `Keep the acceptance criterion in view: ${clip(line, 120)}.`,
         ].join(' '),
         `The criterion still holds at the boundary (${hint}).`,
+        workItemTitle,
       );
     }
     if (scenarios.length >= MAX_PLAN_SCENARIOS) break;

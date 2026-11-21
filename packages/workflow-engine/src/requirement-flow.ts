@@ -42,18 +42,27 @@ const isGwt = (line: string) => /^(given|when|then|and)\b/i.test(line);
 /** First non-empty line is treated as the work item id when it looks like one. */
 export function workItemIdFromStory(raw: string): string {
   const first = raw.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? '';
+  const inline = first.match(/^(\d{1,10})\s*[—–:\-]\s+\S/)
+    ?? first.match(/^([A-Z][A-Z0-9]+-\d+)\s*[—–:\-]\s+\S/i);
+  if (inline?.[1]) return inline[1];
   if (/^\d{1,10}$/.test(first) || /^[A-Z][A-Z0-9]+-\d+$/i.test(first)) return first;
   return first.slice(0, 80);
 }
 
 /**
- * Title line from a connector-enriched story blob: the first non-empty line after the
- * work-item id, before any blank line or section heading (matches storyFromWorkItem).
+ * Title from a connector-enriched story blob: either `id — title` on the first line,
+ * or the first non-empty line after the work-item id (matches storyFromWorkItem).
  */
 export function workItemTitleFromStory(raw: string): string {
   const lines = raw.replace(/\r/g, '').split('\n');
   const firstIdx = lines.findIndex((line) => line.trim());
   if (firstIdx < 0) return '';
+  const first = (lines[firstIdx] ?? '').trim();
+  const inline = first.match(/^(?:\d{1,10}|[A-Z][A-Z0-9]+-\d+)\s*[—–:\-]\s+(.+)$/i);
+  if (inline?.[1]) {
+    const titled = stripBullet(inline[1]).trim();
+    if (titled && !isSectionHeading(titled) && !isGwt(titled)) return titled.slice(0, 200);
+  }
   for (let i = firstIdx + 1; i < lines.length; i += 1) {
     const rawLine = lines[i] ?? '';
     if (!rawLine.trim()) return '';
@@ -82,6 +91,11 @@ export function acceptanceLines(raw: string): string[] {
   for (const rawLine of bodyLines) {
     if (!rawLine) continue;
     if (start >= 0 && /^#{1,6}\s/.test(rawLine)) break;
+    // Never treat the work-item id line (bare or `id — title`) as a criterion.
+    if (/^(\d{1,10}|[A-Z][A-Z0-9]+-\d+)(\s*[—–:\-].*)?$/i.test(rawLine.trim())) {
+      flushGwt();
+      continue;
+    }
     const line = stripBullet(rawLine);
     if (!line) continue;
     if (isSectionHeading(line) && !isGwt(line)) {
@@ -100,15 +114,27 @@ export function acceptanceLines(raw: string): string[] {
   flushGwt();
 
   const workItem = workItemIdFromStory(raw);
-  const withoutId = kept.filter((line) => line !== workItem && line.toLowerCase() !== 'acceptance criteria');
+  const title = workItemTitleFromStory(raw);
+  const withoutId = kept.filter((line) => (
+    line !== workItem
+    && line !== title
+    && line.toLowerCase() !== 'acceptance criteria'
+  ));
   if (withoutId.length > 0) return withoutId.slice(0, 40);
 
   // No AC heading: prefer bullets / GWT from the whole story, skipping the id line.
   const cues: string[] = [];
   gwt = [];
   for (const rawLine of lines.map((line) => line.trim()).filter(Boolean)) {
+    if (/^(\d{1,10}|[A-Z][A-Z0-9]+-\d+)(\s*[—–:\-].*)?$/i.test(rawLine)) {
+      if (gwt.length > 0) {
+        cues.push(gwt.join(' '));
+        gwt = [];
+      }
+      continue;
+    }
     const line = stripBullet(rawLine);
-    if (!line || line === workItem || isSectionHeading(line) && !isGwt(line)) {
+    if (!line || line === workItem || line === title || isSectionHeading(line) && !isGwt(line)) {
       if (gwt.length > 0) {
         cues.push(gwt.join(' '));
         gwt = [];
@@ -127,7 +153,7 @@ export function acceptanceLines(raw: string): string[] {
       }
       continue;
     }
-    if (/^([\-*•]|\d+[.)])\s+\S/.test(rawLine) || start < 0 && line.length >= 12 && line !== workItem) {
+    if (/^([\-*•]|\d+[.)])\s+\S/.test(rawLine) || start < 0 && line.length >= 12 && line !== workItem && line !== title) {
       if (gwt.length > 0) {
         cues.push(gwt.join(' '));
         gwt = [];
@@ -272,7 +298,14 @@ export function runFlowStep(step: FlowStep): FlowResult {
       };
     }
     case 'rv.generate-test-plan': {
-      const planned = planWithPlaywrightPlanner({ workItem, application, criteria, findings: findings || undefined });
+      const workItemTitle = text(storyOut.title) || workItemTitleFromStory(text(storyOut.story) || story);
+      const planned = planWithPlaywrightPlanner({
+        workItem,
+        application,
+        criteria,
+        findings: findings || undefined,
+        workItemTitle: workItemTitle || undefined,
+      });
       return {
         summary: planned.summary,
         outputs: {
@@ -287,9 +320,16 @@ export function runFlowStep(step: FlowStep): FlowResult {
       };
     }
     case 'rv.generate-tests': {
+      const workItemTitle = text(storyOut.title) || workItemTitleFromStory(text(storyOut.story) || story);
       const source = scenarios.length > 0
         ? scenarios
-        : planWithPlaywrightPlanner({ workItem, application, criteria, findings: findings || undefined }).scenarios;
+        : planWithPlaywrightPlanner({
+          workItem,
+          application,
+          criteria,
+          findings: findings || undefined,
+          workItemTitle: workItemTitle || undefined,
+        }).scenarios;
       const generated = generateWithPlaywrightGenerator({
         workItem,
         application,

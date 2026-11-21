@@ -3,6 +3,7 @@ import {
   meaningfulCaseName,
   resolveValidationSteps,
   squashCaseDescription,
+  titledCaseName,
   toSquashUpsertInput,
 } from '../src/case-template';
 
@@ -10,6 +11,13 @@ describe('case template', () => {
   it('prefixes names with kind when missing', () => {
     expect(meaningfulCaseName('Saved card is listed', 'positive')).toBe('Positive: Saved card is listed');
     expect(meaningfulCaseName('Negative: bad login', 'negative')).toBe('Negative: bad login');
+  });
+
+  it('ties case names to the work item title', () => {
+    expect(titledCaseName({ kind: 'positive', title: 'PayNSure checkout', goal: 'saved card is listed' }))
+      .toBe('Positive: PayNSure checkout — saved card is listed');
+    expect(titledCaseName({ kind: 'negative', title: 'PayNSure checkout', goal: 'PayNSure checkout — reject declined card' }))
+      .toBe('Negative: PayNSure checkout — reject declined card');
   });
 
   it('prefers explicit validation steps over Playwright source', () => {

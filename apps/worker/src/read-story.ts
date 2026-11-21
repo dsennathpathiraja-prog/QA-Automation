@@ -25,6 +25,10 @@ export type EnrichStoryResult =
 export function workItemRefFromStory(raw: string): string | undefined {
   const first = raw.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
   if (!first) return undefined;
+  // Allow `7189 — Guest checkout` or `SHOP-12: Reset password` on one line.
+  const inline = first.match(/^(\d{1,10})\s*[—–:\-]\s+\S/)
+    ?? first.match(/^([A-Z][A-Z0-9]+-\d+)\s*[—–:\-]\s+\S/i);
+  if (inline?.[1]) return inline[1];
   if (/^\d{1,10}$/.test(first) || /^[A-Z][A-Z0-9]+-\d+$/i.test(first)) return first;
   return undefined;
 }
