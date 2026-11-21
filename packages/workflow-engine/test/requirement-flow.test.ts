@@ -99,7 +99,9 @@ describe('requirement validation stages', () => {
       params: { story: azureStyle, applicationName: 'PayNSure' },
       prior: { read_story: read.outputs },
     });
-    expect((plan.outputs.scenarios as unknown[]).length).toBeGreaterThan(9);
+    const planned = plan.outputs.scenarios as { name: string }[];
+    expect(planned.length).toBeGreaterThan(9);
+    expect(planned.every((s) => /PayNSure checkout/i.test(s.name))).toBe(true);
     expect(asText(plan.outputs.planMarkdown)).toMatch(/7189/);
   });
 
@@ -108,6 +110,20 @@ describe('requirement validation stages', () => {
     expect(read.outputs.acceptanceCriteria).toEqual([]);
     expect(read.summary).toMatch(/no separate acceptance criteria/);
     expect(read.outputs.title).toBeUndefined();
+  });
+
+  it('reads an inline id — title on the first story line', () => {
+    expect(workItemTitleFromStory('7189 — Guest checkout')).toBe('Guest checkout');
+    const read = runFlowStep({
+      id: 'read_story',
+      type: 'rv.read-user-story',
+      params: { story: '7189 — Guest checkout', applicationName: 'PayNSure' },
+      prior: {},
+    });
+    expect(read.outputs.workItem).toBe('7189');
+    expect(read.outputs.title).toBe('Guest checkout');
+    expect(read.summary).toMatch(/7189 — Guest checkout/);
+    expect(read.outputs.acceptanceCriteria).toEqual([]);
   });
 
   it('acknowledges an explicit workItemTitle param on the Read Done line', () => {

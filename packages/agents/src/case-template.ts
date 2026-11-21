@@ -20,7 +20,7 @@ export interface ValidationStep {
  * Platform library stores Playwright source in `steps`; Squash gets `validationSteps`.
  */
 export interface CaseTemplateFields {
-  /** Human title; prefer `Kind: short goal` (e.g. `Positive: Saved card is listed`). */
+  /** Human title; prefer `Kind: <work item title> — <goal>` (e.g. `Positive: PayNSure checkout — Saved card is listed`). */
   name: string;
   kind: CaseKind;
   priority: CasePriority;
@@ -50,6 +50,19 @@ export function meaningfulCaseName(name: string, kind: CaseKind): string {
   if (new RegExp(`^${prefix}\\s*:`, 'i').test(trimmed)) return trimmed.slice(0, 255);
   if (/^(positive|negative|edge)\s*:/i.test(trimmed)) return trimmed.slice(0, 255);
   return `${prefix}: ${trimmed}`.slice(0, 255);
+}
+
+/**
+ * Prefer `Kind: <work item title> — <goal>` so generated cases stay tied to the
+ * work item operators saw on the Read Done line (not a bare id or generic hint).
+ */
+export function titledCaseName(input: { kind: CaseKind; title?: string; goal: string }): string {
+  const goal = input.goal.trim() || 'scenario';
+  const title = (input.title ?? '').trim();
+  const body = !title || goal.toLowerCase().includes(title.toLowerCase())
+    ? goal
+    : `${title} — ${goal}`;
+  return meaningfulCaseName(body, input.kind);
 }
 
 /** Default priority when the model omits it. */

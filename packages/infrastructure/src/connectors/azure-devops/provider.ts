@@ -129,7 +129,7 @@ class AzureDevOpsClient implements ConnectorClient {
       }
     }
     out.push({ capability: 'scm.file.read', support: out.find((o) => o.capability === 'scm.tree.list')?.support === 'supported' ? 'supported' : 'unsupported' });
-    out.push({ capability: 'scm.code.search', support: 'partial', reason: 'Azure DevOps code search is not used. Commit messages in the selected repository are matched instead.' });
+    out.push({ capability: 'scm.code.search', support: 'partial', reason: 'Azure DevOps code search is not used. File paths in the selected repository are matched instead.' });
     out.push({ capability: 'scm.permissions.inspect', support: 'partial', reason: 'Scopes are reported only when the server sends them. Otherwise the token is assumed read-only and only GET is sent.' });
     return out;
   }
@@ -164,9 +164,28 @@ class AzureDevOpsClient implements ConnectorClient {
       return { items: ((r.body?.value ?? []) as { commitId: string; comment?: string; author?: { name?: string } }[]).map((c) => ({ sha: c.commitId, message: c.comment ?? '', author: c.author?.name })) };
     }
     if (cap.id === 'scm.code.search') {
-      const commits = (await this.handle({ id: 'scm.commit.list' } as CapabilityDescriptor, { repo: i.repo, branch: i.branch })) as { items: { sha: string; message: string }[] };
-      const q = (i.query ?? '').toLowerCase();
-      return { items: commits.items.filter((c) => c.message.toLowerCase().includes(q)).map((c) => ({ path: c.sha, snippet: c.message })) };
+      // Match human file paths (never commit SHAs — those confused Explore code "Visited files").
+      const q = (i.query ?? '').toLowerCase().trim();
+      const r = await this.get(`${base}/items`, {
+        recursionLevel: 'Full',
+        scopePath: '/',
+        'versionDescriptor.version': i.branch,
+      });
+      const entries = (r.body?.value ?? []) as { path?: string; isFolder?: boolean; gitObjectType?: string }[];
+      const items = entries
+        .filter((e) => !(e.isFolder || e.gitObjectType === 'tree'))
+        .map((e) => {
+          const raw = typeof e.path === 'string' ? e.path : '';
+          const path = raw.replace(/^\/+/, '');
+          return { path, snippet: path };
+        })
+        .filter((e) => {
+          if (!e.path) return false;
+          if (!q) return true;
+          return e.path.toLowerCase().includes(q);
+        })
+        .slice(0, 20);
+      return { items };
     }
     if (cap.id === 'scm.permissions.inspect') {
       const report = await this.inspectPermissions();

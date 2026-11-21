@@ -7,6 +7,8 @@ describe('read-story enrichment', () => {
     expect(workItemRefFromStory('7189')).toBe('7189');
     expect(workItemRefFromStory('7189\nAcceptance criteria\nPay')).toBe('7189');
     expect(workItemRefFromStory('SHOP-12\nTitle')).toBe('SHOP-12');
+    expect(workItemRefFromStory('7189 — Guest checkout')).toBe('7189');
+    expect(workItemRefFromStory('SHOP-12: Reset password')).toBe('SHOP-12');
     expect(workItemRefFromStory('just a story')).toBeUndefined();
   });
 

@@ -14,7 +14,8 @@ describe('description-aware heuristic planner', () => {
     expect(planned.scenarios.length).toBeGreaterThan(6);
     expect(planned.planMarkdown).toMatch(/# Test plan: 7189/);
     expect(planned.planArtifact).toMatch(/\.plan\.md$/);
-    expect(planned.scenarios[0]?.name).toMatch(/^Positive:/);
+    expect(planned.scenarios[0]?.name).toMatch(/^Positive: Pay with saved card/);
+    expect(planned.scenarios.every((s) => /Pay with saved card/i.test(s.name))).toBe(true);
     expect(planned.scenarios.some((s) => /declined card|missing CVV|unauthorized/i.test(s.steps))).toBe(true);
     expect(planned.scenarios.some((s) => /saved card|expired card|boundary|alternate|zero amount/i.test(s.steps))).toBe(true);
     const parsed = parsePlanMarkdown(planned.planMarkdown);

@@ -9,6 +9,8 @@
  * in-repo ports in `types.ts` instead.
  */
 
+import { titledCaseName } from './case-template';
+import { workItemTitleFromStory } from './heuristic';
 import { MAX_GENERATED_CASES, MAX_HEAL_CASES, MAX_PLAN_SCENARIOS } from './limits';
 import { planArtifactPath, renderPlanMarkdown } from './plan-markdown';
 import type {
@@ -143,14 +145,22 @@ export function plannerPortFromMcp(mcp: PlaywrightTestPlannerMcp): TestPlannerPo
         workItem: input.workItem,
         findings: input.findings,
       });
-      const scenarios = out.scenarios.slice(0, MAX_PLAN_SCENARIOS).map((row) => ({
-        name: row.name,
-        kind: row.kind,
-        priority: row.priority ?? (row.kind === 'negative' ? 'high' as const : row.kind === 'edge' ? 'low' as const : 'medium' as const),
-        criterion: row.criterion,
-        steps: row.steps,
-        expected: row.expected,
-      }));
+      const workItemTitle = workItemTitleFromStory(input.story);
+      const scenarios = out.scenarios.slice(0, MAX_PLAN_SCENARIOS).map((row) => {
+        const kind = row.kind === 'negative' || row.kind === 'edge' ? row.kind : 'positive' as const;
+        return {
+          name: titledCaseName({
+            kind,
+            title: workItemTitle,
+            goal: row.name.replace(/^(positive|negative|edge)\s*:\s*/i, '').trim() || row.criterion,
+          }),
+          kind,
+          priority: row.priority ?? (kind === 'negative' ? 'high' as const : kind === 'edge' ? 'low' as const : 'medium' as const),
+          criterion: row.criterion,
+          steps: row.steps,
+          expected: row.expected,
+        };
+      });
       const planArtifact = planArtifactPath(input.workItem, input.application);
       const planMarkdown = out.planMarkdown?.trim()
         || renderPlanMarkdown(scenarios, {

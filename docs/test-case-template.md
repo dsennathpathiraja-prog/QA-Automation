@@ -8,7 +8,7 @@ Code source of truth: [`packages/agents/src/case-template.ts`](../packages/agent
 
 | Field | Purpose | Squash mapping |
 |-------|---------|----------------|
-| `name` | Human title; prefer `Positive:` / `Negative:` / `Edge:` prefix | Test case **name** (≤255) |
+| `name` | Prefer `Positive: <work item title> — <goal>` (same for Negative / Edge) | Test case **name** (≤255) |
 | `kind` | `positive` \| `negative` \| `edge` | In **description** HTML |
 | `priority` | `high` \| `medium` \| `low` (defaults: negative→high, edge→low, else medium) | In **description** HTML |
 | `steps` | Playwright `.spec.js` source for the platform library / runner | Not pasted into Squash actions |
@@ -22,10 +22,10 @@ Code source of truth: [`packages/agents/src/case-template.ts`](../packages/agent
 
 ```json
 {
-  "name": "Positive: Saved card is listed",
+  "name": "Positive: PayNSure checkout — Saved card is listed",
   "kind": "positive",
   "priority": "medium",
-  "steps": "import { test, expect } from '@playwright/test';\n\ntest('Positive: Saved card is listed', async ({ page }) => {\n  await page.goto('/');\n  // Steps: Open checkout. Confirm saved card row.\n  await expect(page.locator('body')).toBeVisible();\n});\n",
+  "steps": "import { test, expect } from '@playwright/test';\n\ntest('Positive: PayNSure checkout — Saved card is listed', async ({ page }) => {\n  await page.goto('/');\n  // Steps: Open checkout. Confirm saved card row.\n  await expect(page.locator('body')).toBeVisible();\n});\n",
   "expected": "The saved card is listed on checkout",
   "validationSteps": [
     { "action": "Open checkout", "expected": "" },
