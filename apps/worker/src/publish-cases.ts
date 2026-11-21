@@ -1,14 +1,18 @@
+import { toSquashUpsertInput, type CaseKind, type CasePriority, type ValidationStep } from '@qa/agents';
 import { PlatformError } from '@qa/domain';
 import type { TestCaseService } from '@qa/application';
 
+/** Generated case shape after publish mapping (matches the case template). */
 export interface GeneratedCase {
   name: string;
   steps: string;
   expected: string;
   workItem: string;
   reference: string;
-  kind?: 'positive' | 'negative' | 'edge';
-  priority?: 'high' | 'medium' | 'low';
+  kind?: CaseKind;
+  priority?: CasePriority;
+  validationSteps?: ValidationStep[];
+  file?: string;
 }
 
 interface SquashResult {
@@ -18,14 +22,15 @@ interface SquashResult {
 }
 
 /**
- * Saves each generated case in Test Cases and, when a Squash connector is bound, stores it there.
- * A repeated reference is kept as the same Squash case.
+ * Saves each generated case in Test Cases and, when a Squash connector is bound, stores it there
+ * with a meaningful name, automated_test_reference, description, and action steps.
+ * A repeated reference is kept as the same Squash case (PATCH + replace steps).
  */
 export async function publishGeneratedCases(input: {
   workItem: string;
   cases: GeneratedCase[];
   testCases: TestCaseService;
-  squash?: (item: GeneratedCase) => Promise<SquashResult>;
+  squash?: (item: GeneratedCase, upsert: ReturnType<typeof toSquashUpsertInput>) => Promise<SquashResult>;
 }): Promise<{ summary: string }> {
   const workItem = input.workItem || 'work-item';
   if (input.cases.length === 0) return { summary: `No test cases were generated for ${workItem}. Nothing was sent to Squash.` };
@@ -35,9 +40,20 @@ export async function publishGeneratedCases(input: {
   let squashError = '';
   for (const item of input.cases) {
     let squashId = '';
+    const upsert = toSquashUpsertInput({
+      name: item.name,
+      kind: item.kind,
+      priority: item.priority,
+      steps: item.steps,
+      expected: item.expected,
+      validationSteps: item.validationSteps,
+      workItem: item.workItem || workItem,
+      reference: item.reference,
+      file: item.file,
+    });
     if (input.squash && !squashError) {
       try {
-        const saved = await input.squash(item);
+        const saved = await input.squash(item, upsert);
         squashId = saved.id;
         squashIds.push(saved.id);
         references.push(item.reference);
@@ -54,7 +70,7 @@ export async function publishGeneratedCases(input: {
     await input.testCases.fileUnderWorkItem(
       { id: 'worker' },
       {
-        name: item.name,
+        name: upsert.name,
         steps: item.steps,
         expected: item.expected,
         workItem: item.workItem || workItem,

@@ -18,12 +18,19 @@ export const PlanOutputSchema = z.object({
   scenarios: z.array(PlannerScenarioSchema).min(1).max(MAX_PLAN_SCENARIOS),
 });
 
+export const ValidationStepSchema = z.object({
+  action: z.string().min(1).max(2_000),
+  expected: z.string().max(1_000).optional().default(''),
+});
+
 export const GeneratedCaseSchema = z.object({
   name: z.string().min(1).max(160),
   kind: Kind,
   priority: Priority.optional(),
   steps: z.string().min(1).max(8_000),
   expected: z.string().min(1).max(1_000),
+  /** Optional Squash-facing validation steps; publish derives them when omitted. */
+  validationSteps: z.array(ValidationStepSchema).max(40).optional(),
   file: z.string().max(200).optional(),
   testId: z.string().max(80).optional(),
 });

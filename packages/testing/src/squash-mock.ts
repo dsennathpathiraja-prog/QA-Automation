@@ -202,6 +202,16 @@ export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock>
           row.steps.push(step);
           return send(201, step);
         }
+        // SquashTM 15.0.4: DELETE /test-steps/{id} removes one action step before republish replaces them.
+        if (req.method === 'DELETE' && (created = path.match(/^\/test-steps\/(\d+)$/))) {
+          const stepId = Number(created[1]);
+          for (const row of cases) {
+            const before = row.steps.length;
+            row.steps = row.steps.filter((s: { id?: number }) => s.id !== stepId);
+            if (row.steps.length !== before) return send(204, '');
+          }
+          return send(404, { message: 'not found' });
+        }
         if (req.method === 'POST' && (created = path.match(/^\/iterations\/(\d+)\/executions$/))) {
           const id = 5000 + EXECUTIONS.length + 1;
           const row = {

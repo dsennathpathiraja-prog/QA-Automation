@@ -32,7 +32,7 @@ function repairStub(item: GeneratedPlaywrightCase, reason: string): GeneratedPla
     '});',
     '',
   ].join('\n');
-  return { ...item, steps: source };
+  return { ...item, steps: source, validationSteps: item.validationSteps };
 }
 
 /** Offline healer: rewrite clearly broken platform-owned stubs; leave healthy cases alone. */

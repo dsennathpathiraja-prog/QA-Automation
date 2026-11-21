@@ -89,6 +89,7 @@ Source repositories remain read-only. See [`adr/0012-source-repositories-are-rea
 
 ## Related docs
 
+- [`test-case-template.md`](test-case-template.md) — per-case fields (name, kind, priority, validation steps) through Squash
 - [`playwright-agents-mcp.md`](playwright-agents-mcp.md) — enable model / browser / Cursor MCP
 - [`requirement-validation-implementation.md`](requirement-validation-implementation.md) — phased build plan
 - [`requirement-validation-phases.md`](requirement-validation-phases.md) — Phase 6 store / Phase 7 execute split
