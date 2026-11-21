@@ -152,6 +152,50 @@ describe('browser explorer', () => {
     expect(evaluateCalls).toBe(1);
   });
 
+  it('re-navigates once when evaluate reports no open pages', async () => {
+    let evaluates = 0;
+    let navigates = 0;
+    const browser: BrowserAutomationPort = {
+      async openSession() {},
+      async navigate(url) {
+        navigates += 1;
+        return { finalUrl: url };
+      },
+      async waitFor() {},
+      async snapshot() { return { accessibilityTree: '', url: 'http://sdk.paynsure.internal/shop' }; },
+      async evaluate() {
+        evaluates += 1;
+        if (evaluates === 1) {
+          throw new PlatformError('transient', 'Playwright browser_evaluate has no open page (MCP session lost the tab after navigate).');
+        }
+        return {
+          resultText: JSON.stringify({
+            url: 'http://sdk.paynsure.internal/shop',
+            title: 'Metro Mobile Store',
+            readyState: 'complete',
+            bodyText: 'Add to cart Proceed to checkout',
+            headings: ['Metro Mobile Store'],
+            buttons: ['Add to cart', 'Proceed to checkout'],
+            links: [],
+            fields: ['Search products'],
+            iframes: [],
+            frameDocs: [],
+          }),
+        };
+      },
+      async screenshot() { return { artifactBase64: '' }; },
+      async closeSession() {},
+    };
+    const out = await createBrowserExplorer(browser).explore({
+      application: 'PayNSure',
+      url: 'http://sdk.paynsure.internal/shop',
+      scenarios: [],
+    });
+    expect(navigates).toBeGreaterThanOrEqual(2);
+    expect(evaluates).toBe(2);
+    expect(out.findings).toMatch(/Add to cart/);
+  });
+
   it('surfaces circuit-breaker probe errors with Test connection guidance', async () => {
     const browser: BrowserAutomationPort = {
       async openSession() {},

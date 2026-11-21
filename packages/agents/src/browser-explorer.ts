@@ -38,19 +38,47 @@ async function settleForStorefront(browser: BrowserAutomationPort, seconds = 2):
   await browser.waitFor({ timeSeconds: seconds }).catch(() => undefined);
 }
 
-async function probeDom(browser: BrowserAutomationPort): Promise<{ probe?: DomProbeResult; error?: string }> {
-  if (!browser.evaluate) {
+async function probeDom(
+  browser: BrowserAutomationPort,
+  opts?: { reNavigateUrl?: string },
+): Promise<{ probe?: DomProbeResult; error?: string }> {
+  const evaluate = browser.evaluate;
+  if (!evaluate) {
     return { error: 'browser.evaluate is not available on this browser port' };
   }
-  try {
-    const out = await browser.evaluate({ script: DOM_PROBE_SCRIPT });
+  const run = async () => {
+    const out = await evaluate({ script: DOM_PROBE_SCRIPT });
     const fromResult = parseEvaluateToolResult(out.resultText || '');
     if (fromResult) return { probe: fromResult };
     const fromTree = parseEvaluateToolResult(out.accessibilityTree || out.resultText || '');
     if (fromTree) return { probe: fromTree };
+    const raw = `${out.resultText || ''}\n${out.accessibilityTree || ''}`;
+    if (/No open pages?/i.test(raw) || /No open tabs/i.test(raw)) {
+      return { error: raw.trim() || 'No open pages available' };
+    }
     return { error: 'browser.evaluate returned no parseable DOM probe JSON' };
+  };
+  const lostPage = (msg: string) => /No open pages?/i.test(msg) || /No open tabs/i.test(msg) || /lost the tab/i.test(msg);
+  try {
+    const first = await run();
+    if (!first.error || !lostPage(first.error) || !opts?.reNavigateUrl) {
+      return first;
+    }
+    // Session lost the tab — navigate again on the same platform sessionId, then probe once more.
+    await browser.navigate(opts.reNavigateUrl);
+    await settleForStorefront(browser, 2);
+    return await run();
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'evaluate failed';
+    if (lostPage(msg) && opts?.reNavigateUrl) {
+      try {
+        await browser.navigate(opts.reNavigateUrl);
+        await settleForStorefront(browser, 2);
+        return await run();
+      } catch (e2) {
+        return { error: e2 instanceof Error ? e2.message : msg };
+      }
+    }
     return { error: msg };
   }
 }
@@ -112,7 +140,7 @@ async function captureActionableSnapshot(
 
     // Probe DOM at most once per capture — repeated evaluate failures used to open the circuit breaker.
     if (!probedOnce) {
-      const probed = await probeDom(browser);
+      const probed = await probeDom(browser, { reNavigateUrl: targetUrl });
       probedOnce = true;
       lastProbe = probed.probe;
       if (probed.error) lastProbeError = probed.error;
@@ -216,7 +244,7 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         // One early DOM probe when navigate aria is empty — reused by capture (no evaluate spam).
         let earlyProbe: { probe?: DomProbeResult; error?: string } | undefined;
         if (details.length === 0 && browser.evaluate) {
-          earlyProbe = await probeDom(browser);
+          earlyProbe = await probeDom(browser, { reNavigateUrl: input.url });
           throwIfNavigationFailed({
             targetUrl: input.url,
             pageUrl: earlyProbe.probe?.url || nav.finalUrl,
