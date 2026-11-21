@@ -16,7 +16,7 @@ const connectors = {
     return { id, providerKey: 'sample', category: id, name: id, status: 'connected' as const, enabled: true, accessMode: 'read_only' as const, config: {}, configVersion: 1, createdAt: new Date(), updatedAt: new Date() };
   },
   async capabilityStates() {
-    return ['workitem.read', 'workitem.attachment.read', 'workitem.search', 'browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.interact', 'browser.screenshot', 'scm.tree.list', 'scm.file.read', 'scm.code.search', 'scm.branch.list', 'tm.testcase.upsert', 'tm.testcase.read', 'tm.execution.upsert', 'tm.execution.status.update', 'tm.attachment.upload', 'tm.project.list', 'tm.suite.list', 'tm.campaign.list', 'tm.testcase.list', 'tm.tag.list', 'runner.test.execute', 'runner.test.list'].map((capability) => ({ capability, support: 'supported' as const, granted: true }));
+    return ['workitem.read', 'workitem.attachment.read', 'workitem.search', 'browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.wait', 'browser.evaluate', 'browser.interact', 'browser.screenshot', 'scm.tree.list', 'scm.file.read', 'scm.code.search', 'scm.branch.list', 'tm.testcase.upsert', 'tm.testcase.read', 'tm.execution.upsert', 'tm.execution.status.update', 'tm.attachment.upload', 'tm.project.list', 'tm.suite.list', 'tm.campaign.list', 'tm.testcase.list', 'tm.tag.list', 'runner.test.execute', 'runner.test.list'].map((capability) => ({ capability, support: 'supported' as const, granted: true }));
   },
 } as unknown as ConnectorRepository;
 

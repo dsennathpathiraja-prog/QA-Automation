@@ -24,7 +24,7 @@ const rg = (type: string, extra: Omit<StepType, 'type' | 'workflow'>): StepType 
  */
 export const STEP_TYPES: readonly StepType[] = [
   rv('rv.read-user-story', { mandatory: true, after: [], pause: 'boundary', roles: [{ role: 'workItemSource', required: ['workitem.read', 'workitem.attachment.read'] }] }),
-  rv('rv.explore-ui', { mandatory: false, after: ['rv.read-user-story'], pause: 'safe', roles: [{ role: 'browserAutomation', required: ['browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.interact', 'browser.screenshot'] }] }),
+  rv('rv.explore-ui', { mandatory: false, after: ['rv.read-user-story'], pause: 'safe', roles: [{ role: 'browserAutomation', required: ['browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.wait', 'browser.evaluate', 'browser.interact', 'browser.screenshot'] }] }),
   rv('rv.explore-code', { mandatory: false, after: ['rv.read-user-story'], pause: 'safe', roles: [{ role: 'sourceRepo', required: ['scm.tree.list', 'scm.file.read', 'scm.code.search', 'scm.branch.list'] }] }),
   rv('rv.consolidate-findings', { mandatory: false, mandatoryIfAnyEnabled: ['rv.explore-ui', 'rv.explore-code'], after: ['rv.explore-ui', 'rv.explore-code'], pause: 'boundary', roles: [] }),
   rv('rv.generate-test-plan', { mandatory: true, after: ['rv.consolidate-findings'], pause: 'boundary', roles: [] }),

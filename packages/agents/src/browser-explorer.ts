@@ -2,7 +2,9 @@ import { PlatformError } from '@qa/domain';
 import {
   DOM_PROBE_SCRIPT,
   describeEmptyCapture,
+  dnsExtraHostsGuidance,
   domProbeIsActionable,
+  isBrowserNavigationFailure,
   parseEvaluateToolResult,
   parsedSnapshotFromDomProbe,
   type DomProbeResult,
@@ -21,6 +23,7 @@ type Captured = {
   parsed: ReturnType<typeof parseMcpPageSnapshot>;
   accessibilityTree: string;
   probe?: DomProbeResult;
+  probeError?: string;
 };
 
 /**
@@ -35,17 +38,33 @@ async function settleForStorefront(browser: BrowserAutomationPort, seconds = 2):
   await browser.waitFor({ timeSeconds: seconds }).catch(() => undefined);
 }
 
-async function probeDom(browser: BrowserAutomationPort): Promise<DomProbeResult | undefined> {
-  if (!browser.evaluate) return undefined;
+async function probeDom(browser: BrowserAutomationPort): Promise<{ probe?: DomProbeResult; error?: string }> {
+  if (!browser.evaluate) {
+    return { error: 'browser.evaluate is not available on this browser port' };
+  }
   try {
     const out = await browser.evaluate({ script: DOM_PROBE_SCRIPT });
     const fromResult = parseEvaluateToolResult(out.resultText || '');
-    if (fromResult) return fromResult;
-    // Some connectors return only accessibilityTree wrapping the evaluate payload.
-    return parseEvaluateToolResult(out.accessibilityTree || out.resultText || '');
-  } catch {
-    return undefined;
+    if (fromResult) return { probe: fromResult };
+    const fromTree = parseEvaluateToolResult(out.accessibilityTree || out.resultText || '');
+    if (fromTree) return { probe: fromTree };
+    return { error: 'browser.evaluate returned no parseable DOM probe JSON' };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'evaluate failed';
+    return { error: msg };
   }
+}
+
+function throwIfNavigationFailed(input: {
+  targetUrl: string;
+  pageUrl?: string;
+  raw?: string;
+  probe?: DomProbeResult;
+}): void {
+  if (!isBrowserNavigationFailure({ url: input.pageUrl || input.targetUrl, rawSnapshot: input.raw, probe: input.probe })) {
+    return;
+  }
+  throw new PlatformError('transient', dnsExtraHostsGuidance(input.targetUrl));
 }
 
 /**
@@ -55,12 +74,14 @@ async function probeDom(browser: BrowserAutomationPort): Promise<DomProbeResult 
 async function captureActionableSnapshot(
   browser: BrowserAutomationPort,
   fallbackUrl: string,
+  targetUrl: string,
 ): Promise<Captured> {
   const attempts = 4;
   let lastRaw = '';
   let lastUrl = fallbackUrl;
   let lastTitle = '';
   let lastProbe: DomProbeResult | undefined;
+  let lastProbeError: string | undefined;
 
   await settleForStorefront(browser, 2.5);
 
@@ -78,6 +99,8 @@ async function captureActionableSnapshot(
       // Provider may throw on a truly empty MCP payload; retry after wait.
     }
 
+    throwIfNavigationFailed({ targetUrl, pageUrl: lastUrl, raw: lastRaw, probe: lastProbe });
+
     const parsed = parseMcpPageSnapshot(lastRaw);
     if (!parsed.url && lastUrl) parsed.url = lastUrl;
     if (!parsed.title && lastTitle) parsed.title = lastTitle;
@@ -86,7 +109,10 @@ async function captureActionableSnapshot(
     }
 
     // Aria empty / title-only — probe the live DOM (and same-origin iframes).
-    lastProbe = await probeDom(browser);
+    const probed = await probeDom(browser);
+    lastProbe = probed.probe;
+    if (probed.error) lastProbeError = probed.error;
+    throwIfNavigationFailed({ targetUrl, pageUrl: lastProbe?.url || lastUrl, raw: lastRaw, probe: lastProbe });
     if (domProbeIsActionable(lastProbe)) {
       const fromDom = parsedSnapshotFromDomProbe(lastProbe!);
       return { parsed: fromDom, accessibilityTree: snapshotArtifactBody(fromDom), probe: lastProbe };
@@ -107,10 +133,17 @@ async function captureActionableSnapshot(
     return { parsed: fromDom, accessibilityTree: snapshotArtifactBody(fromDom), probe: lastProbe };
   }
 
+  throwIfNavigationFailed({ targetUrl, pageUrl: lastProbe?.url || lastUrl, raw: lastRaw, probe: lastProbe });
+
   const parsed = parseMcpPageSnapshot(lastRaw);
   if (!parsed.url && lastUrl) parsed.url = lastUrl;
   if (!parsed.title && lastTitle) parsed.title = lastTitle;
-  return { parsed, accessibilityTree: snapshotArtifactBody(parsed) || lastRaw, probe: lastProbe };
+  return {
+    parsed,
+    accessibilityTree: snapshotArtifactBody(parsed) || lastRaw,
+    probe: lastProbe,
+    probeError: lastProbeError,
+  };
 }
 
 /**
@@ -142,12 +175,45 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         : (input.criteria?.length ? input.criteria : [input.application]).map((c) => `Explore: ${c}`);
       const details: ExploreFinding[] = [];
       const probes: Array<DomProbeResult | undefined> = [];
+      const probeErrors: Array<string | undefined> = [];
       const limit = Math.min(input.maxPages ?? 5, Math.max(1, labels.length), 8);
       try {
         await browser.openSession();
         const nav = await browser.navigate(input.url);
+
+        // Fail fast on chrome-error / DNS before spending retries on empty aria trees.
+        throwIfNavigationFailed({
+          targetUrl: input.url,
+          pageUrl: nav.finalUrl,
+          raw: nav.accessibilityTree,
+        });
+        if (nav.accessibilityTree || browser.evaluate) {
+          const early = await probeDom(browser);
+          throwIfNavigationFailed({
+            targetUrl: input.url,
+            pageUrl: early.probe?.url || nav.finalUrl,
+            raw: nav.accessibilityTree,
+            probe: early.probe,
+          });
+          // If navigate landed on a blank aria tree but the DOM already has shop cues, use them.
+          if (domProbeIsActionable(early.probe) && labels.length === 1) {
+            const fromDom = parsedSnapshotFromDomProbe(early.probe!);
+            const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
+            details.push({
+              scenarioName: labels[0]!,
+              url: fromDom.url || nav.finalUrl || input.url,
+              title: fromDom.title || undefined,
+              snapshotExcerpt: snapshotArtifactBody(fromDom),
+              cuesSummary: summarizeSnapshotForFindings(fromDom),
+              screenshotBase64: shot.artifactBase64 || undefined,
+            });
+            probes.push(early.probe);
+            probeErrors.push(undefined);
+          }
+        }
+
         // Prefer a snapshot already attached to navigate when the tree is rich enough.
-        if (nav.accessibilityTree) {
+        if (details.length === 0 && nav.accessibilityTree) {
           const fromNav = parseMcpPageSnapshot(nav.accessibilityTree);
           if (!fromNav.url) fromNav.url = nav.finalUrl || input.url;
           if (!fromNav.title && nav.title) fromNav.title = nav.title;
@@ -162,14 +228,16 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
               screenshotBase64: shot.artifactBase64 || undefined,
             });
             probes.push(undefined);
+            probeErrors.push(undefined);
           }
         }
 
         for (let i = details.length; i < limit; i += 1) {
           const label = labels[i] ?? `page-${i + 1}`;
-          const { parsed, accessibilityTree, probe } = await captureActionableSnapshot(
+          const { parsed, accessibilityTree, probe, probeError } = await captureActionableSnapshot(
             browser,
             nav.finalUrl || input.url,
+            input.url,
           );
           const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
           details.push({
@@ -181,6 +249,7 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
             screenshotBase64: shot.artifactBase64 || undefined,
           });
           probes.push(probe);
+          probeErrors.push(probeError);
         }
       } finally {
         await browser.closeSession().catch(() => undefined);
@@ -205,6 +274,7 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
           title: sample?.title,
           rawSnapshot: sample?.snapshotExcerpt,
           probe,
+          probeError: probeErrors[0],
         });
         throw new PlatformError(
           'transient',

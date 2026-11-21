@@ -136,9 +136,12 @@ services:
     read_only: true
     tmpfs: [/tmp]
     expose: ["8931"]
-    # Private app hosts that resolve on the Docker host (e.g. sdk.paynsure.internal via /etc/hosts)
-    # are invisible inside this container unless listed here — otherwise Explore UI gets a blank Chromium page.
-    # extra_hosts: ["sdk.paynsure.internal:host-gateway"]
+    # Private app hosts that resolve on the Docker host are invisible here unless listed.
+    # Default PayNSure shop → host-gateway; override with PLAYWRIGHT_MCP_SHOP_IP=<LAN-IP> when needed.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "sdk.paynsure.internal:${PLAYWRIGHT_MCP_SHOP_IP:-host-gateway}"
+      - "${PLAYWRIGHT_MCP_EXTRA_HOST:-host.docker.internal:host-gateway}"
     healthcheck:
       test: ["CMD", "node", "-e", "require('net').connect(8931,'127.0.0.1',()=>process.exit(0)).on('error',()=>process.exit(1))"]
       interval: 15s

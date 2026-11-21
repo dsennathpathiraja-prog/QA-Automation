@@ -122,7 +122,7 @@ const rvParams: WfParameter[] = [
 
 function rvConnectors(browser: boolean | 'off' | 'optional', repo: boolean | 'off' | 'optional'): WfConnector[] {
   const rows = [connector('workItemSource', 'work-item', ['workitem.read', 'workitem.attachment.read'], ['workitem.search'])];
-  if (browser !== 'off') rows.push(connector('browserAutomation', 'browser-automation', ['browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.interact', 'browser.screenshot'], [], browser === true));
+  if (browser !== 'off') rows.push(connector('browserAutomation', 'browser-automation', ['browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.wait', 'browser.evaluate', 'browser.interact', 'browser.screenshot'], [], browser === true));
   if (repo !== 'off') rows.push(connector('sourceRepo', 'source-repo', ['scm.tree.list', 'scm.file.read', 'scm.code.search', 'scm.branch.list'], [], repo === true));
   rows.push(
     connector('testManagement', 'test-management', ['tm.testcase.read'], ['tm.testcase.upsert', 'tm.execution.upsert', 'tm.execution.status.update', 'tm.attachment.upload']),
