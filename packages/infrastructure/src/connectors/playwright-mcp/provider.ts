@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PlatformError } from '@qa/domain';
+import { PlatformError, urlAllowedByAllowlist } from '@qa/domain';
 import type { AdapterDeps, CapabilityDescriptor, CapabilityProbeEntry, ConnectionTestResult, ConnectorClient, ConnectorProvider, PermissionReport } from '@qa/connector-sdk';
 import { joinUrl, requestJson, required } from '../rest';
 
@@ -7,7 +7,7 @@ export const PLAYWRIGHT_PROVIDER_KEY = 'playwright-mcp';
 
 const ConfigSchema = z.object({
   baseUrl: z.string().url(),
-  /** Comma-separated origins the browser may open, for example https://shop.example.com */
+  /** Comma-separated origins or host patterns the browser may open, for example https://shop.example.com or shop.example.com */
   allowedOrigins: z.string().max(2000).default(''),
   /** Name of a browser session a person captured once, including any MFA prompt. The platform never enters the second factor. */
   savedSessionName: z.string().max(120).optional(),
@@ -36,7 +36,7 @@ export const playwrightMcpProvider: ConnectorProvider = {
     requiresInternet: false,
     verification: 'live-capable',
     wizard: [
-      { key: 'connection', title: 'Browser server', fields: [{ name: 'baseUrl', label: 'Playwright server address (from the worker: http://playwright-mcp:8931 — start Compose profile browser first)', type: 'url', required: true }, { name: 'allowedOrigins', label: 'Application addresses the browser may open, separated by commas', type: 'text', required: true }, { name: 'savedSessionName', label: 'Saved browser session (optional, used for MFA)', type: 'text', required: false }] },
+      { key: 'connection', title: 'Browser server', fields: [{ name: 'baseUrl', label: 'Playwright server address (from the worker: http://playwright-mcp:8931 — start Compose profile browser first)', type: 'url', required: true }, { name: 'allowedOrigins', label: 'Application addresses or host names the browser may open, separated by commas', type: 'text', required: true }, { name: 'savedSessionName', label: 'Saved browser session (optional, used for MFA)', type: 'text', required: false }] },
       { key: 'test', title: 'Test connection', action: 'test-connection' },
       { key: 'probe', title: 'Check what this server can do', action: 'probe-capabilities' },
       { key: 'review', title: 'Review', action: 'review' },
@@ -191,9 +191,16 @@ class PlaywrightClient implements ConnectorClient {
     if (cap.id === 'browser.navigate') {
       required(i.sessionId, 'sessionId');
       const url = required(i.url, 'Address');
-      const origin = new URL(url).origin;
+      let origin: string;
+      try {
+        origin = new URL(url).origin;
+      } catch {
+        throw new PlatformError('validation', 'invalid URL');
+      }
       const allowed = this.origins();
-      if (allowed.length === 0 || !allowed.includes(origin)) throw new PlatformError('denied', `The browser may not open ${origin}. Add it to the application addresses for this connector.`);
+      if (allowed.length === 0 || !urlAllowedByAllowlist(url, allowed)) {
+        throw new PlatformError('denied', `The browser may not open ${origin}. Add it to the application addresses for this connector.`);
+      }
       await this.rpcCall('tools/call', { name: 'browser_navigate', arguments: { url, session: this.cfg.savedSessionName } });
       return { finalUrl: url };
     }

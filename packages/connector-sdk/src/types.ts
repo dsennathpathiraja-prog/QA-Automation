@@ -182,7 +182,10 @@ export interface ExecutionPolicy {
   boundRoles: Readonly<Record<string, string>>;
   agentGrants: Readonly<Record<string, readonly AgentGrant[]>>;
   environmentKind?: 'development' | 'qa' | 'staging' | 'uat' | 'production';
-  /** Environment origins browser capabilities may navigate to. */
+  /**
+   * Origins and/or host patterns browser capabilities may navigate to
+   * (environment application URL, approved application hosts, Playwright connector addresses).
+   */
   allowedOrigins?: readonly string[];
   interactionPolicy?: 'observe-only' | 'observe-and-safe-actions';
 }

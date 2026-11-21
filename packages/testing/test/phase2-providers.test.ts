@@ -242,6 +242,18 @@ describe('source and work-item providers', () => {
     expect(await client.handle({ id: 'browser.snapshot' } as never, { sessionId: opened.sessionId }, {} as never)).toMatchObject({ accessibilityTree: 'button Checkout' });
   });
 
+  it('accepts a bare host in Playwright allowedOrigins (URL vs host)', async () => {
+    const m = await mock((hit) => {
+      const body = JSON.parse(hit.body || '{}') as { method?: string };
+      if (body.method === 'initialize') return { body: { result: { serverInfo: { name: 'playwright', version: '1.2.3' } } } };
+      return { body: { result: { content: [] } } };
+    });
+    const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'sdk.paynsure.internal' }, undefined, { http: m.http });
+    await expect(client.handle({ id: 'browser.navigate' } as never, { url: 'https://sdk.paynsure.internal/app' }, {} as never)).resolves.toMatchObject({
+      finalUrl: 'https://sdk.paynsure.internal/app',
+    });
+  });
+
   it('explains a Playwright 403 as a host-name refusal', async () => {
     const m = await mock(() => ({ status: 403, body: { error: 'forbidden' } }));
     const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'https://shop.example.com' }, undefined, { http: m.http });

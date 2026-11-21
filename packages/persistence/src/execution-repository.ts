@@ -1,9 +1,9 @@
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { PlatformError } from '@qa/domain';
 import type { ExecutionPolicy } from '@qa/connector-sdk';
 import type { ExecutionEvent, ExecutionRecord, ExecutionRepository, ExecutionStatus, NewExecution } from '@qa/application';
 import type { Db } from './db';
-import { workflowEvent, workflowExecution } from './schema';
+import { connectorInstance, egressAllowlist, environment, workflowEvent, workflowExecution } from './schema';
 
 const toRecord = (r: typeof workflowExecution.$inferSelect): ExecutionRecord => ({
   id: r.id,
@@ -17,6 +17,8 @@ const toRecord = (r: typeof workflowExecution.$inferSelect): ExecutionRecord => 
 });
 
 const rowsOf = (result: unknown) => (result as { rows: Record<string, unknown>[] }).rows;
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export class PgExecutionRepository implements ExecutionRepository {
   constructor(private readonly db: Db) {}
@@ -122,8 +124,17 @@ export class PgExecutionRepository implements ExecutionRepository {
 export class PgRunPolicyStore {
   constructor(private readonly db: Db) {}
 
+  /**
+   * Builds policy fresh on every invoke (no worker-side cache of hosts/origins).
+   * Browser allowlist comes from the selected environment URL, approved
+   * *application* hosts, and the bound Playwright connector addresses.
+   */
   async get(executionId: string): Promise<ExecutionPolicy | undefined> {
-    const [row] = await this.db.select({ definition: workflowExecution.definition }).from(workflowExecution).where(eq(workflowExecution.id, executionId)).limit(1);
+    const [row] = await this.db
+      .select({ definition: workflowExecution.definition, params: workflowExecution.params })
+      .from(workflowExecution)
+      .where(eq(workflowExecution.id, executionId))
+      .limit(1);
     if (!row) return undefined;
     const spec = (row.definition as { spec?: { connectors?: { role?: string; binding?: { connectorInstanceId?: string | null } }[]; policy?: { capabilityDeny?: string[] } } } | null)?.spec;
     const boundRoles: Record<string, string> = {};
@@ -131,6 +142,64 @@ export class PgRunPolicyStore {
       const id = connector.binding?.connectorInstanceId;
       if (connector.role && id) boundRoles[connector.role] = id;
     }
-    return { capabilityDeny: spec?.policy?.capabilityDeny ?? ['scm.write.*'], boundRoles, agentGrants: {} };
+
+    const allowed = new Set<string>();
+    const params = row.params && typeof row.params === 'object' ? row.params as Record<string, unknown> : {};
+    const envRef = typeof params.environment === 'string' ? params.environment.trim() : '';
+    let environmentKind: ExecutionPolicy['environmentKind'];
+
+    if (envRef) {
+      const env = await this.resolveEnvironment(envRef);
+      if (env) {
+        environmentKind = env.kind as ExecutionPolicy['environmentKind'];
+        this.addApplicationUrl(allowed, env.applicationUrl);
+      }
+    }
+
+    // Always re-read application-purpose hosts (category), never a stale worker snapshot.
+    const appHosts = await this.db.select({ hostPattern: egressAllowlist.hostPattern }).from(egressAllowlist).where(eq(egressAllowlist.purpose, 'application'));
+    for (const h of appHosts) {
+      if (h.hostPattern) allowed.add(h.hostPattern);
+    }
+
+    const browserId = boundRoles.browserAutomation;
+    if (browserId) {
+      const [inst] = await this.db.select({ config: connectorInstance.config }).from(connectorInstance).where(eq(connectorInstance.id, browserId)).limit(1);
+      const raw = inst?.config && typeof inst.config === 'object' ? (inst.config as Record<string, unknown>).allowedOrigins : undefined;
+      if (typeof raw === 'string') {
+        for (const part of raw.split(',')) {
+          const entry = part.trim();
+          if (entry) allowed.add(entry);
+        }
+      }
+    }
+
+    return {
+      capabilityDeny: spec?.policy?.capabilityDeny ?? ['scm.write.*'],
+      boundRoles,
+      agentGrants: {},
+      environmentKind,
+      allowedOrigins: [...allowed],
+    };
+  }
+
+  private async resolveEnvironment(ref: string): Promise<{ kind: string; applicationUrl: string } | undefined> {
+    const live = isNull(environment.deletedAt);
+    if (UUID.test(ref)) {
+      const [byId] = await this.db.select({ kind: environment.kind, applicationUrl: environment.applicationUrl }).from(environment).where(and(eq(environment.id, ref), live)).limit(1);
+      if (byId) return byId;
+    }
+    const [byName] = await this.db.select({ kind: environment.kind, applicationUrl: environment.applicationUrl }).from(environment).where(and(eq(environment.name, ref), live)).limit(1);
+    return byName;
+  }
+
+  private addApplicationUrl(allowed: Set<string>, applicationUrl: string) {
+    try {
+      const url = new URL(applicationUrl);
+      allowed.add(url.origin);
+      allowed.add(url.hostname.toLowerCase());
+    } catch {
+      /* ignore a bad stored URL; host list still applies */
+    }
   }
 }
