@@ -16,19 +16,8 @@ const ConfigSchema = z.object({
 const SecretSchema = z.object({ token: z.string().min(20).max(500) });
 const API = '7.1';
 
-/** Fields requested on workitem.read so System.Title is always present in the payload. */
-const READ_FIELDS = [
-  'System.Id',
-  'System.Title',
-  'System.State',
-  'System.WorkItemType',
-  'System.Description',
-  'Microsoft.VSTS.TCM.ReproSteps',
-  'Microsoft.VSTS.Common.AcceptanceCriteria',
-].join(',');
-
 /**
- * Azure WIT returns `{ fields: { 'System.Title': '…' } }`.
+ * Azure WIT returns `{ fields: { 'System.Title': '…' } }` (including `$expand=All`).
  * Some gateways nest again as `{ fields: { fields: { 'System.Title': '…' } } }`.
  */
 export function azureWorkItemFields(body: unknown): Record<string, unknown> {
@@ -184,19 +173,12 @@ class AzureBoardsClient implements ConnectorClient {
     }
     if (cap.id === 'workitem.read') {
       const acField = this.cfg.acceptanceCriteriaField;
-      const fieldList = READ_FIELDS.includes(acField) ? READ_FIELDS : `${READ_FIELDS},${acField}`;
       const id = required(i.id, 'Work item id');
-      const path = `/${encodeURIComponent(this.cfg.project)}/_apis/wit/workitems/${encodeURIComponent(id)}`;
-      // Prefer an explicit field list so System.Title is always requested; fall back to a
-      // full work-item GET (and WIQL) when a gateway returns the item without the title.
-      let r = await this.call('GET', path, { fields: fieldList });
-      let f = azureWorkItemFields(r.body);
+      // Org-scoped expand=All matches Dasun's verified curl — no project path required.
+      // GET https://dev.azure.com/{org}/_apis/wit/workitems/{id}?$expand=All&api-version=7.1
+      const r = await this.call('GET', `/_apis/wit/workitems/${encodeURIComponent(id)}`, { $expand: 'All' });
+      const f = azureWorkItemFields(r.body);
       let title = azureWorkItemTitle(r.body);
-      if (!title) {
-        r = await this.call('GET', path);
-        f = azureWorkItemFields(r.body);
-        title = azureWorkItemTitle(r.body);
-      }
       if (!title) {
         title = await this.titleFromWiql(id);
       }
@@ -229,7 +211,7 @@ class AzureBoardsClient implements ConnectorClient {
     throw new PlatformError('unsupported', `Azure Boards does not implement ${cap.id}`);
   }
 
-  /** WIQL fallback when GET omits System.Title (seen on some orgs / field projections). */
+  /** WIQL fallback when expand=All still omits System.Title. */
   private async titleFromWiql(id: string): Promise<string> {
     const numeric = Number(id);
     if (!Number.isInteger(numeric) || numeric <= 0) return '';
