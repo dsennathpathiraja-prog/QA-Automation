@@ -12,6 +12,10 @@ export interface StoryEnrichment {
   story: string;
   workItem: string;
   title?: string;
+  /** Short plain-text description for the Read Done line (optional). */
+  descriptionExcerpt?: string;
+  /** Set when the connector returned the item but System.Title was empty. */
+  missingTitleReason?: string;
   fetched: boolean;
 }
 
@@ -33,10 +37,21 @@ export function workItemRefFromStory(raw: string): string | undefined {
   return undefined;
 }
 
-/** Builds the story blob the planner reads: id, title, description, then an Acceptance criteria section. */
+/** One-line excerpt of the work item description for the Read Done acknowledgement. */
+export function descriptionExcerpt(raw: string | undefined, max = 140): string {
+  if (!raw) return '';
+  const flat = raw.replace(/\s+/g, ' ').trim();
+  if (!flat) return '';
+  if (flat.length <= max) return flat;
+  const cut = flat.slice(0, max - 1);
+  const at = cut.lastIndexOf(' ');
+  return `${(at > 40 ? cut.slice(0, at) : cut).trimEnd()}…`;
+}
+
+/** Builds the story blob the planner reads: id — title, description, then an Acceptance criteria section. */
 export function storyFromWorkItem(item: WorkItemDetails, pastedBelowId = ''): string {
-  const parts = [item.id];
-  if (item.title) parts.push(item.title);
+  const head = item.title ? `${item.id} — ${item.title}` : item.id;
+  const parts = [head];
   if (item.description) parts.push('', item.description);
   const ac = (item.acceptanceCriteria ?? '').trim();
   if (ac) parts.push('', 'Acceptance criteria', ac);
@@ -79,6 +94,8 @@ export async function enrichStoryFromConnector(input: {
       };
     }
     const title = typeof item.title === 'string' ? item.title.trim() : '';
+    const description = typeof item.description === 'string' ? item.description : undefined;
+    const excerpt = descriptionExcerpt(description);
     return {
       status: 'enriched',
       enrichment: {
@@ -86,14 +103,18 @@ export async function enrichStoryFromConnector(input: {
           {
             id: String(item.id),
             title,
-            description: typeof item.description === 'string' ? item.description : undefined,
+            description,
             acceptanceCriteria: typeof item.acceptanceCriteria === 'string' ? item.acceptanceCriteria : undefined,
           },
           pasted,
         ),
         workItem: String(item.id),
         title: title || undefined,
+        descriptionExcerpt: excerpt || undefined,
         fetched: true,
+        ...(title
+          ? {}
+          : { missingTitleReason: 'The work-item connector returned no System.Title for this id, so the title was not loaded.' }),
       },
     };
   } catch (e) {

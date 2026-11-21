@@ -253,15 +253,17 @@ export function runFlowStep(step: FlowStep): FlowResult {
       const acceptanceCriteria = onlyId ? [] : found;
       const title = text(step.params.workItemTitle) || workItemTitleFromStory(story);
       const fetchNote = text(step.params.workItemFetchNote);
+      const descriptionExcerpt = text(step.params.workItemDescriptionExcerpt);
       const titled = title
         ? `Read work item ${workItem} — ${title}.`
         : `Read work item ${workItem || '(none)'}.`;
+      const excerptPart = title && descriptionExcerpt ? ` ${descriptionExcerpt}` : '';
       const acPart = acceptanceCriteria.length > 0
         ? `${acceptanceCriteria.length} acceptance criteria.`
         : 'The story text has no separate acceptance criteria, so the plan uses the work item itself.';
       const missPart = !title && fetchNote ? ` ${fetchNote}` : '';
       return {
-        summary: `${titled}${missPart} ${acPart}`,
+        summary: `${titled}${missPart}${excerptPart} ${acPart}`,
         outputs: {
           story,
           workItem,
@@ -269,6 +271,7 @@ export function runFlowStep(step: FlowStep): FlowResult {
           acceptanceCriteria,
           applicationName: application,
           environment,
+          ...(descriptionExcerpt ? { descriptionExcerpt } : {}),
           ...(fetchNote ? { fetchNote } : {}),
         },
       };

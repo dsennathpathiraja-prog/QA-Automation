@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
-import { EgressPolicy, HardenedHttpClient, acceptanceCriteriaFromDescription, adfToText, azureBoardsProvider, azureDevOpsProvider, githubProvider, githubWriteScopes, azureDevOpsWriteScopes, jiraProvider, playwrightMcpProvider, scenarioCuesFromDescription, splitAcceptanceCriteria } from '@qa/infrastructure';
+import { EgressPolicy, HardenedHttpClient, acceptanceCriteriaFromDescription, adfToText, azureBoardsProvider, azureDevOpsProvider, azureFieldString, azureWorkItemFields, githubProvider, githubWriteScopes, azureDevOpsWriteScopes, jiraProvider, playwrightMcpProvider, scenarioCuesFromDescription, splitAcceptanceCriteria } from '@qa/infrastructure';
 import { assertProviderContract } from '../src';
 
 const TOKEN = 'readonly-token-value-0001';
@@ -180,6 +180,34 @@ describe('source and work-item providers', () => {
     expect(await client.handle({ id: 'workitem.read' } as never, { id: '12' }, {} as never)).toMatchObject({ title: 'Checkout', acceptanceCriteria: 'The saved card is listed', description: 'Pay' });
     expect(await client.handle({ id: 'workitem.search' } as never, { query: 'Checkout' }, {} as never)).toMatchObject({ items: [{ id: '12', title: 'Checkout' }] });
     expect(m.hits.some((h) => h.method === 'POST' && h.path.includes('wiql'))).toBe(true);
+    const readHit = m.hits.find((h) => h.method === 'GET' && pathOf(h).endsWith('/workitems/12'));
+    expect(readHit?.path).toMatch(/fields=.*System\.Title/);
+  });
+
+  it('reads System.Title from nested fields.fields and value wrappers', async () => {
+    const nested = {
+      id: 3421,
+      fields: {
+        fields: {
+          'System.Title': { value: 'Order transactions calculation flow update to match new payment settlement and reasons' },
+          'System.State': 'Active',
+          'System.WorkItemType': 'User Story',
+          'System.Description': '<p>Settle ledger rows with the new payment reasons.</p>',
+        },
+      },
+    };
+    const flat = azureWorkItemFields(nested);
+    expect(azureFieldString(flat, 'System.Title')).toMatch(/Order transactions calculation flow/);
+    const m = await mock((hit) => {
+      const path = pathOf(hit);
+      if (path.endsWith('/workitems/3421')) return { body: nested };
+      return { status: 404, body: {} };
+    });
+    const client = azureBoardsProvider.create({ organization: 'contoso', project: 'PayNSure', baseUrl: m.baseUrl }, lease, { http: m.http });
+    expect(await client.handle({ id: 'workitem.read' } as never, { id: '3421' }, {} as never)).toMatchObject({
+      title: 'Order transactions calculation flow update to match new payment settlement and reasons',
+      description: 'Settle ledger rows with the new payment reasons.',
+    });
   });
 
   it('reads Azure Boards acceptance criteria from Description HTML when the field is empty', async () => {

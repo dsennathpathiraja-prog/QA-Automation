@@ -137,6 +137,26 @@ describe('requirement validation stages', () => {
     expect(read.outputs.title).toBe('Guest checkout');
   });
 
+  it('includes a short description excerpt after the title on the Read Done line', () => {
+    const title = 'Order transactions calculation flow update to match new payment settlement and reasons';
+    const read = runFlowStep({
+      id: 'read_story',
+      type: 'rv.read-user-story',
+      params: {
+        story: `3421 — ${title}`,
+        applicationName: 'PayNSure',
+        workItemTitle: title,
+        workItemDescriptionExcerpt: 'Settle ledger rows with the new payment reasons.',
+      },
+      prior: {},
+    });
+    expect(read.summary).toMatch(/3421 — Order transactions calculation flow update/);
+    expect(read.summary).toMatch(/Settle ledger rows with the new payment reasons\./);
+    expect(read.summary).toMatch(/no separate acceptance criteria/);
+    expect(read.outputs.title).toBe(title);
+    expect(read.outputs.descriptionExcerpt).toMatch(/Settle ledger/);
+  });
+
   it('explains when the work item title could not be loaded', () => {
     const read = runFlowStep({
       id: 'read_story',

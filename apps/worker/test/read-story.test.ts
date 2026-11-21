@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PlatformError } from '@qa/domain';
-import { enrichStoryFromConnector, storyFromWorkItem, workItemRefFromStory } from '../src/read-story';
+import { descriptionExcerpt, enrichStoryFromConnector, storyFromWorkItem, workItemRefFromStory } from '../src/read-story';
 
 describe('read-story enrichment', () => {
   it('reads a numeric Azure Boards id or a Jira key from the first line', () => {
@@ -19,9 +19,16 @@ describe('read-story enrichment', () => {
       description: 'User pays with a saved card.',
       acceptanceCriteria: 'The saved card is listed\nThe total includes tax',
     });
-    expect(story).toContain('7189');
-    expect(story).toContain('PayNSure checkout');
+    expect(story).toMatch(/^7189 — PayNSure checkout/);
     expect(story).toMatch(/Acceptance criteria\nThe saved card is listed\nThe total includes tax/);
+  });
+
+  it('shortens a description for the Read Done line', () => {
+    expect(descriptionExcerpt('Short note.')).toBe('Short note.');
+    expect(descriptionExcerpt('One  two\nthree')).toBe('One two three');
+    const long = 'Order transactions calculation flow update to match new payment settlement and reasons with more detail about ledger rows and fees.';
+    expect(descriptionExcerpt(long, 60).endsWith('…')).toBe(true);
+    expect(descriptionExcerpt(long, 60).length).toBeLessThanOrEqual(60);
   });
 
   it('loads the work item from the connector and keeps pasted lines', async () => {
@@ -42,8 +49,28 @@ describe('read-story enrichment', () => {
     expect(out.enrichment.fetched).toBe(true);
     expect(out.enrichment.workItem).toBe('7189');
     expect(out.enrichment.title).toBe('PayNSure checkout');
+    expect(out.enrichment.descriptionExcerpt).toMatch(/Intro/);
+    expect(out.enrichment.story).toMatch(/^7189 — PayNSure checkout/);
     expect(out.enrichment.story).toContain('Card is shown');
     expect(out.enrichment.story).toContain('Extra pasted criterion');
+  });
+
+  it('flags a missing System.Title while keeping the description story', async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      id: '3421',
+      title: '  ',
+      description: 'Ledger rows settle with the new payment reasons.',
+    });
+    const out = await enrichStoryFromConnector({
+      story: '3421',
+      connectors: { invoke } as never,
+      actor: { type: 'step', id: 'read_story', executionId: 'run-1', stepId: 'read_story' },
+    });
+    expect(out.status).toBe('enriched');
+    if (out.status !== 'enriched') return;
+    expect(out.enrichment.title).toBeUndefined();
+    expect(out.enrichment.missingTitleReason).toMatch(/System\.Title/);
+    expect(out.enrichment.descriptionExcerpt).toMatch(/Ledger rows/);
   });
 
   it('reports a miss when the connector is missing or denied', async () => {

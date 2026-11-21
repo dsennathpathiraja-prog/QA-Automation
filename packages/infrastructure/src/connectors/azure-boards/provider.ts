@@ -16,6 +16,49 @@ const ConfigSchema = z.object({
 const SecretSchema = z.object({ token: z.string().min(20).max(500) });
 const API = '7.1';
 
+/** Fields requested on workitem.read so System.Title is always present in the payload. */
+const READ_FIELDS = [
+  'System.Id',
+  'System.Title',
+  'System.State',
+  'System.WorkItemType',
+  'System.Description',
+  'Microsoft.VSTS.TCM.ReproSteps',
+  'Microsoft.VSTS.Common.AcceptanceCriteria',
+].join(',');
+
+/**
+ * Azure WIT returns `{ fields: { 'System.Title': '…' } }`.
+ * Some gateways nest again as `{ fields: { fields: { 'System.Title': '…' } } }`.
+ */
+export function azureWorkItemFields(body: unknown): Record<string, unknown> {
+  if (!body || typeof body !== 'object') return {};
+  const root = body as Record<string, unknown>;
+  const outer = root.fields;
+  if (!outer || typeof outer !== 'object' || Array.isArray(outer)) return {};
+  const map = outer as Record<string, unknown>;
+  const nested = map.fields;
+  if (
+    nested
+    && typeof nested === 'object'
+    && !Array.isArray(nested)
+    && ('System.Title' in (nested as object) || 'System.Description' in (nested as object))
+  ) {
+    return nested as Record<string, unknown>;
+  }
+  return map;
+}
+
+/** Plain string from a WIT field value (string or `{ value: string }`). */
+export function azureFieldString(fields: Record<string, unknown>, key: string): string {
+  const raw = fields[key];
+  if (typeof raw === 'string') return raw.trim();
+  if (raw && typeof raw === 'object' && typeof (raw as { value?: unknown }).value === 'string') {
+    return ((raw as { value: string }).value).trim();
+  }
+  return '';
+}
+
 /** Azure Boards stores Description, Acceptance Criteria, and Repro Steps as HTML. */
 function fieldText(value: unknown): string {
   if (typeof value === 'string') return htmlToText(value);
@@ -122,19 +165,26 @@ class AzureBoardsClient implements ConnectorClient {
       return { items: ((details.body?.value ?? []) as { id: number; fields: Record<string, string> }[]).map((w) => ({ id: String(w.id), title: w.fields['System.Title'], type: w.fields['System.WorkItemType'], state: w.fields['System.State'] })) };
     }
     if (cap.id === 'workitem.read') {
-      const r = await this.call('GET', `/${encodeURIComponent(this.cfg.project)}/_apis/wit/workitems/${encodeURIComponent(required(i.id, 'Work item id'))}`);
-      const f = (r.body?.fields ?? {}) as Record<string, unknown>;
+      const acField = this.cfg.acceptanceCriteriaField;
+      const fieldList = READ_FIELDS.includes(acField) ? READ_FIELDS : `${READ_FIELDS},${acField}`;
+      const r = await this.call(
+        'GET',
+        `/${encodeURIComponent(this.cfg.project)}/_apis/wit/workitems/${encodeURIComponent(required(i.id, 'Work item id'))}`,
+        { fields: fieldList },
+      );
+      const f = azureWorkItemFields(r.body);
+      const title = azureFieldString(f, 'System.Title');
       const description = fieldText(f['System.Description']);
       const reproSteps = fieldText(f['Microsoft.VSTS.TCM.ReproSteps']);
-      const fromField = fieldText(f[this.cfg.acceptanceCriteriaField]);
+      const fromField = fieldText(f[acField]);
       const fromDescription = acceptanceCriteriaFromDescription(description) ?? (scenarioCuesFromDescription(description).join('\n') || undefined);
       const acceptanceCriteria = fromField || fromDescription || (reproSteps ? scenarioCuesFromDescription(reproSteps).join('\n') || reproSteps : undefined);
       const descriptionParts = [description, reproSteps ? `Repro steps\n${reproSteps}` : ''].filter(Boolean);
       return {
         id: String(r.body?.id ?? i.id),
-        title: String(f['System.Title'] ?? ''),
-        type: typeof f['System.WorkItemType'] === 'string' ? f['System.WorkItemType'] : undefined,
-        state: typeof f['System.State'] === 'string' ? f['System.State'] : undefined,
+        title,
+        type: azureFieldString(f, 'System.WorkItemType') || undefined,
+        state: azureFieldString(f, 'System.State') || undefined,
         description: descriptionParts.join('\n\n') || undefined,
         acceptanceCriteria: acceptanceCriteria || undefined,
         url: typeof r.body?._links?.html?.href === 'string' ? r.body._links.html.href : undefined,

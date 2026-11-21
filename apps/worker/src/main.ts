@@ -190,6 +190,12 @@ const loop = new WorkerLoop({
               ...step.params,
               story: enrich.enrichment.story,
               ...(enrich.enrichment.title ? { workItemTitle: enrich.enrichment.title } : {}),
+              ...(enrich.enrichment.descriptionExcerpt
+                ? { workItemDescriptionExcerpt: enrich.enrichment.descriptionExcerpt }
+                : {}),
+              ...(enrich.enrichment.missingTitleReason
+                ? { workItemFetchNote: enrich.enrichment.missingTitleReason }
+                : {}),
             };
           } else if (enrich.status === 'missed') {
             params = {
