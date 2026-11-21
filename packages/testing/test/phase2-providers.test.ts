@@ -451,6 +451,45 @@ describe('source and work-item providers', () => {
     expect(providerCreates).toBeGreaterThanOrEqual(3);
   });
 
+  it('retries navigate once when Chromium profile is already in use', async () => {
+    const pageState = `### Page state\n- Page URL: http://sdk.paynsure.internal/shop\n- Page Title: Shop\n- Page Snapshot:\n\`\`\`yaml\n- button "Add to cart" [ref=e1]\n\`\`\`\n`;
+    let navigates = 0;
+    let closes = 0;
+    const m = await mock((hit) => {
+      const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string } };
+      if (body.method === 'initialize') return mcpInit('sess-busy');
+      if (body.params?.name === 'browser_close') {
+        closes += 1;
+        return { body: { result: { content: [] } } };
+      }
+      if (body.params?.name === 'browser_navigate') {
+        navigates += 1;
+        if (navigates === 1) {
+          return {
+            body: {
+              result: {
+                isError: true,
+                content: [{ type: 'text', text: '### Result\nError: Browser is already in use for /ms-playwright/mcp-chromium, use --isolated to run multiple instances of the same browser' }],
+              },
+            },
+          };
+        }
+        return { body: { result: { content: [{ type: 'text', text: pageState }] } } };
+      }
+      if (body.params?.name === 'browser_wait_for') {
+        return { body: { result: { content: [{ type: 'text', text: pageState }] } } };
+      }
+      return { body: { result: { content: [] } } };
+    });
+    const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'http://sdk.paynsure.internal' }, undefined, { http: m.http });
+    const opened = await client.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
+    await expect(client.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'http://sdk.paynsure.internal/shop' }, {} as never)).resolves.toMatchObject({
+      finalUrl: 'http://sdk.paynsure.internal/shop',
+    });
+    expect(navigates).toBe(2);
+    expect(closes).toBeGreaterThanOrEqual(1);
+  });
+
   it('returns an empty accessibility tree when MCP snapshot content is empty (no circuit-trip throw)', async () => {
     const m = await mock((hit) => {
       const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string } };
