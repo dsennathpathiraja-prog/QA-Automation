@@ -17,6 +17,11 @@ export interface ConnectorTesterDeps {
   /** A test still running after this long is failed (its worker died). */
   staleAfterMs?: number;
   testTimeoutMs?: number;
+  /**
+   * After a successful Test connection, clear the execution-manager circuit for this
+   * instance so Explore UI can call browser.evaluate again immediately.
+   */
+  onTestSucceeded?: (connectorId: string) => void;
 }
 
 const WRITE_PERMISSION_NOTE = 'The credential has write permissions. The platform only reads from this connector; use a read-only credential.';
@@ -108,6 +113,10 @@ export class ConnectorTester {
       discoveredInfo: redactor.redact(conn.discovered ?? {}) as Record<string, unknown>,
     });
     await this.d.connectors.recordHealth(rec.id, { result: warnings.length > 0 ? 'warn' : 'ok', latencyMs: conn.latencyMs, detail: { capabilitiesGranted: states.filter((s) => s.granted).length } });
+    // Clear Explore UI / invoke circuit so browser.evaluate is usable right after Test connection.
+    try {
+      this.d.onTestSucceeded?.(rec.id);
+    } catch { /* reset must not fail the test result */ }
     return { ok: true, message: warnings.length > 0 ? `${message} ${warnings.join(' ')}`.trim() : message, latencyMs: conn.latencyMs };
   }
 

@@ -297,6 +297,12 @@ export function describeEmptyCapture(input: {
     return dnsExtraHostsGuidance(input.url);
   }
   if (input.probeError) {
+    if (/circuit breaker/i.test(input.probeError)) {
+      return (
+        `DOM probe blocked (${input.probeError}). ` +
+        'Re-run Playwright → Test connection (Success closes the circuit), confirm browser.evaluate is granted, Switch the connector on, then retry Explore UI'
+      );
+    }
     return (
       `DOM probe failed (${input.probeError}). ` +
       'Explore UI needs browser.evaluate on the Playwright connector — re-run Test connection after upgrading, confirm browser.evaluate is supported, then retry'

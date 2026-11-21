@@ -175,6 +175,76 @@ describe('ConnectorExecutionManager', () => {
     }
   });
 
+  it('resetCircuit closes an open breaker (Test connection Success path)', async () => {
+    const failing = setup({ behavior: { failWith: new PlatformError('transient', 'boom') }, defaults: { breakerThreshold: 1, breakerCooldownMs: 60_000 } });
+    await failing.secrets.put('connectors/wi1/token', { token: 'tok-12345678' });
+    const f = () => failing.manager.invoke({ role: 'workItemSource', capability: 'workitem.read', input: { id: '42' }, actor: step });
+    await expect(f()).rejects.toThrow('boom');
+    await expect(f()).rejects.toThrow(/circuit breaker/);
+    failing.manager.resetCircuit('wi1');
+    await expect(f()).rejects.toThrow('boom'); // probe reaches adapter again
+  });
+
+  it('does not open the breaker on browser.evaluate / browser.wait soft failures', async () => {
+    let evalCalls = 0;
+    const browserProvider: ConnectorProvider = {
+      manifest: {
+        providerKey: 'stub-browser',
+        category: 'browser-automation',
+        displayName: 'Stub browser',
+        description: 'test',
+        authMethods: [],
+        capabilities: ['browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.wait', 'browser.evaluate', 'browser.screenshot'],
+        requiredPermissions: [],
+        accessModePolicy: 'read_write',
+        requiresInternet: false,
+        verification: 'live-capable',
+        wizard: [],
+      },
+      configSchema: z.object({}),
+      secretSchema: z.object({}).strict(),
+      create: () => ({
+        testConnection: async () => ({ ok: true, message: '' }),
+        probeCapabilities: async () => [],
+        inspectPermissions: async () => ({ granted: [], writePermissionsDetected: [] }),
+        handle: async (cap) => {
+          if (cap.id === 'browser.session.open') return { sessionId: 's1' };
+          if (cap.id === 'browser.evaluate' || cap.id === 'browser.wait') {
+            evalCalls += 1;
+            throw new PlatformError('transient', 'evaluate boom');
+          }
+          if (cap.id === 'browser.snapshot') return { accessibilityTree: '- button "Pay"', url: 'https://shop.example.com', title: 'Shop' };
+          return {};
+        },
+        dispose: async () => undefined,
+      }),
+    };
+    const caps = ['browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.wait', 'browser.evaluate', 'browser.screenshot'];
+    const h = createHarness({
+      providers: [browserProvider],
+      instances: [makeInstance({ id: 'br1', providerKey: 'stub-browser', category: 'browser-automation' }, caps)],
+      policies: { ex1: execPolicy({ boundRoles: { browserAutomation: 'br1' } }) },
+      defaults: { breakerThreshold: 2, breakerCooldownMs: 60_000 },
+    });
+    const actor = { type: 'step' as const, id: 'explore', executionId: 'ex1', stepId: 's1' };
+    for (let i = 0; i < 4; i += 1) {
+      await expect(h.manager.invoke({
+        role: 'browserAutomation',
+        capability: 'browser.evaluate',
+        input: { sessionId: 's1', script: '() => 1' },
+        actor,
+      })).rejects.toThrow('evaluate boom');
+    }
+    expect(evalCalls).toBe(4);
+    // Soft failures must not open the breaker — snapshot still works.
+    await expect(h.manager.invoke({
+      role: 'browserAutomation',
+      capability: 'browser.snapshot',
+      input: { sessionId: 's1' },
+      actor,
+    })).resolves.toMatchObject({ accessibilityTree: expect.stringMatching(/Pay/) });
+  });
+
   it('times out slow adapters as transient', async () => {
     const slow: ConnectorProvider = {
       ...makeStubWorkItemProvider([]),

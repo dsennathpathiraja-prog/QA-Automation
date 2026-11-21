@@ -53,26 +53,6 @@ let scheduler: ConnectorHealthScheduler | undefined;
 let squash: ConnectorExecutionManager | undefined;
 const built = conn && secrets && hosts ? buildProviders(env, platformEnv) : undefined;
 if (conn && secrets && hosts && built) {
-  tester = new ConnectorTester({
-    connectors: new PgConnectorRepository(conn.db),
-    tests: new PgTestRequestQueue(conn.db),
-    secrets: secrets.store,
-    providers: built.providers,
-    capabilities: built.capabilities,
-    audit: new PgAuditSink(new PgAuditLog(conn.db)),
-    http: async () => {
-      const rules: EgressRule[] = (await hosts.list('connector')).map((h) => ({ hostPattern: h.hostPattern, purpose: 'connector', internal: h.internal, allowHttp: h.allowHttp }));
-      return new HardenedHttpClient({
-        egress: new EgressPolicy({ rules, profile, platformEnv }),
-        allowedMethods: ['GET', 'HEAD'],
-        // Work-item search, the Playwright server, and storing a generated Squash test case are the only writes a connector may send.
-        allowOther: (req) => squashWriteAllowed(req.method, new URL(req.url).pathname),
-        timeoutMs: 20_000,
-        maxBodyBytes: 8 * 1024 * 1024,
-      });
-    },
-  });
-  scheduler = new ConnectorHealthScheduler({ connectors: new PgConnectorRepository(conn.db), tests: new PgTestRequestQueue(conn.db), intervalMs: env.CONNECTOR_HEALTH_MS ? Number(env.CONNECTOR_HEALTH_MS) : undefined });
   squash = new ConnectorExecutionManager({
       capabilities: built.capabilities,
       providers: built.providers,
@@ -97,6 +77,28 @@ if (conn && secrets && hosts && built) {
         },
       },
     });
+  tester = new ConnectorTester({
+    connectors: new PgConnectorRepository(conn.db),
+    tests: new PgTestRequestQueue(conn.db),
+    secrets: secrets.store,
+    providers: built.providers,
+    capabilities: built.capabilities,
+    audit: new PgAuditSink(new PgAuditLog(conn.db)),
+    // Test connection bypasses invoke(); clear the Explore UI circuit so evaluate works immediately.
+    onTestSucceeded: (connectorId) => squash?.resetCircuit(connectorId),
+    http: async () => {
+      const rules: EgressRule[] = (await hosts.list('connector')).map((h) => ({ hostPattern: h.hostPattern, purpose: 'connector', internal: h.internal, allowHttp: h.allowHttp }));
+      return new HardenedHttpClient({
+        egress: new EgressPolicy({ rules, profile, platformEnv }),
+        allowedMethods: ['GET', 'HEAD'],
+        // Work-item search, the Playwright server, and storing a generated Squash test case are the only writes a connector may send.
+        allowOther: (req) => squashWriteAllowed(req.method, new URL(req.url).pathname),
+        timeoutMs: 20_000,
+        maxBodyBytes: 8 * 1024 * 1024,
+      });
+    },
+  });
+  scheduler = new ConnectorHealthScheduler({ connectors: new PgConnectorRepository(conn.db), tests: new PgTestRequestQueue(conn.db), intervalMs: env.CONNECTOR_HEALTH_MS ? Number(env.CONNECTOR_HEALTH_MS) : undefined });
 }
 
 /** Work-item search, Playwright MCP, Squash test-case store, and Squash execution status writes. */

@@ -323,7 +323,7 @@ describe('source and work-item providers', () => {
     expect(await client.handle({ id: 'browser.screenshot' } as never, { sessionId: opened.sessionId }, {} as never)).toMatchObject({ artifactBase64: 'aW1n' });
   });
 
-  it('fails browser.snapshot when MCP returns empty content', async () => {
+  it('returns an empty accessibility tree when MCP snapshot content is empty (no circuit-trip throw)', async () => {
     const m = await mock((hit) => {
       const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string } };
       if (body.method === 'initialize') return { body: { result: { serverInfo: { name: 'playwright', version: '1.2.3' } } } };
@@ -332,9 +332,9 @@ describe('source and work-item providers', () => {
     });
     const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'https://shop.example.com' }, undefined, { http: m.http });
     const opened = await client.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
-    await expect(client.handle({ id: 'browser.snapshot' } as never, { sessionId: opened.sessionId }, {} as never)).rejects.toMatchObject({
-      errorClass: 'transient',
-      message: expect.stringMatching(/no content/i),
+    await expect(client.handle({ id: 'browser.snapshot' } as never, { sessionId: opened.sessionId }, {} as never)).resolves.toMatchObject({
+      accessibilityTree: '',
+      url: '',
     });
   });
 

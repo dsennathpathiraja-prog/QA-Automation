@@ -290,11 +290,10 @@ class PlaywrightClient implements ConnectorClient {
       required(i.sessionId, 'sessionId');
       const result = await this.rpcCall('tools/call', { name: 'browser_snapshot', arguments: {} });
       const text = toolText(result);
+      // Return empty tree instead of throwing — Explore UI retries + DOM probe handle blank
+      // pages; throwing transient here opened the connector circuit breaker after a few attempts.
       if (!text) {
-        throw new PlatformError(
-          'transient',
-          'Playwright browser_snapshot returned no content (empty MCP tool result). The page may still be loading or the MCP session lost the tab.',
-        );
+        return { accessibilityTree: '', url: '', title: undefined };
       }
       const meta = pageMetaFromToolText(text);
       return {

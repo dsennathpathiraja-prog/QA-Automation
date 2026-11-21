@@ -75,13 +75,15 @@ async function captureActionableSnapshot(
   browser: BrowserAutomationPort,
   fallbackUrl: string,
   targetUrl: string,
+  priorProbe?: { probe?: DomProbeResult; error?: string },
 ): Promise<Captured> {
   const attempts = 4;
   let lastRaw = '';
   let lastUrl = fallbackUrl;
   let lastTitle = '';
-  let lastProbe: DomProbeResult | undefined;
-  let lastProbeError: string | undefined;
+  let lastProbe: DomProbeResult | undefined = priorProbe?.probe;
+  let lastProbeError: string | undefined = priorProbe?.error;
+  let probedOnce = Boolean(priorProbe?.probe || priorProbe?.error);
 
   await settleForStorefront(browser, 2.5);
 
@@ -108,10 +110,13 @@ async function captureActionableSnapshot(
       return { parsed, accessibilityTree: snapshotArtifactBody(parsed) || lastRaw };
     }
 
-    // Aria empty / title-only — probe the live DOM (and same-origin iframes).
-    const probed = await probeDom(browser);
-    lastProbe = probed.probe;
-    if (probed.error) lastProbeError = probed.error;
+    // Probe DOM at most once per capture — repeated evaluate failures used to open the circuit breaker.
+    if (!probedOnce) {
+      const probed = await probeDom(browser);
+      probedOnce = true;
+      lastProbe = probed.probe;
+      if (probed.error) lastProbeError = probed.error;
+    }
     throwIfNavigationFailed({ targetUrl, pageUrl: lastProbe?.url || lastUrl, raw: lastRaw, probe: lastProbe });
     if (domProbeIsActionable(lastProbe)) {
       const fromDom = parsedSnapshotFromDomProbe(lastProbe!);
@@ -187,33 +192,9 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
           pageUrl: nav.finalUrl,
           raw: nav.accessibilityTree,
         });
-        if (nav.accessibilityTree || browser.evaluate) {
-          const early = await probeDom(browser);
-          throwIfNavigationFailed({
-            targetUrl: input.url,
-            pageUrl: early.probe?.url || nav.finalUrl,
-            raw: nav.accessibilityTree,
-            probe: early.probe,
-          });
-          // If navigate landed on a blank aria tree but the DOM already has shop cues, use them.
-          if (domProbeIsActionable(early.probe) && labels.length === 1) {
-            const fromDom = parsedSnapshotFromDomProbe(early.probe!);
-            const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
-            details.push({
-              scenarioName: labels[0]!,
-              url: fromDom.url || nav.finalUrl || input.url,
-              title: fromDom.title || undefined,
-              snapshotExcerpt: snapshotArtifactBody(fromDom),
-              cuesSummary: summarizeSnapshotForFindings(fromDom),
-              screenshotBase64: shot.artifactBase64 || undefined,
-            });
-            probes.push(early.probe);
-            probeErrors.push(undefined);
-          }
-        }
 
         // Prefer a snapshot already attached to navigate when the tree is rich enough.
-        if (details.length === 0 && nav.accessibilityTree) {
+        if (nav.accessibilityTree) {
           const fromNav = parseMcpPageSnapshot(nav.accessibilityTree);
           if (!fromNav.url) fromNav.url = nav.finalUrl || input.url;
           if (!fromNav.title && nav.title) fromNav.title = nav.title;
@@ -232,12 +213,39 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
           }
         }
 
+        // One early DOM probe when navigate aria is empty — reused by capture (no evaluate spam).
+        let earlyProbe: { probe?: DomProbeResult; error?: string } | undefined;
+        if (details.length === 0 && browser.evaluate) {
+          earlyProbe = await probeDom(browser);
+          throwIfNavigationFailed({
+            targetUrl: input.url,
+            pageUrl: earlyProbe.probe?.url || nav.finalUrl,
+            raw: nav.accessibilityTree,
+            probe: earlyProbe.probe,
+          });
+          if (domProbeIsActionable(earlyProbe.probe) && labels.length === 1) {
+            const fromDom = parsedSnapshotFromDomProbe(earlyProbe.probe!);
+            const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
+            details.push({
+              scenarioName: labels[0]!,
+              url: fromDom.url || nav.finalUrl || input.url,
+              title: fromDom.title || undefined,
+              snapshotExcerpt: snapshotArtifactBody(fromDom),
+              cuesSummary: summarizeSnapshotForFindings(fromDom),
+              screenshotBase64: shot.artifactBase64 || undefined,
+            });
+            probes.push(earlyProbe.probe);
+            probeErrors.push(undefined);
+          }
+        }
+
         for (let i = details.length; i < limit; i += 1) {
           const label = labels[i] ?? `page-${i + 1}`;
           const { parsed, accessibilityTree, probe, probeError } = await captureActionableSnapshot(
             browser,
             nav.finalUrl || input.url,
             input.url,
+            earlyProbe,
           );
           const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
           details.push({
