@@ -1,16 +1,19 @@
-# Playwright planner, generator, and browser agents
+# Playwright planner, generator, healer, and browser agents
 
-Requirement-validation case prep uses three roles. Catalog names vary; the platform keys are:
+Requirement-validation case prep uses four roles. Catalog names vary; the platform keys are:
 
 | Role | Platform agent / connector | Cursor MCP catalog names (typical) |
 |------|----------------------------|------------------------------------|
-| Plan Positive / Negative / Edge scenarios from the work item | `playwright-test-planner` (`@qa/agents`) | `playwright-test-planner` |
-| Turn scenarios into Playwright tests | `playwright-test-generator` (`@qa/agents`) | `playwright-test-generator` |
-| Optional UI explore + screenshots | `playwright-mcp` connector / `playwright-browser` | `playwright`, `playwright-browser`, `@playwright/mcp` |
+| Explore UI before planning | `playwright-mcp` connector / `playwright-browser` | `playwright`, `playwright-browser`, `@playwright/mcp` |
+| Plan many scenarios → durable MD artifact | `playwright-test-planner` (`@qa/agents`) | `playwright-test-planner` |
+| Turn the MD plan into Playwright tests | `playwright-test-generator` (`@qa/agents`) | `playwright-test-generator` |
+| Fix broken platform-owned stubs | `playwright-test-healer` (`@qa/agents`) | `playwright-test-healer` |
 
-The worker prefers a **local model** (`OLLAMA_URL` or `VLLM_URL`) for planner and generator. When no model is configured, it uses a **description-aware heuristic** that still builds three scenarios per acceptance criterion from the work item text (not a single sparse template). Optional UI exploration uses the bound Playwright browser connector when the run has an environment URL.
+**Order:** explore UI/code → consolidate → planner (MD) → generator → healer → publish. See [`requirement-validation-case-workflow.md`](requirement-validation-case-workflow.md).
 
-Adapter interfaces for Cursor MCP packages live in `@qa/agents` (`plannerPortFromMcp`, `generatorPortFromMcp`, `explorerPortFromBrowserMcp`). The platform worker does not embed those MCP client packages; it uses the in-repo ports and the managed `playwright-mcp` connector.
+The worker prefers a **local model** (`OLLAMA_URL` or `VLLM_URL`) for planner, generator, and healer. When no model is configured, it uses a **description-aware heuristic** that builds **multiple** scenarios per acceptance criterion and Description path (not a single sparse triple). Optional UI exploration uses the bound Playwright browser connector when the run has an environment URL — and it runs **before** the plan so findings appear in the Markdown artifact.
+
+Adapter interfaces for Cursor MCP packages live in `@qa/agents` (`plannerPortFromMcp`, `generatorPortFromMcp`, `healerPortFromMcp`, `explorerPortFromBrowserMcp`). The platform worker does not embed those MCP client packages; it uses the in-repo ports and the managed `playwright-mcp` connector.
 
 ## Enable a local model (platform worker)
 
@@ -36,11 +39,11 @@ VLLM_MODEL=your-model
 3. Bind that connector as **Browser automation** on the requirement-validation workflow. Enable the Explore UI step (UI / both templates).
 4. On Run, supply an **environment** whose application URL matches an allowed origin (environments are optional for plan/generate; required for a real explore).
 
-Without a browser or environment, plan and generate still complete; the UI stage records a short skip note.
+Without a browser or environment, explore records a skip note; plan and generate still complete using the story text.
 
 ## Local Cursor MCP config (developer machine)
 
-For interactive planning/generation inside Cursor (separate from the platform worker), add servers to `.cursor/mcp.json` or Cursor Settings → MCP. Example (no secrets):
+For interactive planning/generation/healing inside Cursor (separate from the platform worker), add servers to `.cursor/mcp.json` or Cursor Settings → MCP. Example (no secrets):
 
 ```json
 {
@@ -53,6 +56,11 @@ For interactive planning/generation inside Cursor (separate from the platform wo
     "playwright-test-generator": {
       "command": "npx",
       "args": ["-y", "@playwright/test-generator-mcp"],
+      "env": {}
+    },
+    "playwright-test-healer": {
+      "command": "npx",
+      "args": ["-y", "@playwright/test-healer-mcp"],
       "env": {}
     },
     "playwright-browser": {
@@ -76,9 +84,9 @@ A checked-in template without secrets: [`deploy/cursor/mcp.json.example`](../dep
 4. On **Run**, enter only `7189` in the story field and the application name (e.g. PayNSure). Do not paste AC unless you want extra lines.
 5. Start the run.
 6. **Read** should report N acceptance criteria from Description / AC (N > 0).
-7. **Plan** Done line should name `playwright-test-planner` and either “with a model” or “from the story (no model)”, with **3 × N** Positive / Negative / Edge scenarios whose steps mention the criterion (payment criteria mention card/tax-style paths, not only “happy path”).
-8. If Explore UI ran with a browser, its Done line names pages opened; **Generate** embeds exploration notes in the Playwright stubs.
-9. Confirm Test Cases (and Squash when READ_WRITE) list those cases under work item `7189`.
+7. **Explore** (when enabled) runs **before** Plan and records UI/source notes.
+8. **Plan** Done line should name `playwright-test-planner`, a `.plan.md` artifact, and **many** Positive / Negative / Edge scenarios (more than 3×N when Description paths exist).
+9. **Generate** consumes that MD plan; **Heal** fixes broken stubs; Test Cases (and Squash when READ_WRITE) list those cases under work item `7189`.
 
 ## Architecture (short)
 
@@ -86,11 +94,12 @@ A checked-in template without secrets: [`deploy/cursor/mcp.json.example`](../dep
 Run story id
   → worker enrichStoryFromConnector (Azure Boards / Jira)
   → rv.read-user-story (criteria from Description)
-  → rv.generate-test-plan → TestPlannerPort (LLM gateway or heuristic)
-  → rv.explore-ui (optional) → BrowserExplorerPort → playwright-mcp connector
+  → rv.explore-ui / rv.explore-code (optional) → BrowserExplorerPort / source notes
   → rv.consolidate-findings
-  → rv.generate-tests → TestGeneratorPort (LLM gateway or heuristic + findings)
+  → rv.generate-test-plan → TestPlannerPort → planMarkdown + planArtifact
+  → rv.generate-tests → TestGeneratorPort (MD plan + findings)
+  → rv.heal-tests → TestHealerPort (platform workspace only)
   → rv.publish-testcases → Test Cases + Squash upsert
 ```
 
-`packages/workflow-engine` keeps a sync heuristic `runFlowStep` for tests and offline fallback. `packages/agents` owns the ports, MCP adapter contracts, and LLM prompts. `apps/worker` is the composition root that builds the gateway and connector invokers.
+`packages/workflow-engine` keeps a sync heuristic `runFlowStep` for tests and offline fallback. `packages/agents` owns the ports, MCP adapter contracts, MD plan helpers, and LLM prompts. `apps/worker` is the composition root that builds the gateway and connector invokers.

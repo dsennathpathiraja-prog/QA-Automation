@@ -3,9 +3,9 @@
 Written 19 Nov 2026. Updated the same day. The requirement-validation workflow ends when the cases are stored. Execution of a work item, with the environment chosen at that time, is a separate action. The phase split is [requirement-validation-phases.md](requirement-validation-phases.md).
 
 ## Already in a run
-The story is the text typed on the Run tab (or the work item loaded by id). `playwright-test-planner` writes a positive, a negative, and an edge scenario for each acceptance criterion (with priority high/medium/low by kind). `playwright-test-generator` writes one Playwright test for each scenario. When `OLLAMA_URL` or `VLLM_URL` is set on the worker, both agents call the local model through `LlmGateway` with a fixed JSON shape (one repair). Otherwise a description-aware heuristic still builds criterion-specific steps. Optional Explore UI uses the bound `playwright-mcp` connector when an environment URL is present. Publish stores those cases in Test Cases under the work item, in a collection of that name, and in Squash when the connector has a READ_WRITE token. The same reference is not created twice. The run stops there. Engineers can clear platform cases via Test Cases → Clear platform test cases or `POST /api/v1/test-cases/reset` (Squash is not wiped).
+Durable order: **explore UI/code → consolidate → `playwright-test-planner` (Markdown plan artifact) → `playwright-test-generator` (many cases from that MD) → `playwright-test-healer` → publish**. Exploration runs before planning so findings feed the plan. The planner emits multiple Positive / Negative / Edge scenarios per acceptance criterion and Description path (caps 200 / 250) — not a hard stop at one triple. When `OLLAMA_URL` or `VLLM_URL` is set, planner / generator / healer call the local model through `LlmGateway`; otherwise description-aware heuristics run. Publish stores healed cases in Test Cases under the work item and in Squash when READ_WRITE. The run stops there. Engineers can clear platform cases via Test Cases → Clear platform test cases or `POST /api/v1/test-cases/reset` (Squash is not wiped).
 
-Cursor MCP wiring and retest steps: [playwright-agents-mcp.md](playwright-agents-mcp.md). Executing the stored cases, with a screenshot and a Squash result, is the execution of the work item. It is not another step of this workflow.
+Product workflow: [requirement-validation-case-workflow.md](requirement-validation-case-workflow.md). Cursor MCP wiring: [playwright-agents-mcp.md](playwright-agents-mcp.md). Executing the stored cases is a separate Executions action.
 
 ## 1. Read the work item
 The Run tab takes the work item id. The worker calls the bound Azure Boards or Jira connector and reads the title, description, and acceptance criteria. Azure Boards turns Description HTML into text, reads the Acceptance Criteria field when set, and otherwise parses Acceptance Criteria / bullets / Given-When-Then from the Description (and Repro Steps when present). Those criteria become the planner input. When no work-item connector is selected, or the read is denied, the typed story stays the input, so a run without Azure or Jira still completes.
@@ -17,8 +17,8 @@ Done when a run of a real work item id shows the criteria from that work item in
 
 When no model is configured, the description-aware heuristic runs and the Done line says the plan was written from the story without a model. The Models screen assignment comes after this, so the run is not blocked on that screen.
 
-## 3. Walk the UI
-**Partial.** When Explore UI is enabled, an environment URL resolves, and a Playwright browser connector is bound, the worker opens the address, takes accessibility snapshots and screenshots for up to a few planned scenarios, and passes findings into generate. It may open only the addresses listed on the browser connector. It does not submit a payment, delete data, or type a one-time code. A saved browser session is used when the connector has one. Without those bindings the stage records a skip note and the run continues.
+## 3. Walk the UI (before planning)
+**Partial.** Explore UI runs **before** the planner. When enabled, an environment URL resolves, and a Playwright browser connector is bound, the worker opens the address, takes accessibility snapshots and screenshots for acceptance-criteria cues, and passes findings into consolidate → plan. It may open only the addresses listed on the browser connector. It does not submit a payment, delete data, or type a one-time code. Without those bindings the stage records a skip note and the run continues.
 
 Done when the UI stage Done line names the pages it opened; screenshot bytes stay out of step outputs (execution stores screenshots later).
 
@@ -29,10 +29,10 @@ This slice can be built beside slice 3. Both have to finish before slice 5.
 
 Done when the source stage Done line names the files it read. A repository token that can push is still refused.
 
-## 5. Use the findings when generating
-The consolidate stage joins the story, the UI notes, and the source notes. The generator receives that joined note with the plan. The Playwright test for a scenario mentions the page and the check the exploration found. The reference stays stable for that work item and scenario, so Squash is not given a duplicate.
+## 5. Use the findings when planning and generating
+The consolidate stage joins the story, the UI notes, and the source notes. The **planner** receives those findings and embeds them in the Markdown plan. The **generator** consumes that MD plan (plus findings) so each Playwright test can mention the page or control exploration found. The reference stays stable for that work item and scenario, so Squash is not given a duplicate.
 
-Done when changing a finding changes the generated test text, and a second run updates the same Squash case.
+Done when changing a finding changes the plan / generated test text, and a second run updates the same Squash case.
 
 ## 6. Keep the Playwright file on the platform
 The generator writes `tests/{application}/{work-item}.spec.js` into a platform workspace. The file may import `@playwright/test` and the platform helper only. A file that imports the network, the filesystem, or a hard-coded password is rejected and generated once more. The work item, the Squash case id, the file, and the Playwright test name are stored together. The file is never written to the connected repository.
@@ -57,4 +57,4 @@ The report counts the acceptance criteria, the scenarios, and the results. It li
 Done when the report on the run matches the statuses and the screenshots from slices 7 and 8.
 
 ## Held for later
-Regression runs stay on their own workflow. They execute cases already in Squash and do not plan or generate. No healer rewrites a failing test. Kubernetes is unchanged. Source repositories stay read-only.
+Regression runs stay on their own workflow. They execute cases already in Squash and do not plan or generate. `playwright-test-healer` may rewrite platform-owned generated stubs only (not connected source repositories — ADR 0012). Kubernetes is unchanged. Source repositories stay read-only.

@@ -8,7 +8,7 @@ The earlier draft of this page put execution, screenshots, and the report inside
 
 ## Phase 6 — Store the cases, then prepare by work item
 
-A requirement-validation run reads the story, plans with `playwright-test-planner`, and writes the cases with `playwright-test-generator`. Publish stores them in Test Cases, in a collection named for the work item, and in Squash when that connector has a READ_WRITE token. The run stops there. Starting the run does not ask for an environment.
+A requirement-validation run reads the story, explores UI/code, plans with `playwright-test-planner` (durable Markdown plan), writes many cases with `playwright-test-generator`, heals broken stubs with `playwright-test-healer`, then publishes. Publish stores them in Test Cases, in a collection named for the work item, and in Squash when that connector has a READ_WRITE token. The run stops there. Starting the run does not require an environment unless Explore UI should open a real URL. See [`requirement-validation-case-workflow.md`](requirement-validation-case-workflow.md).
 
 Executions asks for the work item and the environment. That row is marked prepared until Phase 7 runs it.
 
@@ -18,6 +18,6 @@ From Executions, run a prepared work item against the chosen environment. The wo
 
 Regression is the next workflow. It reads the system's cases from Squash and runs them. It does not plan or generate.
 
-Reading a work item from Azure Boards or Jira, calling a model for the two agents, walking the UI, and reading the source are how the generated cases get better. They happen before the cases are stored. Source repositories stay read-only. No healer rewrites a failing test.
+Reading a work item from Azure Boards or Jira, walking the UI/source **before** planning, calling a model for planner / generator / healer, and persisting the MD plan are how the generated cases get better. They happen before the cases are stored. Source repositories stay read-only. The healer rewrites platform-owned stubs only.
 
 Kubernetes stays later, after this sequence. It was called Phase 11 in the earlier notes and Phase 12 in the notes that followed.

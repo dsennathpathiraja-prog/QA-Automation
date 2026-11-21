@@ -5,31 +5,66 @@ import { acceptanceLines, runFlowStep } from '../src/requirement-flow';
 const story = 'QA-1\n\nAcceptance criteria\nThe saved card is listed\nThe total includes tax';
 
 describe('requirement validation stages', () => {
-  it('reads the criteria, plans scenarios, and keeps the cases out of Squash', () => {
+  it('explores before planning, persists an MD plan, generates many cases, and heals', () => {
     const params = { story, applicationName: 'checkout', environment: 'qa' };
     const read = runFlowStep({ id: 'read_story', type: 'rv.read-user-story', params, prior: {} });
     expect(read.outputs.acceptanceCriteria).toEqual(['The saved card is listed', 'The total includes tax']);
-    const plan = runFlowStep({ id: 'plan', type: 'rv.generate-test-plan', params, prior: { read_story: read.outputs } });
+
+    const explore = runFlowStep({ id: 'explore_ui', type: 'rv.explore-ui', params, prior: { read_story: read.outputs } });
+    expect(explore.summary).toMatch(/before the plan|exploration/i);
+
+    const consolidate = runFlowStep({
+      id: 'consolidate',
+      type: 'rv.consolidate-findings',
+      params,
+      prior: { read_story: read.outputs, explore_ui: explore.outputs },
+    });
+    expect(consolidate.outputs.findings).toBeTruthy();
+
+    const plan = runFlowStep({
+      id: 'plan',
+      type: 'rv.generate-test-plan',
+      params,
+      prior: { read_story: read.outputs, consolidate: consolidate.outputs },
+    });
     expect(plan.summary).toMatch(/playwright-test-planner/);
-    expect(plan.summary).toMatch(/no model/);
-    expect(plan.outputs.scenarios).toHaveLength(6);
-    const scenarios = plan.outputs.scenarios as { name: string; kind: string; priority: string; steps: string }[];
-    expect(scenarios.map((s) => s.kind)).toEqual(['positive', 'negative', 'edge', 'positive', 'negative', 'edge']);
-    expect(scenarios.map((s) => s.priority)).toEqual(['medium', 'high', 'low', 'medium', 'high', 'low']);
-    expect(scenarios[0]?.name).toMatch(/^Positive:/);
-    expect(scenarios[1]?.name).toMatch(/^Negative:/);
-    expect(scenarios[1]?.steps).toMatch(/declined card|missing CVV|unauthorized|invalid/i);
-    const generated = runFlowStep({ id: 'generate_tests', type: 'rv.generate-tests', params, prior: { read_story: read.outputs, plan: plan.outputs } });
+    expect(plan.summary).toMatch(/plan artifact/i);
+    const scenarios = plan.outputs.scenarios as { name: string; kind: string; priority: string }[];
+    expect(scenarios.length).toBeGreaterThan(6);
+    expect(scenarios.some((s) => s.kind === 'positive')).toBe(true);
+    expect(scenarios.some((s) => s.kind === 'negative')).toBe(true);
+    expect(scenarios.some((s) => s.kind === 'edge')).toBe(true);
+    expect(asText(plan.outputs.planMarkdown)).toMatch(/# Test plan: QA-1/);
+    expect(asText(plan.outputs.planArtifact)).toMatch(/\.plan\.md$/);
+
+    const generated = runFlowStep({
+      id: 'generate_tests',
+      type: 'rv.generate-tests',
+      params,
+      prior: { read_story: read.outputs, plan: plan.outputs, consolidate: consolidate.outputs },
+    });
     expect(generated.summary).toMatch(/playwright-test-generator/);
     const cases = generated.outputs.cases as { name: string; workItem: string; steps: string; reference: string; kind: string; priority: string }[];
-    expect(cases).toHaveLength(6);
+    expect(cases.length).toBe(scenarios.length);
     expect(cases[0]?.workItem).toBe('QA-1');
     expect(cases[0]?.steps).toMatch(/@playwright\/test/);
-    expect(cases[0]?.steps).toMatch(/Steps:/);
     expect(cases[0]?.reference).toMatch(/^QAP-/);
-    expect(cases[0]).toMatchObject({ kind: 'positive', priority: 'medium' });
-    expect(cases[1]).toMatchObject({ kind: 'negative', priority: 'high' });
-    const published = runFlowStep({ id: 'publish_testcases', type: 'rv.publish-testcases', params, prior: { generate_tests: generated.outputs } });
+
+    const healed = runFlowStep({
+      id: 'heal_tests',
+      type: 'rv.heal-tests',
+      params,
+      prior: { generate_tests: generated.outputs },
+    });
+    expect(healed.summary).toMatch(/playwright-test-healer/);
+    expect(healed.outputs.cases).toHaveLength(cases.length);
+
+    const published = runFlowStep({
+      id: 'publish_testcases',
+      type: 'rv.publish-testcases',
+      params,
+      prior: { heal_tests: healed.outputs },
+    });
     expect(published.summary).toMatch(/Squash/);
     expect(published.outputs.squash).toBe('read-write');
   });
@@ -55,8 +90,14 @@ describe('requirement validation stages', () => {
     ]);
     const read = runFlowStep({ id: 'read_story', type: 'rv.read-user-story', params: { story: azureStyle, applicationName: 'PayNSure' }, prior: {} });
     expect(read.summary).toMatch(/3 acceptance criteria/);
-    const plan = runFlowStep({ id: 'plan', type: 'rv.generate-test-plan', params: { story: azureStyle, applicationName: 'PayNSure' }, prior: { read_story: read.outputs } });
-    expect(plan.outputs.scenarios).toHaveLength(9);
+    const plan = runFlowStep({
+      id: 'plan',
+      type: 'rv.generate-test-plan',
+      params: { story: azureStyle, applicationName: 'PayNSure' },
+      prior: { read_story: read.outputs },
+    });
+    expect((plan.outputs.scenarios as unknown[]).length).toBeGreaterThan(9);
+    expect(asText(plan.outputs.planMarkdown)).toMatch(/7189/);
   });
 
   it('does not treat a bare work item id as acceptance criteria', () => {
@@ -82,3 +123,7 @@ describe('workflow engine step notes', () => {
     expect(events.find((event) => event.kind === 'step.completed')?.payload.summary).toMatch(/QA-1/);
   });
 });
+
+function asText(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}

@@ -39,16 +39,77 @@ function rvSteps(mode: 'standard' | 'ui' | 'code' | 'both'): WfStep[] {
   const findings: Record<string, string> = {};
   if (ui && uiOn) findings.uiFindings = '${steps.explore_ui.outputs.findings}';
   if (code && codeOn) findings.codeFindings = '${steps.explore_code.outputs.findings}';
+  // Explore UI + code BEFORE playwright-test-planner so findings feed the MD plan.
   const steps: WfStep[] = [
     step('read_story', 'rv.read-user-story', { locked: true, config: { includeAttachments: true }, inputs: { storyRef: '${params.story}' }, retry: { maxAttempts: 3, backoff: 'exponential', initialDelaySec: 2, retryOn: ['transient', 'rate-limited'] }, timeoutMinutes: 5 }),
-    step('plan', 'rv.generate-test-plan', { locked: true, dependsOn: ['read_story'], config: { maxScenarios: 40 }, inputs: { story: '${steps.read_story.outputs.storyArtifact}' }, retry: { maxAttempts: 2, backoff: 'fixed', initialDelaySec: 5, retryOn: ['transient'] }, timeoutMinutes: 15 }),
   ];
-  if (ui) steps.push(step('explore_ui', 'rv.explore-ui', { enabled: uiOn, mandatory: false, locked: mode !== 'standard', dependsOn: ['plan'], pause: 'safe', config: { maxPages: 15 }, inputs: { plan: '${steps.plan.outputs.planArtifact}', environment: '${params.environment}' }, timeoutMinutes: 30 }));
-  if (code) steps.push(step('explore_code', 'rv.explore-code', { enabled: codeOn, mandatory: false, locked: mode !== 'standard', dependsOn: ['plan'], pause: 'safe', config: { maxFiles: 200 }, inputs: { plan: '${steps.plan.outputs.planArtifact}' }, timeoutMinutes: 30 }));
+  if (ui) {
+    steps.push(step('explore_ui', 'rv.explore-ui', {
+      enabled: uiOn,
+      mandatory: false,
+      locked: mode !== 'standard',
+      dependsOn: ['read_story'],
+      pause: 'safe',
+      config: { maxPages: 15 },
+      inputs: { story: '${steps.read_story.outputs.storyArtifact}', environment: '${params.environment}' },
+      timeoutMinutes: 30,
+    }));
+  }
+  if (code) {
+    steps.push(step('explore_code', 'rv.explore-code', {
+      enabled: codeOn,
+      mandatory: false,
+      locked: mode !== 'standard',
+      dependsOn: ['read_story'],
+      pause: 'safe',
+      config: { maxFiles: 200 },
+      inputs: { story: '${steps.read_story.outputs.storyArtifact}' },
+      timeoutMinutes: 30,
+    }));
+  }
   steps.push(
     step('consolidate', 'rv.consolidate-findings', { locked: true, dependsOn: exploreDeps, inputs: findings }),
-    step('generate_tests', 'rv.generate-tests', { locked: true, dependsOn: ['consolidate'], pause: 'safe', config: { language: 'javascript', maxTests: 60 }, inputs: { plan: '${steps.plan.outputs.planArtifact}', findings: '${steps.consolidate.outputs.combined}' }, timeoutMinutes: 30 }),
-    step('publish_testcases', 'rv.publish-testcases', { locked: true, dependsOn: ['generate_tests'], pause: 'safe', inputs: { cases: '${steps.generate_tests.outputs.cases}' } }),
+    step('plan', 'rv.generate-test-plan', {
+      locked: true,
+      dependsOn: ['consolidate'],
+      config: { maxScenarios: 200 },
+      inputs: {
+        story: '${steps.read_story.outputs.storyArtifact}',
+        findings: '${steps.consolidate.outputs.combined}',
+      },
+      retry: { maxAttempts: 2, backoff: 'fixed', initialDelaySec: 5, retryOn: ['transient'] },
+      timeoutMinutes: 30,
+    }),
+    step('generate_tests', 'rv.generate-tests', {
+      locked: true,
+      dependsOn: ['plan'],
+      pause: 'safe',
+      config: { language: 'javascript', maxTests: 250 },
+      inputs: {
+        plan: '${steps.plan.outputs.planArtifact}',
+        planMarkdown: '${steps.plan.outputs.planMarkdown}',
+        findings: '${steps.consolidate.outputs.combined}',
+      },
+      timeoutMinutes: 45,
+    }),
+    step('heal_tests', 'rv.heal-tests', {
+      locked: true,
+      dependsOn: ['generate_tests'],
+      pause: 'safe',
+      config: { maxFixes: 250 },
+      inputs: {
+        cases: '${steps.generate_tests.outputs.cases}',
+        planMarkdown: '${steps.plan.outputs.planMarkdown}',
+        findings: '${steps.consolidate.outputs.combined}',
+      },
+      timeoutMinutes: 45,
+    }),
+    step('publish_testcases', 'rv.publish-testcases', {
+      locked: true,
+      dependsOn: ['heal_tests'],
+      pause: 'safe',
+      inputs: { cases: '${steps.heal_tests.outputs.cases}' },
+    }),
   );
   return steps;
 }
@@ -128,10 +189,10 @@ function rg(key: string, name: string, summary: string, mode: 'all' | 'selected'
 }
 
 export const TEMPLATES: readonly TemplateInfo[] = [
-  rv('tpl-rv-standard', 'Standard Requirement Validation', 'Read a story, explore the UI (code is optional), generate test cases, and store them in Squash.', 'standard', 'optional', 'optional'),
-  rv('tpl-rv-ui-only', 'UI-Only Requirement Validation', 'Explore the UI only. Code exploration is not offered.', 'ui', true, 'off'),
-  rv('tpl-rv-code-only', 'Code-Only Requirement Validation', 'Explore the repository only. UI exploration is not offered.', 'code', 'off', true),
-  rv('tpl-rv-ui-code', 'UI + Code Requirement Validation', 'Explore the UI and the repository. Both stay on.', 'both', true, true, 150),
+  rv('tpl-rv-standard', 'Standard Requirement Validation', 'Read a story, explore the UI (code is optional), plan an MD test plan, generate many cases, heal broken ones, and store them in Squash.', 'standard', 'optional', 'optional'),
+  rv('tpl-rv-ui-only', 'UI-Only Requirement Validation', 'Explore the UI before planning. Code exploration is not offered.', 'ui', true, 'off'),
+  rv('tpl-rv-code-only', 'Code-Only Requirement Validation', 'Explore the repository before planning. UI exploration is not offered.', 'code', 'off', true),
+  rv('tpl-rv-ui-code', 'UI + Code Requirement Validation', 'Explore the UI and the repository before planning. Both stay on.', 'both', true, true, 180),
   rg('tpl-rg-full', 'Full Regression Suite', 'Run every automated case in a Squash suite.', 'all'),
   rg('tpl-rg-selected', 'Selected Regression Suite', 'Run the cases, suites, or collection chosen at the start.', 'selected'),
   rg('tpl-rg-smoke', 'Smoke Regression', 'Run the smoke collection with a shorter timeout.', 'smoke'),

@@ -1,4 +1,13 @@
-import { browserPortFromInvoker, createBrowserExplorer, createLlmTestGenerator, createLlmTestPlanner, PLAYWRIGHT_TEST_GENERATOR, PLAYWRIGHT_TEST_PLANNER } from '@qa/agents';
+import {
+  browserPortFromInvoker,
+  createBrowserExplorer,
+  createLlmTestGenerator,
+  createLlmTestHealer,
+  createLlmTestPlanner,
+  PLAYWRIGHT_TEST_GENERATOR,
+  PLAYWRIGHT_TEST_HEALER,
+  PLAYWRIGHT_TEST_PLANNER,
+} from '@qa/agents';
 import { buildProviders, buildSecretStore, connectDatabase } from '@qa/bootstrap';
 import { ConnectorExecutionManager } from '@qa/connector-sdk';
 import { PlatformError, type DeploymentProfile, type PlatformEnv } from '@qa/domain';
@@ -142,6 +151,7 @@ function buildRequirementLlm(): LlmGateway | undefined {
     assignments: new StaticAssignmentResolver({
       [PLAYWRIGHT_TEST_PLANNER]: assignment,
       [PLAYWRIGHT_TEST_GENERATOR]: assignment,
+      [PLAYWRIGHT_TEST_HEALER]: assignment,
     }),
     redactor: { redact: (s) => redactor.redactString(s) },
     audit: conn ? new PgLlmAuditSink(conn.db) : { append: async () => undefined },
@@ -152,6 +162,7 @@ function buildRequirementLlm(): LlmGateway | undefined {
 const requirementLlm = buildRequirementLlm();
 const plannerPort = createLlmTestPlanner(requirementLlm);
 const generatorPort = createLlmTestGenerator(requirementLlm);
+const healerPort = createLlmTestHealer(requirementLlm);
 
 const loop = new WorkerLoop({
   tick: async () => {
@@ -188,6 +199,7 @@ const loop = new WorkerLoop({
           {
             planner: plannerPort,
             generator: generatorPort,
+            healer: healerPort,
             explorer,
             resolveEnvironmentUrl: environments
               ? async (id) => {

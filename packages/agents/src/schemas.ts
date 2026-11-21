@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { fromZod } from '@qa/llm';
+import { MAX_GENERATED_CASES, MAX_HEAL_CASES, MAX_PLAN_SCENARIOS } from './limits';
 
 const Kind = z.enum(['positive', 'negative', 'edge']);
 const Priority = z.enum(['high', 'medium', 'low']);
@@ -14,7 +15,7 @@ export const PlannerScenarioSchema = z.object({
 });
 
 export const PlanOutputSchema = z.object({
-  scenarios: z.array(PlannerScenarioSchema).min(1).max(40),
+  scenarios: z.array(PlannerScenarioSchema).min(1).max(MAX_PLAN_SCENARIOS),
 });
 
 export const GeneratedCaseSchema = z.object({
@@ -28,11 +29,17 @@ export const GeneratedCaseSchema = z.object({
 });
 
 export const GenerateOutputSchema = z.object({
-  cases: z.array(GeneratedCaseSchema).min(1).max(40),
+  cases: z.array(GeneratedCaseSchema).min(1).max(MAX_GENERATED_CASES),
+});
+
+export const HealOutputSchema = z.object({
+  cases: z.array(GeneratedCaseSchema).min(1).max(MAX_HEAL_CASES),
 });
 
 export const planStructured = fromZod(PlanOutputSchema);
 export const generateStructured = fromZod(GenerateOutputSchema);
+export const healStructured = fromZod(HealOutputSchema);
 
 export type PlanOutput = z.infer<typeof PlanOutputSchema>;
 export type GenerateOutput = z.infer<typeof GenerateOutputSchema>;
+export type HealOutput = z.infer<typeof HealOutputSchema>;

@@ -3,8 +3,9 @@ import type { BrowserAutomationPort, BrowserExplorerPort, ExploreFinding, Explor
 
 /**
  * In-repo explorer that drives the managed Playwright MCP connector
- * (same role as Cursor's playwright-browser MCP). Skips cleanly when no URL
- * or no browser port is available — RV runs stay usable without a browser.
+ * (same role as Cursor's playwright-browser MCP). Runs BEFORE the planner so
+ * findings can feed the Markdown test plan. Skips cleanly when no URL or no
+ * browser port is available — RV runs stay usable without a browser.
  */
 export function createBrowserExplorer(browser: BrowserAutomationPort | undefined): BrowserExplorerPort {
   return {
@@ -28,18 +29,20 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         };
       }
 
+      const labels = input.scenarios.length > 0
+        ? input.scenarios.map((s) => s.name)
+        : (input.criteria?.length ? input.criteria : [input.application]).map((c) => `Explore: ${c}`);
       const details: ExploreFinding[] = [];
-      const targets = input.scenarios.length > 0 ? input.scenarios : [{ name: input.application, kind: 'positive' as const, priority: 'medium' as const, criterion: input.application, steps: '', expected: '' }];
-      const limit = Math.min(input.maxPages ?? 5, targets.length, 8);
+      const limit = Math.min(input.maxPages ?? 5, Math.max(1, labels.length), 8);
       try {
         await browser.openSession();
         await browser.navigate(input.url);
         for (let i = 0; i < limit; i += 1) {
-          const scenario = targets[i]!;
+          const label = labels[i] ?? `page-${i + 1}`;
           const snap = await browser.snapshot();
           const shot = await browser.screenshot();
           details.push({
-            scenarioName: scenario.name,
+            scenarioName: label,
             url: snap.url || input.url,
             snapshotExcerpt: (snap.accessibilityTree ?? '').slice(0, 1_500),
             screenshotBase64: shot.artifactBase64 || undefined,
@@ -63,7 +66,7 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         ? details.map((d) => `- ${d.scenarioName} @ ${d.url}\n  ${d.snapshotExcerpt.slice(0, 280).replace(/\s+/g, ' ')}`).join('\n')
         : `opened ${input.url}`;
       return {
-        summary: `playwright-browser opened ${details.length} page${details.length === 1 ? '' : 's'} on ${input.url} for ${input.application}.`,
+        summary: `playwright-browser opened ${details.length} page${details.length === 1 ? '' : 's'} on ${input.url} for ${input.application} (before planning).`,
         findings,
         details,
         source: 'browser',
