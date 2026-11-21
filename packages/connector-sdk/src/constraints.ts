@@ -1,4 +1,4 @@
-import { PlatformError } from '@qa/domain';
+import { PlatformError, urlAllowedByAllowlist } from '@qa/domain';
 import type { CapabilityDescriptor, ConstraintId, ExecutionPolicy, ResolvedInstance } from './types';
 
 export interface ConstraintContext {
@@ -28,18 +28,21 @@ const scope: ConstraintEvaluator = ({ input, instance }) => {
   check('branch');
 };
 
-/** Navigation is limited to the origins of the selected environment. */
+/**
+ * Navigation is limited to the selected environment and approved application hosts.
+ * Allowlist entries may be full origins or host patterns (URL vs host).
+ */
 const browserOrigins: ConstraintEvaluator = ({ input, policy }) => {
   if (typeof input.url !== 'string') return;
   const allowed = policy?.allowedOrigins;
   if (!allowed || allowed.length === 0) throw denied('no allowed origins for browser navigation');
-  let origin: string;
+  let parsed: URL;
   try {
-    origin = new URL(input.url).origin;
+    parsed = new URL(input.url);
   } catch {
     throw new PlatformError('validation', 'invalid URL');
   }
-  if (!allowed.includes(origin)) throw denied(`origin ${origin} is not allowed for this execution`);
+  if (!urlAllowedByAllowlist(parsed, allowed)) throw denied(`origin ${parsed.origin} is not allowed for this execution`);
 };
 
 const sizeMax: ConstraintEvaluator = ({ input }) => {
