@@ -58,6 +58,8 @@ describe('heuristic generator', () => {
     });
     expect(generated.cases.length).toBe(planned.scenarios.length);
     expect(generated.cases[0]?.steps).toMatch(/@playwright\/test/);
+    expect(generated.cases[0]?.validationSteps?.length).toBeGreaterThan(0);
+    expect(generated.cases[0]?.validationSteps?.[0]?.action).toBeTruthy();
     expect(generated.cases[0]?.steps).toMatch(/Exploration:.*Pay button/);
     expect(generated.cases[0]?.reference).toMatch(/^QAP-/);
   });

@@ -16,8 +16,14 @@ export interface GeneratedPlaywrightCase {
   name: string;
   kind: ScenarioKind;
   priority: ScenarioPriority;
+  /** Playwright `.spec.js` source for the platform library / runner. */
   steps: string;
   expected: string;
+  /**
+   * Human validation steps for Squash (`action` + `expected_result`).
+   * When omitted, publish derives them from a `// Steps:` comment or a name/expected fallback.
+   */
+  validationSteps?: { action: string; expected: string }[];
   workItem: string;
   reference: string;
   file: string;

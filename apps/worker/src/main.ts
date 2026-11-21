@@ -101,6 +101,7 @@ if (conn && secrets && hosts && built) {
 function squashWriteAllowed(method: string, path: string): boolean {
   if (method === 'POST' && /\/(_apis\/wit\/wiql|mcp)$/.test(path)) return true;
   if (method === 'POST' && /\/api\/rest\/[^/]+\/(test-cases(\/\d+\/steps)?|iterations\/\d+\/executions)$/.test(path)) return true;
+  if (method === 'DELETE' && /\/api\/rest\/[^/]+\/test-steps\/\d+$/.test(path)) return true;
   return method === 'PATCH' && /\/api\/rest\/[^/]+\/(test-cases|executions)\/\d+$/.test(path);
 }
 const executions = conn ? new PgExecutionRepository(conn.db) : undefined;
@@ -211,10 +212,17 @@ const loop = new WorkerLoop({
         );
         if (step.type !== 'rv.publish-testcases' || !testCases) return result;
         const cases: GeneratedCase[] = (Array.isArray(result.outputs.cases) ? result.outputs.cases : []).flatMap((item) => {
-          const row = item as Partial<GeneratedCase>;
+          const row = item as Partial<GeneratedCase> & { validationSteps?: { action?: string; expected?: string }[]; file?: string };
           if (typeof row.name !== 'string' || typeof row.steps !== 'string' || typeof row.expected !== 'string' || typeof row.reference !== 'string') return [];
           const kind: GeneratedCase['kind'] = row.kind === 'negative' || row.kind === 'edge' || row.kind === 'positive' ? row.kind : undefined;
           const priority: GeneratedCase['priority'] = row.priority === 'high' || row.priority === 'medium' || row.priority === 'low' ? row.priority : undefined;
+          const validationSteps = Array.isArray(row.validationSteps)
+            ? row.validationSteps.flatMap((s) => {
+              const action = typeof s?.action === 'string' ? s.action.trim() : '';
+              if (!action) return [];
+              return [{ action, expected: typeof s?.expected === 'string' ? s.expected : '' }];
+            })
+            : undefined;
           return [{
             name: row.name,
             steps: row.steps,
@@ -223,6 +231,8 @@ const loop = new WorkerLoop({
             reference: row.reference,
             kind,
             priority,
+            validationSteps,
+            file: typeof row.file === 'string' ? row.file : undefined,
           }];
         });
         const published = await publishGeneratedCases({
@@ -230,11 +240,16 @@ const loop = new WorkerLoop({
           cases,
           testCases,
           squash: squash
-            ? async (item) => squash.invoke<{ id: string; created: boolean; projectId?: string }>({
+            ? async (_item, upsert) => squash.invoke<{ id: string; created: boolean; projectId?: string }>({
                 role: 'testManagement',
                 capability: 'tm.testcase.upsert',
-                input: { reference: item.reference, name: item.name, steps: [{ action: item.steps, expected: item.expected }] },
-                idempotencyKey: item.reference,
+                input: {
+                  reference: upsert.reference,
+                  name: upsert.name,
+                  description: upsert.description,
+                  steps: upsert.steps,
+                },
+                idempotencyKey: upsert.reference,
                 actor: { type: 'step', id: step.id, executionId: step.runId, stepId: step.id },
               })
             : undefined,

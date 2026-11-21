@@ -18,6 +18,8 @@ export interface FlowCase {
   priority: PlannerScenario['priority'];
   steps: string;
   expected: string;
+  /** Human validation steps for Squash publish (optional; derived on publish when missing). */
+  validationSteps?: { action: string; expected: string }[];
   workItem: string;
   reference: string;
   file: string;
@@ -142,10 +144,21 @@ const scenariosOf = (value: unknown): PlannerScenario[] => {
   });
 };
 
+const validationStepsOf = (value: unknown): { action: string; expected: string }[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  const steps = value.flatMap((item) => {
+    const row = item as { action?: unknown; expected?: unknown };
+    const action = text(row.action);
+    if (!action) return [];
+    return [{ action, expected: text(row.expected) }];
+  });
+  return steps.length > 0 ? steps : undefined;
+};
+
 const casesOf = (value: unknown): FlowCase[] => {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
-    const row = item as Partial<FlowCase>;
+    const row = item as Partial<FlowCase> & { validationSteps?: unknown };
     const name = text(row.name);
     const steps = text(row.steps);
     const expected = text(row.expected);
@@ -157,6 +170,7 @@ const casesOf = (value: unknown): FlowCase[] => {
       priority: priorityOf(kind, row.priority),
       steps,
       expected,
+      validationSteps: validationStepsOf(row.validationSteps),
       workItem: text(row.workItem),
       reference: text(row.reference),
       file: text(row.file),

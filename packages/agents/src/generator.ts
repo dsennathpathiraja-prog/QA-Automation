@@ -64,26 +64,40 @@ export function createLlmTestGenerator(gateway: LlmGateway | undefined): TestGen
         generateStructured,
         { requirements: { structuredOutput: true } },
       );
-      const cases: GeneratedPlaywrightCase[] = result.data.cases.slice(0, MAX_GENERATED_CASES).map((row, index) => ({
-        name: row.name,
-        kind: row.kind,
-        priority: priorityOf(row.kind, row.priority),
-        steps: row.steps.includes('@playwright/test') ? row.steps : [
-          "import { test, expect } from '@playwright/test';",
-          '',
-          `test('${row.name.replace(/'/g, "\\'")}', async ({ page }) => {`,
-          "  await page.goto('/');",
-          `  // ${row.kind}: ${row.expected}`,
-          "  await expect(page.locator('body')).toBeVisible();",
-          '});',
-          '',
-        ].join('\n'),
-        expected: row.expected,
-        workItem: input.workItem,
-        reference: `QAP-${work}-${index + 1}`.slice(0, 50),
-        file: row.file ?? `tests/${application}/${work}.spec.js`,
-        testId: row.testId ?? `${work}-${row.kind}-${index + 1}`,
-      }));
+      const cases: GeneratedPlaywrightCase[] = result.data.cases.slice(0, MAX_GENERATED_CASES).map((row, index) => {
+        const scenario = scenarios[index];
+        const human = scenario?.steps?.trim();
+        const validationSteps = row.validationSteps?.length
+          ? row.validationSteps.map((s) => ({ action: s.action, expected: s.expected ?? '' }))
+          : human
+            ? human.split(/(?<=[.!?])\s+/).map((part) => part.trim()).filter(Boolean).map((action, i, all) => ({
+              action,
+              expected: i === all.length - 1 ? row.expected : '',
+            }))
+            : undefined;
+        return {
+          name: row.name,
+          kind: row.kind,
+          priority: priorityOf(row.kind, row.priority),
+          steps: row.steps.includes('@playwright/test') ? row.steps : [
+            "import { test, expect } from '@playwright/test';",
+            '',
+            `test('${row.name.replace(/'/g, "\\'")}', async ({ page }) => {`,
+            "  await page.goto('/');",
+            `  // ${row.kind}: ${row.expected}`,
+            human ? `  // Steps: ${human.slice(0, 220)}` : '',
+            "  await expect(page.locator('body')).toBeVisible();",
+            '});',
+            '',
+          ].filter((line) => line !== undefined).join('\n'),
+          expected: row.expected,
+          validationSteps,
+          workItem: input.workItem,
+          reference: `QAP-${work}-${index + 1}`.slice(0, 50),
+          file: row.file ?? `tests/${application}/${work}.spec.js`,
+          testId: row.testId ?? `${work}-${row.kind}-${index + 1}`,
+        };
+      });
       return {
         summary: `${PLAYWRIGHT_TEST_GENERATOR} wrote ${cases.length} Playwright test${cases.length === 1 ? '' : 's'} for ${input.workItem} with a model${result.repaired ? ' (repaired once)' : ''} from the MD plan.`,
         cases,

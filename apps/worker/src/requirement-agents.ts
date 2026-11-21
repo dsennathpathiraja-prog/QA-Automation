@@ -45,12 +45,20 @@ const casesOf = (value: unknown) => {
     const priority = row.priority === 'high' || row.priority === 'medium' || row.priority === 'low'
       ? row.priority
       : kind === 'negative' ? 'high' : kind === 'edge' ? 'low' : 'medium';
+    const validationSteps = Array.isArray(row.validationSteps)
+      ? (row.validationSteps as { action?: unknown; expected?: unknown }[]).flatMap((s) => {
+        const action = text(s?.action);
+        if (!action) return [];
+        return [{ action, expected: text(s?.expected) }];
+      })
+      : undefined;
     return [{
       name,
       kind: kind as 'positive' | 'negative' | 'edge',
       priority: priority as 'high' | 'medium' | 'low',
       steps,
       expected,
+      validationSteps: validationSteps && validationSteps.length > 0 ? validationSteps : undefined,
       workItem: text(row.workItem),
       reference: text(row.reference),
       file: text(row.file),
