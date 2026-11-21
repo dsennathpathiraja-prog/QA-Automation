@@ -57,8 +57,10 @@ describe('test case library storage', () => {
     const collection = await cases.insertCollection({ id: '33333333-3333-4333-8333-333333333333', name: 'QA-1', description: 'Cases generated for QA-1' });
     await cases.addCase(collection.id, a.id);
     await cases.addCase(collection.id, b.id);
+    expect((await cases.listCollections())[0]?.size).toBe(2);
     expect(await cases.softDelete(a.id)).toBe(true);
     expect(await cases.get(a.id)).toBeUndefined();
+    expect((await cases.listCollections())[0]?.size).toBe(1);
     expect((await cases.getCollection(collection.id))?.cases).toEqual([
       { id: b.id, name: 'Logout', version: 1, position: 2, kind: 'positive', priority: 'medium' },
     ]);

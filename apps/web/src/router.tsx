@@ -64,13 +64,20 @@ export function buildRouter(opts: RouterOptions = {}): AnyRouter {
     notFoundComponent: NotFound,
   });
 
-  const pages = NAV_ITEMS.map((item) =>
+  const pages = NAV_ITEMS.filter((item) => item.id !== 'executions').map((item) =>
     createRoute({
       getParentRoute: () => shell,
       path: item.to,
       component: () => <Guarded item={item}>{real[item.id]?.()}</Guarded>,
     }),
   );
+  const executionsItem = NAV_ITEMS.find((item) => item.id === 'executions')!;
+  const executions = createRoute({
+    getParentRoute: () => shell,
+    path: '/executions',
+    validateSearch: (s: Record<string, unknown>) => ({ tab: s.tab === 'history' ? ('history' as const) : undefined }),
+    component: () => <Guarded item={executionsItem}><Executions /></Guarded>,
+  });
 
   const connectorItem = NAV_ITEMS.find((i) => i.id === 'connectors')!;
   const manageItem: NavItem = { ...connectorItem, anyOf: ['connector.manage'] };
@@ -84,7 +91,7 @@ export function buildRouter(opts: RouterOptions = {}): AnyRouter {
   const testCaseDetail = createRoute({ getParentRoute: () => shell, path: '/test-cases/$id', component: () => <Guarded item={testCaseItem}><TestCasePage /></Guarded> });
   const testCollectionDetail = createRoute({ getParentRoute: () => shell, path: '/test-collections/$id', component: () => <Guarded item={testCaseItem}><TestCollectionPage /></Guarded> });
 
-  return createRouter({ routeTree: root.addChildren([signInError, shell.addChildren([...pages, connectorNew, connectorDetail, environmentDetail, workflowDetail, testCaseDetail, testCollectionDetail])]), history: opts.history, defaultPreload: false });
+  return createRouter({ routeTree: root.addChildren([signInError, shell.addChildren([...pages, executions, connectorNew, connectorDetail, environmentDetail, workflowDetail, testCaseDetail, testCollectionDetail])]), history: opts.history, defaultPreload: false });
 }
 
 declare module '@tanstack/react-router' {

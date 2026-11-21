@@ -1,11 +1,29 @@
+import {
+  Alert,
+  Box,
+  Button,
+  FormControl,
+  InputLabel,
+  List,
+  ListItemButton,
+  ListItemText,
+  MenuItem,
+  Paper,
+  Select,
+  Stack,
+  Tab,
+  Tabs,
+  TextField,
+  Typography,
+} from '@mui/material';
 import { WorkflowListResponse, WorkflowSchema, WorkflowTemplateList } from '@qa/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useApi } from '../api/context';
 import { useSession } from '../auth/session';
-import { Card, ErrorNotice, PageHeader } from './common';
-import { Field, errorText, fieldClass, primaryButtonClass } from './connectors/shared';
+import { ErrorNotice, PageHeader } from './common';
+import { errorText } from './connectors/shared';
 
 const key = ['workflows'] as const;
 const TYPES = [
@@ -13,11 +31,14 @@ const TYPES = [
   { value: 'regression-testing', label: 'Regression testing' },
 ] as const;
 
+type ListTab = 'list' | 'create';
+
 export function Workflows() {
   const api = useApi();
   const session = useSession();
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const [tab, setTab] = useState<ListTab>('list');
   const q = useQuery({ queryKey: key, queryFn: () => api.get('/api/v1/workflows', WorkflowListResponse) });
   const templates = useQuery({ queryKey: ['workflow-templates'], queryFn: () => api.get('/api/v1/workflow-templates', WorkflowTemplateList), enabled: session.can('workflow.create') });
   const [name, setName] = useState('');
@@ -35,45 +56,75 @@ export function Workflows() {
   return (
     <>
       <PageHeader title="Workflows" description="Create a draft from a template, check it, and publish. The worker runs a published workflow." />
-      <div className="space-y-4">
-        {session.can('workflow.create') && (
-          <Card label="New draft">
-            <form onSubmit={(e) => { e.preventDefault(); add.mutate({ name, type: chosen?.type ?? type, ...(templateKey ? { templateKey } : {}) }); }}>
-              <Field id="wf-name" label="Name"><input id="wf-name" required className={fieldClass} value={name} onChange={(e) => setName(e.target.value)} /></Field>
-              <Field id="wf-template" label="Template">
-                <select id="wf-template" className={fieldClass} value={templateKey} onChange={(e) => setTemplateKey(e.target.value)}>
-                  <option value="">Empty draft</option>
-                  {templates.data?.items.map((t) => <option key={t.key} value={t.key}>{t.name}</option>)}
-                </select>
-              </Field>
-              {!chosen && (
-                <Field id="wf-type" label="Type">
-                  <select id="wf-type" className={fieldClass} value={type} onChange={(e) => setType(e.target.value as typeof type)}>
-                    {TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                  </select>
-                </Field>
-              )}
-              {chosen && <p className="mt-2">{chosen.summary}</p>}
-              <button type="submit" className={`${primaryButtonClass} mt-3`} disabled={add.isPending}>Create draft</button>
-              {add.isError && <div className="mt-3"><ErrorNotice message={errorText(add.error, 'The draft could not be saved.')} /></div>}
-            </form>
-          </Card>
-        )}
-        <Card label="Workflows">
+      <Paper sx={{ mb: 2 }}>
+        <Tabs value={tab} onChange={(_, value: ListTab) => setTab(value)} aria-label="Workflows sections">
+          <Tab value="list" label="My workflows" />
+          {session.can('workflow.create') && <Tab value="create" label="New draft" />}
+        </Tabs>
+      </Paper>
+
+      {tab === 'list' && (
+        <Paper sx={{ p: 2 }} aria-label="Workflows">
+          <Typography variant="h2" gutterBottom>My workflows</Typography>
           {q.isError && <ErrorNotice message="Workflows could not be loaded." onRetry={() => void q.refetch()} />}
-          {q.data && q.data.items.length === 0 && <p>No workflows yet.</p>}
+          {q.data && q.data.items.length === 0 && <Alert severity="info">No workflows yet.</Alert>}
           {q.data && q.data.items.length > 0 && (
-            <ul>
+            <List>
               {q.data.items.map((w) => (
-                <li key={w.id}>
-                  <Link to="/workflows/$id" params={{ id: w.id }} className="text-blue-700 underline dark:text-blue-300">{w.name}</Link>
-                  {' · '}{w.type === 'requirement-validation' ? 'Requirement validation' : 'Regression testing'} · {w.status}
-                </li>
+                <Link key={w.id} to="/workflows/$id" params={{ id: w.id }} style={{ textDecoration: 'none', color: 'inherit' }}>
+                  <ListItemButton>
+                    <ListItemText
+                      primary={w.name}
+                      secondary={`${w.type === 'requirement-validation' ? 'Requirement validation' : 'Regression testing'} · ${w.status}`}
+                    />
+                  </ListItemButton>
+                </Link>
               ))}
-            </ul>
+            </List>
           )}
-        </Card>
-      </div>
+        </Paper>
+      )}
+
+      {tab === 'create' && session.can('workflow.create') && (
+        <Paper sx={{ p: 2 }} aria-label="New draft">
+          <Typography variant="h2" gutterBottom>New draft</Typography>
+          <Stack component="form" spacing={2} onSubmit={(e) => { e.preventDefault(); add.mutate({ name, type: chosen?.type ?? type, ...(templateKey ? { templateKey } : {}) }); }}>
+            <TextField id="wf-name" label="Name" required value={name} onChange={(e) => setName(e.target.value)} fullWidth />
+            <FormControl fullWidth>
+              <InputLabel id="wf-template-label">Template</InputLabel>
+              <Select
+                labelId="wf-template-label"
+                id="wf-template"
+                label="Template"
+                value={templateKey}
+                onChange={(e) => setTemplateKey(String(e.target.value))}
+              >
+                <MenuItem value="">Empty draft</MenuItem>
+                {templates.data?.items.map((t) => <MenuItem key={t.key} value={t.key}>{t.name}</MenuItem>)}
+              </Select>
+            </FormControl>
+            {!chosen && (
+              <FormControl fullWidth>
+                <InputLabel id="wf-type-label">Type</InputLabel>
+                <Select
+                  labelId="wf-type-label"
+                  id="wf-type"
+                  label="Type"
+                  value={type}
+                  onChange={(e) => setType(e.target.value as typeof type)}
+                >
+                  {TYPES.map((t) => <MenuItem key={t.value} value={t.value}>{t.label}</MenuItem>)}
+                </Select>
+              </FormControl>
+            )}
+            {chosen && <Alert severity="info">{chosen.summary}</Alert>}
+            <Box>
+              <Button type="submit" variant="contained" disabled={add.isPending}>Create draft</Button>
+            </Box>
+            {add.isError && <ErrorNotice message={errorText(add.error, 'The draft could not be saved.')} />}
+          </Stack>
+        </Paper>
+      )}
     </>
   );
 }

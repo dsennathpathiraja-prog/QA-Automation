@@ -80,7 +80,7 @@ describe('route guard', () => {
     expect(screen.queryByRole('button', { name: 'Clear platform test cases' })).toBeNull();
   });
 
-  it('lists workflow runs on Executions', async () => {
+  it('lists work-item runs on Executions and workflow history on the History tab', async () => {
     const user = userEvent.setup();
     renderApp('/executions', {
       me: { status: 200, body: meFor('qa_engineer') },
@@ -97,12 +97,15 @@ describe('route guard', () => {
         '/api/v1/executions/1436518e-0000-4000-8000-000000000001/events': { status: 200, body: { items: [{ seq: 1, kind: 'step.completed', at: '2026-11-18T10:00:00.000Z', payload: { stepId: 'read_story', summary: 'Read work item QA-1.' } }] } },
       },
     });
-    expect(await screen.findByText('Checkout')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Prepare execution' })).toBeTruthy();
+    expect(await screen.findByRole('tab', { name: 'Execution' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Prepare execution' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Run' })).toBeTruthy();
-    expect(screen.getByText(/These runs create the test cases/)).toBeTruthy();
-    expect(screen.getByText(/Succeeded/)).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: 'Checkout' }));
+    expect(screen.getByText(/soft-deleted cases are excluded/i)).toBeTruthy();
+    await user.click(screen.getByRole('tab', { name: 'History' }));
+    expect(await screen.findByText(/These runs create and publish test cases/)).toBeTruthy();
+    const checkout = await screen.findByRole('button', { name: /Checkout/ });
+    expect(checkout.textContent).toMatch(/Succeeded/);
+    await user.click(checkout);
     expect((await screen.findByRole('region', { name: 'Selected run' })).textContent).toMatch(/Read work item QA-1/);
   });
 });

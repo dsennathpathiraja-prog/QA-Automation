@@ -144,7 +144,13 @@ export class PgTestCaseRepository implements TestCaseRepository {
 
   async listCollections() {
     const rows = await this.db.select().from(testCollection).where(sql`${testCollection.deletedAt} is null`).orderBy(desc(testCollection.updatedAt));
-    const counts = await this.db.select({ collectionId: testCollectionCase.collectionId, n: sql<number>`count(*)::int` }).from(testCollectionCase).groupBy(testCollectionCase.collectionId);
+    // Count only live (non soft-deleted) members so size matches the collection detail and execution board.
+    const counts = await this.db
+      .select({ collectionId: testCollectionCase.collectionId, n: sql<number>`count(*)::int` })
+      .from(testCollectionCase)
+      .innerJoin(testCase, eq(testCase.id, testCollectionCase.testCaseId))
+      .where(sql`${testCase.deletedAt} is null`)
+      .groupBy(testCollectionCase.collectionId);
     const size = new Map(counts.map((c) => [c.collectionId, Number(c.n)]));
     return rows.map((r): TestCollectionRecord => ({ id: r.id, name: r.name, description: r.description, size: size.get(r.id) ?? 0 }));
   }
