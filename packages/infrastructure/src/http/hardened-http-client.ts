@@ -122,7 +122,12 @@ export class HardenedHttpClient implements HttpPort {
       if (e instanceof PlatformError) throw e;
       const name = (e as { name?: string }).name;
       if (name === 'TimeoutError' || name === 'AbortError') throw new PlatformError('transient', 'request timed out or was aborted', undefined, e);
-      throw new PlatformError('transient', `network error: ${(e as Error).message}`, undefined, e);
+      const raw = (e as Error).message ?? String(e);
+      const code = String((e as { code?: string }).code ?? (e as { cause?: { code?: string } }).cause?.code ?? '');
+      if (/ECONNREFUSED/i.test(code) || /ECONNREFUSED|connection refused/i.test(raw)) {
+        throw new PlatformError('transient', `connection refused: ${raw}`, undefined, e);
+      }
+      throw new PlatformError('transient', `network error: ${raw}`, undefined, e);
     } finally {
       await dispatcher.close().catch(() => undefined);
     }

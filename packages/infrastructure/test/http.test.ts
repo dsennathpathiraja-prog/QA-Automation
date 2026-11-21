@@ -147,6 +147,21 @@ describe('HardenedHttpClient', () => {
     });
   });
 
+  it('labels connection refused distinctly from other network errors', async () => {
+    const f: FetchLike = async () => {
+      throw Object.assign(new Error('connect ECONNREFUSED 10.2.3.4:8931'), { code: 'ECONNREFUSED' });
+    };
+    await expect(
+      new HardenedHttpClient({ egress: policy(), resolve: async () => ['10.2.3.4'], fetchImpl: f }).request({
+        method: 'GET',
+        url: 'http://jira.corp.local/x',
+      }),
+    ).rejects.toMatchObject({
+      errorClass: 'transient',
+      message: expect.stringMatching(/connection refused/i),
+    });
+  });
+
   it('really connects to the pinned address (integration against a local server)', async () => {
     const { createServer } = await import('node:http');
     const srv = createServer((_, res) => res.end('pong'));

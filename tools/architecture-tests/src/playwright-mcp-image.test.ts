@@ -15,7 +15,11 @@ describe('playwright-mcp image uses baked Chromium (not missing Google Chrome)',
     expect(dockerfile).toMatch(/@playwright\/mcp@0\.0\.35/);
     expect(dockerfile).toMatch(/npx playwright install chromium/);
     expect(dockerfile).toMatch(/--browser", "chromium"/);
+    expect(dockerfile).toMatch(/--host", "0\.0\.0\.0"/);
+    expect(dockerfile).toMatch(/--port", "8931"/);
     expect(dockerfile).toMatch(/PLAYWRIGHT_MCP_BROWSER=chromium/);
+    // 0.0.35 has no --allowed-hosts; that flag exits 1 and leaves Test connection unable to reach :8931.
+    expect(dockerfile).not.toMatch(/"--allowed-hosts"/);
     expect(dockerfile).not.toMatch(/npx --yes @playwright\/mcp@latest/);
     expect(dockerfile).not.toMatch(/playwright install chrome(?:\s|$)/);
   });
