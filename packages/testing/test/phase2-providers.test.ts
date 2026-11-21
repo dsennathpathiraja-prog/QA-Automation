@@ -451,6 +451,33 @@ describe('source and work-item providers', () => {
     expect(providerCreates).toBeGreaterThanOrEqual(3);
   });
 
+  it('rewrites ERR_HTTP_RESPONSE_CODE_FAILURE with shop IP guidance', async () => {
+    const m = await mock((hit) => {
+      const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string } };
+      if (body.method === 'initialize') return mcpInit('sess-http');
+      if (body.params?.name === 'browser_navigate') {
+        return {
+          body: {
+            result: {
+              isError: true,
+              content: [{
+                type: 'text',
+                text: '### Result\nError: page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE at http://sdk.paynsure.internal/shop\nCall log:\n  - navigating to "http://sdk.paynsure.internal/shop", waiting until "domcontentloaded"',
+              }],
+            },
+          },
+        };
+      }
+      return { body: { result: { content: [] } } };
+    });
+    const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'http://sdk.paynsure.internal' }, undefined, { http: m.http });
+    const opened = await client.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
+    await expect(client.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'http://sdk.paynsure.internal/shop' }, {} as never)).rejects.toMatchObject({
+      errorClass: 'transient',
+      message: expect.stringMatching(/ERR_HTTP_RESPONSE_CODE_FAILURE|PLAYWRIGHT_MCP_SHOP_IP|VirtualHost|wrong IP/i),
+    });
+  });
+
   it('retries navigate once when Chromium profile is already in use', async () => {
     const pageState = `### Page state\n- Page URL: http://sdk.paynsure.internal/shop\n- Page Title: Shop\n- Page Snapshot:\n\`\`\`yaml\n- button "Add to cart" [ref=e1]\n\`\`\`\n`;
     let navigates = 0;

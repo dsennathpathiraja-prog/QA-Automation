@@ -1,0 +1,9 @@
+# Optional overlay for non-local compose: map PayNSure shop into playwright-mcp.
+# Set PLAYWRIGHT_MCP_SHOP_IP to the shop LAN/VPN IP, then:
+#   docker compose -f deploy/compose/docker-compose.yml \
+#     -f deploy/compose/docker-compose.playwright-shop.yml \
+#     --profile browser up -d --force-recreate playwright-mcp
+services:
+  playwright-mcp:
+    extra_hosts:
+      sdk.paynsure.internal: ${PLAYWRIGHT_MCP_SHOP_IP:?Set PLAYWRIGHT_MCP_SHOP_IP to the shop LAN IP}

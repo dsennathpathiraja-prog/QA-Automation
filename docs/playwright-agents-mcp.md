@@ -118,10 +118,10 @@ Run story id
        environment → applicationUrl
        → browser.session.open → sessionId
        → browser.navigate({ sessionId, url })
-       → fail-fast if chrome-error / DNS (extra_hosts / PLAYWRIGHT_MCP_SHOP_IP)
+       → fail-fast if chrome-error / DNS / HTTP 4xx–5xx (PLAYWRIGHT_MCP_SHOP_IP + shop overlay)
        → browser.wait (SPA settle) → browser.snapshot
        → browser.evaluate DOM probe when aria tree empty → screenshot
-       (playwright-mcp Compose defaults sdk.paynsure.internal → host-gateway)
+       (map sdk.paynsure.internal via docker-compose.playwright-shop.yml + PLAYWRIGHT_MCP_SHOP_IP; do not use host-gateway unless the shop is on the Docker host)
   → rv.explore-code (when on):
        bound source-repo config.repo
        → scm.code.search({ query, repo }) → scm.file.read

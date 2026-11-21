@@ -254,6 +254,30 @@ describe('browser explorer', () => {
     });
   });
 
+  it('surfaces HTTP response-code failure with shop IP guidance', async () => {
+    const browser: BrowserAutomationPort = {
+      async openSession() {},
+      async navigate() {
+        throw new PlatformError(
+          'transient',
+          'Error: page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE at http://sdk.paynsure.internal/shop',
+        );
+      },
+      async waitFor() {},
+      async snapshot() { return { accessibilityTree: '', url: '' }; },
+      async screenshot() { return { artifactBase64: '' }; },
+      async closeSession() {},
+    };
+    await expect(createBrowserExplorer(browser).explore({
+      application: 'PayNSure',
+      url: 'http://sdk.paynsure.internal/shop',
+      scenarios: [],
+    })).rejects.toMatchObject({
+      errorClass: 'transient',
+      message: expect.stringMatching(/ERR_HTTP_RESPONSE_CODE_FAILURE|PLAYWRIGHT_MCP_SHOP_IP|4xx|VirtualHost|wrong IP/i),
+    });
+  });
+
   it('fails fast with DNS guidance when navigate returns chrome-error URL', async () => {
     const browser: BrowserAutomationPort = {
       async openSession() {},

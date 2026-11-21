@@ -67,7 +67,7 @@ export const DOM_PROBE_SCRIPT = `() => {
     loadError = 'browser_error_page';
   }
   const bodyText = textOf(document.body || document.documentElement);
-  if (/ERR_NAME_NOT_RESOLVED|DNS_PROBE|ERR_CONNECTION_REFUSED|ERR_CONNECTION_TIMED_OUT|This site (can.t|cannot) be reached|took too long to respond/i.test(bodyText)) {
+  if (/ERR_NAME_NOT_RESOLVED|DNS_PROBE|ERR_CONNECTION_REFUSED|ERR_CONNECTION_TIMED_OUT|ERR_HTTP_RESPONSE_CODE_FAILURE|This site (can.t|cannot) be reached|took too long to respond/i.test(bodyText)) {
     loadError = loadError || 'navigation_failed';
   }
   const main = collect(document);
@@ -255,7 +255,17 @@ export function parseEvaluateToolResult(toolText: string): DomProbeResult | unde
   return undefined;
 }
 
-/** True when navigate/snapshot/probe landed on Chromium's DNS/network error page. */
+const NAV_DNS_OR_NET =
+  /ERR_NAME_NOT_RESOLVED|DNS_PROBE_FINISHED_NXDOMAIN|ERR_CONNECTION_REFUSED|ERR_CONNECTION_TIMED_OUT|This site (can.t|cannot) be reached|took too long to respond/i;
+const NAV_HTTP_STATUS =
+  /ERR_HTTP_RESPONSE_CODE_FAILURE|net::ERR_HTTP_RESPONSE_CODE_FAILURE|HTTP (4\d\d|5\d\d)\b/i;
+
+/** True when Chromium got an HTTP 4xx/5xx (DNS worked; often wrong extra_hosts IP / VirtualHost). */
+export function isHttpResponseCodeFailure(text: string | undefined): boolean {
+  return !!text && NAV_HTTP_STATUS.test(text);
+}
+
+/** True when navigate/snapshot/probe landed on Chromium's DNS/network/HTTP-error page. */
 export function isBrowserNavigationFailure(input: {
   url?: string;
   rawSnapshot?: string;
@@ -265,10 +275,11 @@ export function isBrowserNavigationFailure(input: {
   const raw = `${input.rawSnapshot || ''}\n${input.probe?.bodyText || ''}`;
   if (input.probe?.loadError) return true;
   if (/^chrome-error:\/\//i.test(pageUrl) || /^chrome:\/\//i.test(pageUrl)) return true;
-  return /ERR_NAME_NOT_RESOLVED|DNS_PROBE_FINISHED_NXDOMAIN|ERR_CONNECTION_REFUSED|ERR_CONNECTION_TIMED_OUT|This site (can.t|cannot) be reached|took too long to respond/i.test(raw);
+  if (isHttpResponseCodeFailure(raw)) return true;
+  return NAV_DNS_OR_NET.test(raw);
 }
 
-/** Operator-facing DNS / extra_hosts guidance (local Compose defaults sdk.paynsure.internal → host-gateway). */
+/** Operator-facing DNS / extra_hosts guidance (set PLAYWRIGHT_MCP_SHOP_IP to the real LAN IP). */
 export function dnsExtraHostsGuidance(url: string): string {
   let host = url;
   try {
@@ -277,10 +288,33 @@ export function dnsExtraHostsGuidance(url: string): string {
   return (
     `Chromium inside Playwright MCP did not load ${url} (DNS/network error page). ` +
     `Host Chrome can resolve ${host}, but the playwright-mcp container does not inherit host /etc/hosts. ` +
-    `Local Compose already maps sdk.paynsure.internal via extra_hosts (PLAYWRIGHT_MCP_SHOP_IP, default host-gateway) — ` +
-    `recreate the browser service (\`docker compose … --profile browser up -d --force-recreate playwright-mcp\`), ` +
-    `run \`deploy/compose/scripts/verify-playwright-shop-dns.sh\`, then retry Explore UI`
+    `Set PLAYWRIGHT_MCP_SHOP_IP to the shop LAN IP, apply the playwright-shop compose overlay, ` +
+    `recreate playwright-mcp, run \`deploy/compose/scripts/verify-playwright-shop-dns.sh\`, then retry Explore UI`
   );
+}
+
+/**
+ * DNS worked but Chromium rejected the HTTP status (4xx/5xx).
+ * Common when extra_hosts points sdk.paynsure.internal at host-gateway / wrong machine.
+ */
+export function httpResponseFailureGuidance(url: string, detail?: string): string {
+  let host = url;
+  try {
+    host = new URL(url).hostname;
+  } catch { /* keep raw */ }
+  const hint = detail ? detail.replace(/\s+/g, ' ').trim().slice(0, 160) : 'ERR_HTTP_RESPONSE_CODE_FAILURE';
+  return (
+    `Chromium reached ${url} but the HTTP response was an error status (${hint}). ` +
+    `DNS worked — ${host} is probably mapped to the wrong IP (host-gateway hitting Docker Desktop / a non-shop listener). ` +
+    `Set PLAYWRIGHT_MCP_SHOP_IP to the host DNS / LAN IP that serves the shop VirtualHost, ` +
+    `recreate playwright-mcp with the shop-hosts overlay, confirm verify-playwright-shop-dns.sh prints HTTP 2xx, then retry Explore UI`
+  );
+}
+
+/** Pick DNS vs HTTP-status guidance from Chromium / probe text. */
+export function navigationFailureGuidance(url: string, raw?: string): string {
+  if (isHttpResponseCodeFailure(raw)) return httpResponseFailureGuidance(url, raw);
+  return dnsExtraHostsGuidance(url);
 }
 
 /** Human reason when capture failed after retries (blank vs iframe vs DNS vs probe denied). */
@@ -294,9 +328,12 @@ export function describeEmptyCapture(input: {
   const probe = input.probe;
   const raw = input.rawSnapshot || '';
   if (isBrowserNavigationFailure({ url: probe?.url || input.url, rawSnapshot: raw, probe })) {
-    return dnsExtraHostsGuidance(input.url);
+    return navigationFailureGuidance(input.url, `${raw}\n${input.probeError || ''}`);
   }
   if (input.probeError) {
+    if (isHttpResponseCodeFailure(input.probeError)) {
+      return httpResponseFailureGuidance(input.url, input.probeError);
+    }
     if (/circuit breaker/i.test(input.probeError)) {
       return (
         `DOM probe blocked (${input.probeError}). ` +

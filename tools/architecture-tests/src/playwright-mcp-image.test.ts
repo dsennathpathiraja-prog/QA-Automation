@@ -55,9 +55,17 @@ describe('playwright-mcp image uses baked Chromium (not missing Google Chrome)',
     for (const file of ['deploy/compose/docker-compose.yml', 'deploy/compose/local/docker-compose.local.yml']) {
       const compose = read(file);
       expect(compose, file).toMatch(/extra_hosts:\s*\n\s+host\.docker\.internal:\s*host-gateway/);
-      expect(compose, file).toMatch(/sdk\.paynsure\.internal:\s*\$\{PLAYWRIGHT_MCP_SHOP_IP:-host-gateway\}/);
+      // Shop host must NOT default to host-gateway (QA-45: wrong HTTP status / VirtualHost).
+      expect(compose, file).not.toMatch(/sdk\.paynsure\.internal:\s*\$\{PLAYWRIGHT_MCP_SHOP_IP:-host-gateway\}/);
       // List form (`- "host:ip"`) fails validation on Windows Docker Compose.
       expect(compose, file).not.toMatch(/extra_hosts:\s*\n\s+-\s+"host\.docker\.internal:/);
+    }
+    for (const file of ['deploy/compose/docker-compose.playwright-shop.yml', 'deploy/compose/local/docker-compose.playwright-shop.yml']) {
+      const overlay = read(file);
+      expect(overlay, file).toMatch(/sdk\.paynsure\.internal:\s*\$\{PLAYWRIGHT_MCP_SHOP_IP:\?/);
+      // Value must be the required env (never a silent host-gateway default).
+      expect(overlay, file).not.toMatch(/sdk\.paynsure\.internal:\s*host-gateway/);
+      expect(overlay, file).not.toMatch(/sdk\.paynsure\.internal:\s*\$\{PLAYWRIGHT_MCP_SHOP_IP:-host-gateway\}/);
     }
   });
 });

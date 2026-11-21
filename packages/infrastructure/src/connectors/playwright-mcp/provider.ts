@@ -209,6 +209,43 @@ class PlaywrightClient implements ConnectorClient {
     return message?.result;
   }
 
+  /** Rewrite Chromium navigate failures so Explore shows HTTP status / shop-IP guidance. */
+  private navigateFailure(url: string, e: unknown): PlatformError {
+    const msg = e instanceof PlatformError ? e.message : String(e);
+    if (browserProfileBusy(msg)) {
+      return new PlatformError(
+        'transient',
+        'Playwright Chromium profile is still locked after close/retry. Rebuild playwright-mcp with --isolated and recreate the container, then retry Explore UI.',
+        undefined,
+        e,
+      );
+    }
+    if (/ERR_HTTP_RESPONSE_CODE_FAILURE|net::ERR_HTTP_RESPONSE_CODE_FAILURE/i.test(msg)) {
+      let host = url;
+      try {
+        host = new URL(url).hostname;
+      } catch { /* keep */ }
+      return new PlatformError(
+        'transient',
+        `Chromium reached ${url} but HTTP failed (ERR_HTTP_RESPONSE_CODE_FAILURE — typically 4xx/5xx). ` +
+          `DNS worked; ${host} is likely mapped to the wrong IP (host-gateway / Docker host instead of the shop VirtualHost). ` +
+          `Set PLAYWRIGHT_MCP_SHOP_IP to the real LAN IP, apply deploy/compose/local/docker-compose.playwright-shop.yml, ` +
+          `recreate playwright-mcp, confirm verify-playwright-shop-dns.sh shows HTTP 2xx, then retry.`,
+        undefined,
+        e,
+      );
+    }
+    if (/ERR_NAME_NOT_RESOLVED|DNS_PROBE_FINISHED_NXDOMAIN/i.test(msg)) {
+      return new PlatformError(
+        'transient',
+        `Chromium could not resolve ${url}. Set PLAYWRIGHT_MCP_SHOP_IP and apply the playwright-shop compose overlay, then recreate playwright-mcp.`,
+        undefined,
+        e,
+      );
+    }
+    return e instanceof PlatformError ? e : new PlatformError('transient', msg, undefined, e);
+  }
+
   /**
    * Best-effort browser_close on pooled owners so a stuck mcp-chromium profile can unlock.
    * Keeps `keep` registered (MCP session + durable pool) so navigate can retry on the same session.
@@ -395,24 +432,23 @@ class PlaywrightClient implements ConnectorClient {
         text = await runNavigate();
       } catch (e) {
         const msg = e instanceof PlatformError ? e.message : String(e);
-        if (!browserProfileBusy(msg)) throw e;
-        // Prior Explore/Test left a locked persistent profile — close pooled browsers and retry once.
-        console.warn(JSON.stringify({ msg: 'playwright browser profile busy; releasing pooled sessions and retrying navigate' }));
-        await this.releasePooledBrowsers(this);
-        if (this.sessionId) liveBySessionId.set(this.sessionId, this);
-        try {
-          text = await runNavigate();
-        } catch (e2) {
-          const msg2 = e2 instanceof PlatformError ? e2.message : String(e2);
-          throw new PlatformError(
-            'transient',
-            browserProfileBusy(msg2)
-              ? 'Playwright Chromium profile is still locked after close/retry. Rebuild playwright-mcp with --isolated and recreate the container, then retry Explore UI.'
-              : msg2,
-            undefined,
-            e2,
-          );
+        if (browserProfileBusy(msg)) {
+          // Prior Explore/Test left a locked persistent profile — close pooled browsers and retry once.
+          console.warn(JSON.stringify({ msg: 'playwright browser profile busy; releasing pooled sessions and retrying navigate' }));
+          await this.releasePooledBrowsers(this);
+          if (this.sessionId) liveBySessionId.set(this.sessionId, this);
+          try {
+            text = await runNavigate();
+          } catch (e2) {
+            throw this.navigateFailure(url, e2);
+          }
+        } else {
+          throw this.navigateFailure(url, e);
         }
+      }
+      // MCP sometimes returns page state after a soft HTTP failure without throwing.
+      if (/ERR_HTTP_RESPONSE_CODE_FAILURE|net::ERR_HTTP_RESPONSE_CODE_FAILURE/i.test(text)) {
+        throw this.navigateFailure(url, new PlatformError('transient', text));
       }
       const meta = pageMetaFromToolText(text);
       return {
