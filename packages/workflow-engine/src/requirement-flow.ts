@@ -47,6 +47,24 @@ export function workItemIdFromStory(raw: string): string {
 }
 
 /**
+ * Title line from a connector-enriched story blob: the first non-empty line after the
+ * work-item id, before any blank line or section heading (matches storyFromWorkItem).
+ */
+export function workItemTitleFromStory(raw: string): string {
+  const lines = raw.replace(/\r/g, '').split('\n');
+  const firstIdx = lines.findIndex((line) => line.trim());
+  if (firstIdx < 0) return '';
+  for (let i = firstIdx + 1; i < lines.length; i += 1) {
+    const rawLine = lines[i] ?? '';
+    if (!rawLine.trim()) return '';
+    const line = stripBullet(rawLine);
+    if (!line || isSectionHeading(line) || isGwt(line)) return '';
+    return line.slice(0, 200);
+  }
+  return '';
+}
+
+/**
  * Lines under an "Acceptance criteria" heading, Given/When/Then blocks, or bullets.
  * The work-item id on the first line is never treated as a criterion by itself.
  */
@@ -207,11 +225,13 @@ export function runFlowStep(step: FlowStep): FlowResult {
       const found = acceptanceLines(story);
       const onlyId = found.length === 0 || (found.length === 1 && found[0] === workItem);
       const acceptanceCriteria = onlyId ? [] : found;
+      const title = text(step.params.workItemTitle) || workItemTitleFromStory(story);
+      const titled = title ? `Read work item ${workItem} — ${title}.` : `Read work item ${workItem || '(none)'}.`;
       return {
         summary: acceptanceCriteria.length > 0
-          ? `Read work item ${workItem}. ${acceptanceCriteria.length} acceptance criteria.`
-          : `Read work item ${workItem || '(none)'}. The story text has no separate acceptance criteria, so the plan uses the work item itself.`,
-        outputs: { story, workItem, acceptanceCriteria, applicationName: application, environment },
+          ? `${titled} ${acceptanceCriteria.length} acceptance criteria.`
+          : `${titled} The story text has no separate acceptance criteria, so the plan uses the work item itself.`,
+        outputs: { story, workItem, title: title || undefined, acceptanceCriteria, applicationName: application, environment },
       };
     }
     case 'rv.explore-ui':

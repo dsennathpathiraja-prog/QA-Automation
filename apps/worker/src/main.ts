@@ -185,7 +185,13 @@ const loop = new WorkerLoop({
             connectors: squash,
             actor: { type: 'step', id: step.id, executionId: step.runId, stepId: step.id },
           });
-          if (enriched) params = { ...step.params, story: enriched.story };
+          if (enriched) {
+            params = {
+              ...step.params,
+              story: enriched.story,
+              ...(enriched.title ? { workItemTitle: enriched.title } : {}),
+            };
+          }
         }
         const actor = { type: 'step' as const, id: step.id, executionId: step.runId, stepId: step.id };
         const explorer = createBrowserExplorer(

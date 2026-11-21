@@ -65,8 +65,10 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
       const findings = details.length > 0
         ? details.map((d) => `- ${d.scenarioName} @ ${d.url}\n  ${d.snapshotExcerpt.slice(0, 280).replace(/\s+/g, ' ')}`).join('\n')
         : `opened ${input.url}`;
+      const visitedUrls = [...new Set(details.map((d) => d.url).filter(Boolean))];
+      const urlList = (visitedUrls.length > 0 ? visitedUrls : [input.url]).join(', ');
       return {
-        summary: `playwright-browser opened ${details.length} page${details.length === 1 ? '' : 's'} on ${input.url} for ${input.application} (before planning).`,
+        summary: `Visited ${urlList} (${details.length} page snapshot${details.length === 1 ? '' : 's'}) for ${input.application} before planning.`,
         findings,
         details,
         source: 'browser',

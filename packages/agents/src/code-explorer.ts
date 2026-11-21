@@ -100,8 +100,9 @@ export function createCodeExplorer(source: SourceRepoPort | undefined): CodeExpl
       const findings = details
         .map((d) => `- ${d.path}${d.query ? ` (query: ${d.query})` : ''}\n  ${d.excerpt.replace(/\s+/g, ' ').slice(0, 280)}`)
         .join('\n');
+      const files = details.map((d) => d.path).join(', ');
       return {
-        summary: `source-repo read ${details.length} file${details.length === 1 ? '' : 's'} for ${input.application} (before planning).`,
+        summary: `Visited files: ${files} for ${input.application} before planning.`,
         findings,
         details,
         source: 'repo',

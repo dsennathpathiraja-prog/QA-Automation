@@ -37,6 +37,7 @@ describe('read-story enrichment', () => {
     expect(invoke).toHaveBeenCalledWith(expect.objectContaining({ role: 'workItemSource', capability: 'workitem.read', input: { id: '7189' } }));
     expect(out?.fetched).toBe(true);
     expect(out?.workItem).toBe('7189');
+    expect(out?.title).toBe('PayNSure checkout');
     expect(out?.story).toContain('Card is shown');
     expect(out?.story).toContain('Extra pasted criterion');
   });
