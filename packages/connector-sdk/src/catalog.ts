@@ -119,7 +119,7 @@ export function defineCapabilities(): CapabilityDescriptor[] {
     c({ id: 'scm.permissions.inspect', category: 'source-repo', access: 'read', risk: 'low', input: z.object({}), output: z.object({ granted: z.array(str), writePermissionsDetected: z.array(str) }) }),
 
     // browser-automation
-    c({ id: 'browser.session.open', category: 'browser-automation', access: 'read', risk: 'low', input: z.object({ viewport: opt(z.object({ width: z.number(), height: z.number() })) }), output: z.object({ sessionId: str }) }),
+    c({ id: 'browser.session.open', category: 'browser-automation', access: 'read', risk: 'low', input: z.object({ viewport: opt(z.object({ width: z.number(), height: z.number() })) }), output: z.object({ sessionId: str, sessionMode: opt(str) }) }),
     c({ id: 'browser.navigate', category: 'browser-automation', access: 'read', risk: 'medium', constraints: ['browser.origin-allowlist'], input: z.object({ sessionId: str, url: str }), output: z.object({ finalUrl: str, status: opt(z.number()), accessibilityTree: opt(str), title: opt(str) }) }),
     c({ id: 'browser.snapshot', category: 'browser-automation', access: 'read', risk: 'low', constraints: ['size.max'], input: z.object({ sessionId: str }), output: z.object({ accessibilityTree: str, url: str, title: opt(str) }) }),
     c({ id: 'browser.wait', category: 'browser-automation', access: 'read', risk: 'low', input: z.object({ sessionId: str, timeSeconds: opt(z.number()), text: opt(str) }), output: z.object({ ok: z.boolean(), accessibilityTree: opt(str), url: opt(str), title: opt(str) }) }),

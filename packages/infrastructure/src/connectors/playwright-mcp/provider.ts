@@ -5,6 +5,24 @@ import { joinUrl, requestJson, required } from '../rest';
 
 export const PLAYWRIGHT_PROVIDER_KEY = 'playwright-mcp';
 
+/**
+ * Build/ops marker — Explore UI session continuity mode after QA-42.
+ * Verify the running worker image includes this string (see qa-42 notes).
+ */
+export const PLAYWRIGHT_MCP_SESSION_MODE = 'durable-pool-qa42';
+
+/**
+ * ConnectorExecutionManager creates a new PlaywrightClient per invoke() and disposes it.
+ * Without an in-process pool, navigate and evaluate can land on different clients/sessions
+ * ("No open pages available") even when the platform sessionId is passed correctly.
+ */
+const liveBySessionId = new Map<string, PlaywrightClient>();
+
+/** Test-only: clear durable session owners between cases. */
+export function resetPlaywrightMcpSessionPoolForTests(): void {
+  liveBySessionId.clear();
+}
+
 const ConfigSchema = z.object({
   baseUrl: z.string().url(),
   /** Comma-separated origins or host patterns the browser may open, for example https://shop.example.com or shop.example.com */
@@ -145,10 +163,22 @@ class PlaywrightClient implements ConnectorClient {
       ) {
         throw new PlatformError(e.errorClass, this.connectionFailureMessage(e), e.details, e);
       }
+      // Streamable HTTP returns 404 when mcp-session-id is unknown (session closed / wrong id / worker stale).
+      if (e instanceof PlatformError && (e.errorClass === 'not-found' || /status 404/i.test(e.message))) {
+        throw new PlatformError(
+          'transient',
+          `Playwright MCP session was not found (mcp-session-id=${this.sessionId ?? 'none'}). ` +
+            'The browser tab from navigate is gone — rebuild/restart the worker so it runs durable-pool-qa42, ' +
+            'rebuild playwright-mcp if the image is stale, Test connection, then retry Explore UI.',
+          e.details,
+          e,
+        );
+      }
       throw e;
     }
-    const session = res.headers['mcp-session-id'];
-    if (session) this.sessionId = session;
+    const session = res.headers['mcp-session-id']?.trim();
+    // Never rotate away from the Explore session mid-flight (would open a blank browser).
+    if (session && !this.sessionId) this.sessionId = session;
     return rpcMessage(res.body, res.text);
   }
 
@@ -278,12 +308,25 @@ class PlaywrightClient implements ConnectorClient {
           'Playwright MCP did not return mcp-session-id on initialize. Explore UI cannot keep navigate and evaluate on the same browser tab.',
         );
       }
-      return { sessionId: id };
+      // Manager will dispose this wrapper after open — keep the same instance for navigate/evaluate.
+      liveBySessionId.set(id, this);
+      // Structured log so operators can confirm the rebuilt worker (durable-pool-qa42) is live.
+      console.info(JSON.stringify({
+        msg: 'playwright mcp session open',
+        sessionMode: PLAYWRIGHT_MCP_SESSION_MODE,
+        mcpSessionIdPrefix: id.slice(0, 8),
+      }));
+      return { sessionId: id, sessionMode: PLAYWRIGHT_MCP_SESSION_MODE };
     }
-    // Every follow-up capability must reuse the open MCP session (manager creates a new client each invoke).
-    if (cap.id !== 'browser.session.open') {
-      this.adoptPlatformSession(required(i.sessionId, 'sessionId'));
+    const platformSession = required(i.sessionId, 'sessionId').trim();
+    const owner = liveBySessionId.get(platformSession);
+    // Durable path: run on the exact client that opened (and navigated) this MCP session.
+    if (owner && owner !== this) {
+      return owner.handle(cap, input);
     }
+    // Fallback when the open client is gone (worker restart mid-run): reattach via mcp-session-id header.
+    this.adoptPlatformSession(platformSession);
+    if (!owner) liveBySessionId.set(platformSession, this);
     if (cap.id === 'browser.navigate') {
       const url = required(i.url, 'Address');
       let origin: string;
@@ -408,11 +451,13 @@ class PlaywrightClient implements ConnectorClient {
       return { requests };
     }
     if (cap.id === 'browser.session.close') {
+      const id = this.sessionId;
       try {
         await this.rpcCall('tools/call', { name: 'browser_close', arguments: {} });
       } catch {
         /* session may already be gone */
       }
+      if (id) liveBySessionId.delete(id);
       this.sessionId = undefined;
       this.opening = undefined;
       return { ok: true };
@@ -420,5 +465,6 @@ class PlaywrightClient implements ConnectorClient {
     throw new PlatformError('unsupported', `Playwright does not implement ${cap.id}`);
   }
 
+  /** Manager always dispose()s after invoke — must not drop the durable Explore session. */
   async dispose() {}
 }

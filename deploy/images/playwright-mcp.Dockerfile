@@ -11,9 +11,16 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
 
 # Pin MCP (1.55-aligned). Install at build time so start does not run npx @latest.
 # Re-install Chromium for this package's Playwright revision into /ms-playwright.
+#
+# QA-42: @playwright/mcp@0.0.35 Streamable HTTP enables runHeartbeat=true. The server
+# pings the client every 3s and closes the whole MCP session (and browser) after a 5s
+# ping timeout. Streamable HTTP has no standing channel for those pings between POSTs,
+# so Explore UI open→navigate→settle→evaluate can hit a dead/blank session. SSE transport
+# already passes false; pin Streamable HTTP to the same (no heartbeat teardown).
 RUN npm init -y \
  && npm install --omit=dev @playwright/mcp@0.0.35 \
  && npx playwright install chromium \
+ && node -e "const fs=require('fs'); const p='node_modules/@playwright/mcp/lib/mcp/http.js'; let s=fs.readFileSync(p,'utf8'); const from='await mcpServer.connect(serverBackendFactory, transport, true);'; const to='await mcpServer.connect(serverBackendFactory, transport, false);'; if(!s.includes(from)) { console.error('QA-42 heartbeat patch: expected connect(..., true) not found in', p); process.exit(1); } fs.writeFileSync(p, s.replace(from, to)); console.log('QA-42: disabled Streamable HTTP MCP heartbeat');" \
  && rm -rf /root/.npm /tmp/*
 
 ENV PLAYWRIGHT_MCP_BROWSER=chromium \
