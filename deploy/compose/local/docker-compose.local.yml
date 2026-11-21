@@ -60,20 +60,33 @@ services:
       # Used when the runners profile is up. If that service is not running, the worker keeps checking the address itself.
       RUNNER_LAUNCHER_URL: http://runner-launcher:3002
       RUNNER_LAUNCHER_TOKEN: local-trial-launcher-token-32chars
+      # Browser MCP as seen from this container (Compose DNS on qa-platform-local). Not localhost.
+      # Host machine (published port): http://127.0.0.1:8931 — set connector baseUrl to the worker URL in the UI.
+      PLAYWRIGHT_MCP_URL: ${PLAYWRIGHT_MCP_URL:-http://playwright-mcp:8931}
+    networks: [default]
     depends_on:
       api: { condition: service_healthy }
 
   # Managed Playwright MCP browser (required for Connectors → Playwright → Test connection).
-  # Start / rebuild: docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d
-  # Connector URL from the worker: http://playwright-mcp:8931  (not localhost — the worker is another container).
+  # Start / rebuild: docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d playwright-mcp
+  # Worker connector URL: http://playwright-mcp:8931 (Compose DNS / PLAYWRIGHT_MCP_URL). Host debug: http://127.0.0.1:8931
   # Approve host playwright-mcp for plain http when the UI asks. MCP path is /mcp (added by the connector).
   # Image bakes Chromium + pinned @playwright/mcp (not Google Chrome). For MFA, pass --storage-state via a custom command.
   playwright-mcp:
     profiles: [browser]
     image: qa-playwright-mcp:local
     build: { context: ../../.., dockerfile: deploy/images/playwright-mcp.Dockerfile }
+    hostname: playwright-mcp
+    # Keep the service name resolvable even if Compose recreates the container after an image rebuild.
+    networks:
+      default:
+        aliases: [playwright-mcp]
     init: true
+    restart: unless-stopped
+    shm_size: "256mb"
     expose: ["8931"]
+    # Loopback publish for host curl/debug only. The worker must use http://playwright-mcp:8931, not this port mapping.
+    ports: ["127.0.0.1:${PLAYWRIGHT_MCP_HOST_PORT:-8931}:8931"]
     healthcheck:
       test: ["CMD", "node", "-e", "require('net').connect(8931,'127.0.0.1',()=>process.exit(0)).on('error',()=>process.exit(1))"]
       interval: 15s

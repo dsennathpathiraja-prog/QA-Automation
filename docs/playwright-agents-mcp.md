@@ -34,7 +34,7 @@ VLLM_MODEL=your-model
 
 ## Enable Playwright browser exploration
 
-1. Start the managed browser Compose profile (service name `playwright-mcp`, listens on **8931** inside the stack):
+1. Start the managed browser Compose profile (service name / DNS alias `playwright-mcp`, listens on **8931** inside the stack; image tag `qa-playwright-mcp:local` is **not** a hostname):
 
 ```bash
 # Local trial (rebuilds qa-playwright-mcp:local — Chromium + pinned @playwright/mcp)
@@ -43,15 +43,19 @@ docker compose -f deploy/compose/local/docker-compose.local.yml --profile browse
 docker compose --profile browser up --build -d playwright-mcp
 ```
 
-The managed image launches with `--browser chromium` (the Playwright base image does not include Google Chrome at `/opt/google/chrome/chrome`). Rebuild the `browser` profile after changing `deploy/images/playwright-mcp.Dockerfile`.
+The managed image launches with `--browser chromium` (the Playwright base image does not include Google Chrome at `/opt/google/chrome/chrome`). Rebuild the `browser` profile after changing `deploy/images/playwright-mcp.Dockerfile`. Worker and MCP share the Compose project network with alias `playwright-mcp`.
 
+| Who calls MCP | Base URL | Env |
+|---------------|----------|-----|
+| Worker / Explore UI (in Compose) | `http://playwright-mcp:8931` | `PLAYWRIGHT_MCP_URL` (default) |
+| Host machine (debug; local profile publishes loopback) | `http://127.0.0.1:8931` | `PLAYWRIGHT_MCP_HOST_PORT` (default 8931) |
 
 2. In the UI, add a **Playwright (managed)** connector:
-   - **Server address:** `http://playwright-mcp:8931` (from the worker container — not `localhost`; do not append `/mcp`).
+   - **Server address:** `http://playwright-mcp:8931` (from the worker container — not `localhost`, not `qa-playwright-mcp`; do not append `/mcp`).
    - **Application addresses:** comma-separated origins the browser may open.
    - Optional saved session name for MFA.
 3. Approve host `playwright-mcp` for plain http when Test Connection / Approved hosts asks (Administrator).
-4. Run **Test connection** — it should say the managed Playwright server is connected. If it says it could not reach Playwright, the browser profile is not up or the URL/host approval is wrong (see `deploy/compose/local/README.md`).
+4. Run **Test connection** — it should say the managed Playwright server is connected. If it says `could not resolve playwright-mcp`, the browser service is not running on the worker’s Compose network (see `deploy/compose/local/README.md`).
 5. Bind that connector as **Browser automation** on the requirement-validation workflow. Enable the Explore UI step (UI / both templates).
 6. On Run, supply an **environment** whose application URL matches an allowed origin (environments are optional for plan/generate; required for a real explore).
 

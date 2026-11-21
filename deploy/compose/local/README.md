@@ -39,21 +39,22 @@ The trial realm accepts any `http://localhost:<port>` as a sign-in return addres
 
 The managed Playwright MCP server is **not** part of the default stack. Without it, Connectors → Playwright → **Test connection** fails with “Could not reach Playwright”.
 
-1. Start (or rebuild) the browser profile (worker must already be up). The image bakes Chromium and a pinned `@playwright/mcp` — rebuild whenever `deploy/images/playwright-mcp.Dockerfile` changes:
+1. Start (or rebuild) the browser profile (worker must already be up on the same Compose project). The image bakes Chromium and a pinned `@playwright/mcp` — rebuild whenever `deploy/images/playwright-mcp.Dockerfile` changes:
 
 ```
 docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d playwright-mcp
 ```
 
-2. Confirm the service is running: `docker compose -f deploy/compose/local/docker-compose.local.yml ps` should list `playwright-mcp`.
+2. Confirm the service is running and healthy: `docker compose -f deploy/compose/local/docker-compose.local.yml ps` should list `playwright-mcp`. From the worker, DNS must resolve the **service name** `playwright-mcp` (not the image tag `qa-playwright-mcp`).
 
 3. In the UI, add **Playwright (managed)** with:
-   - **Server address:** `http://playwright-mcp:8931` (Docker DNS name the **worker** uses — not `localhost`, and do not append `/mcp`; the connector adds that path).
+   - **Server address (from the worker container):** `http://playwright-mcp:8931` — same as worker env `PLAYWRIGHT_MCP_URL`. Do **not** use `localhost` or the image name; do not append `/mcp` (the connector adds that path).
+   - **From the host machine only** (published loopback port): `http://127.0.0.1:8931` — for curl/debug; the worker cannot use this URL.
    - **Application addresses:** comma-separated origins the browser may open (for example `https://shop.example.com`).
 4. If the page says `playwright-mcp` is not approved, click **Approve playwright-mcp (internal, plain http)** (Administrator).
 5. Run **Test connection**. A pass shows “Connected to the managed Playwright server.”
 
-Optional: publish port `8931:8931` on that service only if you need to hit MCP from the host machine; the worker does not need a published port.
+If Explore UI / Test connection says `could not resolve playwright-mcp`, the browser container is not on network `qa-platform-local` with the worker — re-run the profile `up` above (do not start MCP with a different Compose project name).
 
 ## Runner
 

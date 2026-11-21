@@ -341,6 +341,10 @@ describe('source and work-item providers', () => {
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/profile "browser"/);
     expect(result.message).toMatch(/http:\/\/playwright-mcp:8931/);
+    expect(result.message).toMatch(/PLAYWRIGHT_MCP_URL|same project network/);
+    await expect(client.handle({ id: 'browser.session.open' } as never, {}, {} as never)).rejects.toMatchObject({
+      message: expect.stringMatching(/could not reach Playwright at http:\/\/playwright-mcp:8931/i),
+    });
   });
 
   it('reads a Playwright event-stream reply', async () => {

@@ -30,4 +30,20 @@ describe('playwright-mcp image uses baked Chromium (not missing Google Chrome)',
       expect(compose, file).not.toMatch(/image: mcr\.microsoft\.com\/playwright:v1\.55\.0-noble\n\s+command:.*@playwright\/mcp/);
     }
   });
+
+  it('worker and playwright-mcp share a Compose network alias so DNS stays playwright-mcp after image rebuilds', () => {
+    const local = read('deploy/compose/local/docker-compose.local.yml');
+    expect(local).toMatch(/PLAYWRIGHT_MCP_URL: \$\{PLAYWRIGHT_MCP_URL:-http:\/\/playwright-mcp:8931\}/);
+    expect(local).toMatch(/hostname: playwright-mcp/);
+    expect(local).toMatch(/aliases:\s*\[playwright-mcp\]/);
+    expect(local).toMatch(/name: qa-platform-local/);
+
+    const host = read('deploy/compose/docker-compose.yml');
+    expect(host).toMatch(/PLAYWRIGHT_MCP_URL: \$\{PLAYWRIGHT_MCP_URL:-http:\/\/playwright-mcp:8931\}/);
+    expect(host).toMatch(/hostname: playwright-mcp/);
+    expect(host).toMatch(/aliases:\s*\[playwright-mcp\]/);
+    // Worker stays on `app` with the MCP (image tag is not a DNS name).
+    expect(host).toMatch(/networks:\s*\[app, data, llm\]/);
+    expect(host).toMatch(/app:\s*\n\s*aliases:\s*\[playwright-mcp\]/);
+  });
 });
