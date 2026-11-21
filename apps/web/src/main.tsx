@@ -6,6 +6,7 @@ import { createApiClient } from './api/client';
 import { ApiProvider } from './api/context';
 import { browserNavigator, loginUrl } from './auth/session';
 import { buildRouter } from './router';
+import { AppTheme } from './theme';
 import './styles.css';
 
 const client = createApiClient({ onUnauthenticated: () => browserNavigator.assign(loginUrl(browserNavigator.currentPath())) });
@@ -14,10 +15,12 @@ const router = buildRouter();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ApiProvider client={client}>
-      <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>
-    </ApiProvider>
+    <AppTheme>
+      <ApiProvider client={client}>
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>
+      </ApiProvider>
+    </AppTheme>
   </StrictMode>,
 );

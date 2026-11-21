@@ -77,15 +77,23 @@ describe('test case library', () => {
     const local = buildApp({ sessions: new DevHeaderSessionResolver('test'), profile: 'standard', testCases: cases });
     await cases.fileUnderWorkItem({ id: 'worker' }, { name: 'Login', steps: 'Open', expected: 'Form', workItem: 'QA-1', reference: 'QAP-qa-1-1' });
     await cases.fileUnderWorkItem({ id: 'worker' }, { name: 'Logout', steps: 'Click', expected: 'Signed out', workItem: 'QA-1', reference: 'QAP-qa-1-2' });
+    expect((await local.inject({ method: 'GET', url: '/api/v1/work-item-executions', headers: engineer })).json().workItems).toEqual([
+      { workItem: 'QA-1', caseCount: 2 },
+    ]);
     const listed = await local.inject({ method: 'GET', url: '/api/v1/test-cases', headers: engineer });
     const caseId = listed.json().items[0].id as string;
     expect((await local.inject({ method: 'DELETE', url: `/api/v1/test-cases/${caseId}`, headers: business })).statusCode).toBe(403);
     expect((await local.inject({ method: 'DELETE', url: `/api/v1/test-cases/${caseId}`, headers: engineer })).statusCode).toBe(204);
     expect((await local.inject({ method: 'GET', url: '/api/v1/test-cases', headers: engineer })).json().items).toHaveLength(1);
+    expect((await local.inject({ method: 'GET', url: '/api/v1/test-collections', headers: engineer })).json().items[0]).toMatchObject({ name: 'QA-1', size: 1 });
+    expect((await local.inject({ method: 'GET', url: '/api/v1/work-item-executions', headers: engineer })).json().workItems).toEqual([
+      { workItem: 'QA-1', caseCount: 1 },
+    ]);
     const collectionId = (await local.inject({ method: 'GET', url: '/api/v1/test-collections', headers: engineer })).json().items[0].id as string;
     expect((await local.inject({ method: 'DELETE', url: `/api/v1/test-collections/${collectionId}`, headers: engineer })).statusCode).toBe(204);
     expect((await local.inject({ method: 'GET', url: '/api/v1/test-cases', headers: engineer })).json().items).toHaveLength(0);
     expect((await local.inject({ method: 'GET', url: '/api/v1/test-collections', headers: engineer })).json().items).toHaveLength(0);
+    expect((await local.inject({ method: 'GET', url: '/api/v1/work-item-executions', headers: engineer })).json().workItems).toEqual([]);
     await local.close();
   });
 

@@ -5,6 +5,7 @@ import { createApiClient } from '../src/api/client';
 import { ApiProvider } from '../src/api/context';
 import type { Navigator } from '../src/auth/session';
 import { buildRouter } from '../src/router';
+import { AppTheme } from '../src/theme';
 import { ROLE_PERMISSIONS, type Role } from '../../../packages/domain/src/roles';
 
 window.scrollTo = () => undefined;
@@ -45,11 +46,13 @@ export function renderApp(path: string, backend: Backend) {
   const router = buildRouter({ history: createMemoryHistory({ initialEntries: [path] }), navigator });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = render(
-    <ApiProvider client={client}>
-      <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>
-    </ApiProvider>,
+    <AppTheme>
+      <ApiProvider client={client}>
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>
+      </ApiProvider>
+    </AppTheme>,
   );
   return { ...utils, calls, assigned };
 }

@@ -1,3 +1,21 @@
+import {
+  Alert,
+  Box,
+  Button,
+  Checkbox,
+  Chip,
+  FormControl,
+  FormControlLabel,
+  InputLabel,
+  MenuItem,
+  Paper,
+  Select,
+  Stack,
+  Tab,
+  Tabs,
+  TextField,
+  Typography,
+} from '@mui/material';
 import { ConnectorListResponse, ExecutionEventList, ExecutionListResponse, ExecutionSchema, ValidationReportSchema, WorkflowDefinitionResponse, WorkflowSchema } from '@qa/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
@@ -5,8 +23,8 @@ import { useState } from 'react';
 import { ApiError } from '../../api/client';
 import { useApi } from '../../api/context';
 import { useSession } from '../../auth/session';
-import { Card, ErrorNotice, PageHeader } from '../common';
-import { Field, buttonClass, errorText, fieldClass, primaryButtonClass } from '../connectors/shared';
+import { ErrorNotice, PageHeader } from '../common';
+import { errorText } from '../connectors/shared';
 
 interface Step { id: string; type: string; enabled?: boolean; mandatory?: boolean; locked?: boolean | string[]; dependsOn?: string[] }
 interface ConnectorRow { role: string; category: string; binding?: { connectorInstanceId: string | null } }
@@ -22,6 +40,33 @@ const ROLE_LABEL: Record<string, string> = {
   testRunner: 'Test runner',
 };
 
+const STEP_LABEL: Record<string, string> = {
+  'rv.read-user-story': 'Read work item',
+  'rv.explore-ui': 'Explore UI',
+  'rv.explore-code': 'Explore code',
+  'rv.consolidate-findings': 'Consolidate findings',
+  'rv.generate-test-plan': 'Plan scenarios (Markdown)',
+  'rv.generate-tests': 'Generate Playwright cases',
+  'rv.heal-tests': 'Heal generated cases',
+  'rv.publish-testcases': 'Publish to Test Cases / Squash',
+  'rv.execute-tests': 'Execute tests',
+  'rv.sync-results': 'Sync results',
+  'rv.qa-report': 'QA report',
+};
+
+const STEP_HELP: Record<string, string> = {
+  'rv.read-user-story': 'Loads title, description, and acceptance criteria from the work item.',
+  'rv.explore-ui': 'Opens the environment and records UI findings for the planner.',
+  'rv.explore-code': 'Reads matching source files (read-only) for the planner.',
+  'rv.consolidate-findings': 'Merges UI and code notes into one findings blob.',
+  'rv.generate-test-plan': 'Writes the Markdown test plan artifact with many scenarios.',
+  'rv.generate-tests': 'Turns each planned scenario into a Playwright case.',
+  'rv.heal-tests': 'Rewrites broken platform-owned stubs only.',
+  'rv.publish-testcases': 'Stores cases under the work item and upserts Squash when writable.',
+};
+
+type WfTab = 'steps' | 'flow' | 'connectors' | 'check' | 'run';
+
 export function WorkflowPage() {
   const { id } = useParams({ strict: false }) as { id: string };
   const api = useApi();
@@ -31,7 +76,7 @@ export function WorkflowPage() {
   const workflow = useQuery({ queryKey: keyOf(id), queryFn: () => api.get(`/api/v1/workflows/${id}`, WorkflowSchema) });
   const definition = useQuery({ queryKey: [...keyOf(id), 'definition'], queryFn: () => api.get(`/api/v1/workflows/${id}/definition`, WorkflowDefinitionResponse) });
   const [edited, setEdited] = useState<Def | null>(null);
-  const [tab, setTab] = useState<'steps' | 'flow' | 'connectors' | 'check' | 'run'>('steps');
+  const [tab, setTab] = useState<WfTab>('steps');
   const [params, setParams] = useState<Record<string, string>>({});
   const [runId, setRunId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<'ask' | 'force' | undefined>();
@@ -51,7 +96,7 @@ export function WorkflowPage() {
   const approve = useMutation({ mutationFn: () => api.post(`/api/v1/workflows/${id}/approve`, {}, WorkflowSchema), onSuccess: refresh });
   const start = useMutation({
     mutationFn: () => api.post(`/api/v1/workflows/${id}/runs`, { parameters: params }, ExecutionSchema),
-    onSuccess: (run) => setRunId(run.id),
+    onSuccess: (run) => { setRunId(run.id); setTab('run'); },
   });
   const remove = useMutation({
     mutationFn: (force: boolean) => api.delete(`/api/v1/workflows/${id}${force ? '?force=true' : ''}`),
@@ -83,126 +128,252 @@ export function WorkflowPage() {
   const generation = workflow.data?.type === 'requirement-validation';
   const steps = (def?.spec?.steps ?? []).filter((s) => !(generation && ['rv.execute-tests', 'rv.sync-results', 'rv.qa-report'].includes(s.type)));
   const enabled = steps.filter((s) => s.enabled !== false);
+  const stepEvents = (events.data?.items ?? []).filter((event) => event.kind === 'step.completed' || event.kind === 'step.failed');
 
   return (
     <>
       <PageHeader title={workflow.data?.name ?? 'Workflow'} description={workflow.data ? `${workflow.data.status}${workflow.data.publishedVersion ? ` · version ${workflow.data.publishedVersion}` : ''}` : 'Loading the workflow.'} />
-      <p className="mb-4"><Link to="/workflows" className="text-blue-700 underline dark:text-blue-300">All workflows</Link></p>
+      <Typography sx={{ mb: 2 }}><Link to="/workflows">All workflows</Link></Typography>
       {workflow.isError && <ErrorNotice message="This workflow could not be loaded." onRetry={() => void workflow.refetch()} />}
       {def && (
-        <div className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            {(['steps', 'flow', 'connectors', 'check', 'run'] as const).map((t) => (
-              <button key={t} type="button" className={buttonClass} onClick={() => setTab(t)}>{t[0]!.toUpperCase() + t.slice(1)}</button>
-            ))}
-          </div>
+        <Stack spacing={2}>
+          <Paper>
+            <Tabs value={tab} onChange={(_, value: WfTab) => setTab(value)} variant="scrollable" allowScrollButtonsMobile aria-label="Workflow sections">
+              <Tab value="steps" label="Steps" />
+              <Tab value="flow" label="Flow" />
+              <Tab value="connectors" label="Connectors" />
+              <Tab value="check" label="Check" />
+              <Tab value="run" label="Run & output" />
+            </Tabs>
+          </Paper>
+
           {tab === 'steps' && (
-            <Card label="Steps">
-              {generation && <p className="mb-3">This workflow ends when the test cases are stored in Squash. Execution is a later action on Executions, for one work item and one environment.</p>}
-              {steps.length === 0 && <p>This draft has no steps. Create it from a template to get the guided list.</p>}
-              <ul className="space-y-2">
-                {steps.map((s) => (
-                  <li key={s.id} className="flex items-center gap-3">
-                    <input type="checkbox" checked={s.enabled !== false} disabled={!canEdit || s.mandatory === true || s.locked === true} onChange={(e) => patch({ ...def, spec: { ...def.spec, steps: steps.map((x) => x.id === s.id ? { ...x, enabled: e.target.checked } : x) } })} />
-                    <span>{s.id} · {s.type}{s.mandatory ? ' · required' : ''}</span>
-                  </li>
-                ))}
-              </ul>
-            </Card>
+            <Paper sx={{ p: 2 }} aria-label="Steps">
+              <Typography variant="h2" gutterBottom>Process steps</Typography>
+              {generation && (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  This workflow ends when test cases are stored. Running the work item against an environment is a separate action on Executions.
+                </Alert>
+              )}
+              {steps.length === 0 && <Alert severity="warning">This draft has no steps. Create it from a template to get the guided list.</Alert>}
+              <Stack spacing={1.5}>
+                {steps.map((s, index) => {
+                  const on = s.enabled !== false;
+                  const locked = !canEdit || s.mandatory === true || s.locked === true;
+                  return (
+                    <Paper key={s.id} variant="outlined" sx={{ p: 1.5, opacity: on ? 1 : 0.65 }}>
+                      <Stack direction="row" spacing={1} sx={{ alignItems: 'flex-start' }}>
+                        <Chip size="small" label={`${index + 1}`} />
+                        <Box sx={{ flex: 1 }}>
+                          <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                            <Typography sx={{ fontWeight: 600 }}>{STEP_LABEL[s.type] ?? s.id}</Typography>
+                            {s.mandatory && <Chip size="small" color="primary" label="Required" />}
+                            {!on && <Chip size="small" label="Off" />}
+                          </Stack>
+                          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                            {STEP_HELP[s.type] ?? s.type}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">Id: {s.id}</Typography>
+                        </Box>
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              checked={on}
+                              disabled={locked}
+                              onChange={(e) => patch({
+                                ...def,
+                                spec: {
+                                  ...def.spec,
+                                  steps: steps.map((x) => (x.id === s.id ? { ...x, enabled: e.target.checked } : x)),
+                                },
+                              })}
+                            />
+                          }
+                          label="On"
+                        />
+                      </Stack>
+                    </Paper>
+                  );
+                })}
+              </Stack>
+            </Paper>
           )}
+
           {tab === 'flow' && (
-            <Card label="Flow">
-              <p>The picture follows the step list. It is not edited here.</p>
-              <p className="mt-3">{enabled.length === 0 ? 'No steps are on.' : enabled.map((s) => s.id).join(' → ')}</p>
-            </Card>
+            <Paper sx={{ p: 2 }} aria-label="Flow">
+              <Typography variant="h2" gutterBottom>Flow</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Read-only order of enabled steps.</Typography>
+              {enabled.length === 0 ? (
+                <Alert severity="warning">No steps are on.</Alert>
+              ) : (
+                <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
+                  {enabled.map((s, i) => (
+                    <Chip key={s.id} label={`${i + 1}. ${STEP_LABEL[s.type] ?? s.id}`} />
+                  ))}
+                </Stack>
+              )}
+            </Paper>
           )}
+
           {tab === 'connectors' && (
-            <Card label="Connectors">
-              <p>Choose a connector you already set up. The list shows its name. Leave a role on None when that step is turned off. Then use Save draft.</p>
-              {(def.spec?.connectors ?? []).map((c) => {
-                const current = c.binding?.connectorInstanceId ?? '';
-                if (c.category === 'test-runner') {
-                  return <Field key={c.role} id={`role-${c.role}`} label={ROLE_LABEL[c.role] ?? c.role}><input id={`role-${c.role}`} className={fieldClass} disabled value="Platform runner" /></Field>;
-                }
-                const options = (savedConnectors.data?.items ?? []).filter((item) => item.category === c.category);
-                const known = options.some((item) => item.id === current);
-                return (
-                  <Field key={c.role} id={`role-${c.role}`} label={ROLE_LABEL[c.role] ?? c.role}>
-                    <select id={`role-${c.role}`} className={fieldClass} disabled={!canEdit} value={current === 'managed' ? '' : current} onChange={(e) => patch({ ...def, spec: { ...def.spec, connectors: (def.spec?.connectors ?? []).map((x) => x.role === c.role ? { ...x, binding: { connectorInstanceId: e.target.value || null } } : x) } })}>
-                      <option value="">None</option>
-                      {current && !known && <option value={current}>Saved connector</option>}
-                      {options.map((item) => <option key={item.id} value={item.id}>{item.name}{item.enabled ? '' : ' (disabled)'}</option>)}
-                    </select>
-                  </Field>
-                );
-              })}
-            </Card>
+            <Paper sx={{ p: 2 }} aria-label="Connectors">
+              <Typography variant="h2" gutterBottom>Connectors</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Choose a connector you already set up. Leave a role on None when that step is turned off. Then Save draft.
+              </Typography>
+              <Stack spacing={2}>
+                {(def.spec?.connectors ?? []).map((c) => {
+                  const current = c.binding?.connectorInstanceId ?? '';
+                  if (c.category === 'test-runner') {
+                    return (
+                      <TextField key={c.role} label={ROLE_LABEL[c.role] ?? c.role} value="Platform runner" disabled fullWidth />
+                    );
+                  }
+                  const options = (savedConnectors.data?.items ?? []).filter((item) => item.category === c.category);
+                  const known = options.some((item) => item.id === current);
+                  return (
+                    <FormControl key={c.role} fullWidth disabled={!canEdit}>
+                      <InputLabel id={`role-${c.role}-label`}>{ROLE_LABEL[c.role] ?? c.role}</InputLabel>
+                      <Select
+                        labelId={`role-${c.role}-label`}
+                        id={`role-${c.role}`}
+                        label={ROLE_LABEL[c.role] ?? c.role}
+                        value={current === 'managed' ? '' : current}
+                        onChange={(e) => patch({
+                          ...def,
+                          spec: {
+                            ...def.spec,
+                            connectors: (def.spec?.connectors ?? []).map((x) => x.role === c.role
+                              ? { ...x, binding: { connectorInstanceId: String(e.target.value) || null } }
+                              : x),
+                          },
+                        })}
+                      >
+                        <MenuItem value="">None</MenuItem>
+                        {current && !known && <MenuItem value={current}>Saved connector</MenuItem>}
+                        {options.map((item) => (
+                          <MenuItem key={item.id} value={item.id}>{item.name}{item.enabled ? '' : ' (disabled)'}</MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  );
+                })}
+              </Stack>
+            </Paper>
           )}
+
           {tab === 'check' && (
-            <Card label="Check">
-              <button type="button" className={primaryButtonClass} onClick={() => check.mutate()} disabled={check.isPending}>Check this workflow</button>
-              {check.isError && <div className="mt-3"><ErrorNotice message={errorText(check.error, 'The check failed.')} /></div>}
-              <ul className="mt-3 space-y-2">
-                {check.data?.issues.map((i, n) => <li key={`${i.ruleId}-${n}`}>{i.severity === 'warning' ? 'Warning' : i.ruleId}: {i.message} {i.fixHint}</li>)}
-                {check.data?.issues.length === 0 && <li>Nothing is blocking publish.</li>}
-              </ul>
-              {(def.spec?.approvals ?? []).length > 0 && <p className="mt-3">Approvals: {(def.spec?.approvals ?? []).map((a) => a.when).join(', ')}</p>}
-            </Card>
+            <Paper sx={{ p: 2 }} aria-label="Check">
+              <Typography variant="h2" gutterBottom>Validation</Typography>
+              <Button variant="contained" onClick={() => check.mutate()} disabled={check.isPending}>Check this workflow</Button>
+              {check.isError && <Box sx={{ mt: 2 }}><ErrorNotice message={errorText(check.error, 'The check failed.')} /></Box>}
+              <Stack spacing={1} sx={{ mt: 2 }}>
+                {check.data?.issues.map((i, n) => (
+                  <Alert key={`${i.ruleId}-${n}`} severity={i.severity === 'warning' ? 'warning' : 'error'}>
+                    {i.severity === 'warning' ? 'Warning' : i.ruleId}: {i.message} {i.fixHint}
+                  </Alert>
+                ))}
+                {check.data?.issues.length === 0 && <Alert severity="success">Nothing is blocking publish.</Alert>}
+              </Stack>
+              {(def.spec?.approvals ?? []).length > 0 && (
+                <Typography sx={{ mt: 2 }}>Approvals: {(def.spec?.approvals ?? []).map((a) => a.when).join(', ')}</Typography>
+              )}
+            </Paper>
           )}
+
           {tab === 'run' && (
-            <Card label="Run">
-              {workflow.data?.status !== 'published' && <p>Publish this workflow before starting a run. The worker runs the steps; this page only asks it to start.</p>}
+            <Paper sx={{ p: 2 }} aria-label="Run">
+              <Typography variant="h2" gutterBottom>Run & step output</Typography>
+              {workflow.data?.status !== 'published' && (
+                <Alert severity="info">Publish this workflow before starting a run. The worker runs the steps; this page only starts it and shows each step&apos;s output.</Alert>
+              )}
               {workflow.data?.status === 'published' && session.can('execution.start') && (
-                <form onSubmit={(e) => { e.preventDefault(); start.mutate(); }}>
-                  {generation && <p className="mb-3">Starting this run creates the test cases. Choose the environment on Executions when you run the work item.</p>}
+                <Stack component="form" spacing={2} sx={{ mb: 2 }} onSubmit={(e) => { e.preventDefault(); start.mutate(); }}>
+                  {generation && (
+                    <Alert severity="info">Starting this run creates the test cases. Choose the environment on Executions when you run the work item.</Alert>
+                  )}
                   {(def.spec?.parameters ?? []).filter((p) => p.required && (p.pinned === undefined || p.pinned === null) && !(generation && p.name === 'environment')).map((p) => (
-                    <Field key={p.name} id={`param-${p.name}`} label={`${p.name} (${p.type})`} hint={p.type === 'work-item-ref' ? 'Enter the work item id (for example 7189). When Azure Boards or Jira is bound, the run loads the title, description, and acceptance criteria from that work item. Optional: paste extra Acceptance criteria lines under the id as a fallback.' : undefined}>
-                      {p.type === 'work-item-ref'
-                        ? <textarea id={`param-${p.name}`} rows={4} className={fieldClass} value={params[p.name] ?? ''} onChange={(e) => setParams({ ...params, [p.name]: e.target.value })} placeholder="7189" />
-                        : <input id={`param-${p.name}`} className={fieldClass} value={params[p.name] ?? ''} onChange={(e) => setParams({ ...params, [p.name]: e.target.value })} />}
-                    </Field>
+                    <TextField
+                      key={p.name}
+                      id={`param-${p.name}`}
+                      label={`${p.name} (${p.type})`}
+                      helperText={p.type === 'work-item-ref' ? 'Enter the work item id (for example 7189). Bound Azure Boards / Jira load title, description, and acceptance criteria.' : undefined}
+                      multiline={p.type === 'work-item-ref'}
+                      minRows={p.type === 'work-item-ref' ? 3 : undefined}
+                      value={params[p.name] ?? ''}
+                      onChange={(e) => setParams({ ...params, [p.name]: e.target.value })}
+                      fullWidth
+                    />
                   ))}
-                  <button type="submit" className={`${primaryButtonClass} mt-3`} disabled={start.isPending}>Start run</button>
-                  {start.isError && <div className="mt-3"><ErrorNotice message={errorText(start.error, 'The run could not be started.')} /></div>}
-                </form>
+                  <Box>
+                    <Button type="submit" variant="contained" disabled={start.isPending}>Start run</Button>
+                  </Box>
+                  {start.isError && <ErrorNotice message={errorText(start.error, 'The run could not be started.')} />}
+                </Stack>
               )}
-              {run.data && <p className="mt-3">Run {run.data.id.slice(0, 8)} is {run.data.status}, at step {run.data.stepIndex}. A queued run moves when the worker is up.</p>}
-              {events.data && events.data.items.some((event) => event.kind === 'step.completed' || event.kind === 'step.failed') && (
-                <ul className="mt-3 space-y-2">
-                  {events.data.items.filter((event) => event.kind === 'step.completed' || event.kind === 'step.failed').map((event) => (
-                    <li key={event.seq}>{event.kind === 'step.failed' ? 'Failed' : 'Done'}. {typeof event.payload.summary === 'string' && event.payload.summary ? event.payload.summary : String(event.payload.stepId ?? event.kind)}</li>
-                  ))}
-                </ul>
+              {run.data && (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  Run {run.data.id.slice(0, 8)} is {run.data.status}, at step {run.data.stepIndex}. A queued run moves when the worker is up.
+                </Alert>
               )}
-            </Card>
+              {stepEvents.length === 0 && activeId && (
+                <Alert severity="info">No step outputs yet. They appear here as each step completes.</Alert>
+              )}
+              <Stack spacing={1.5}>
+                {stepEvents.map((event) => {
+                  const stepId = String(event.payload.stepId ?? '');
+                  const stepType = String(event.payload.stepType ?? '');
+                  const label = STEP_LABEL[stepType] || STEP_LABEL[stepId] || stepId || stepType || event.kind;
+                  const summary = typeof event.payload.summary === 'string' ? event.payload.summary : '';
+                  const failed = event.kind === 'step.failed';
+                  return (
+                    <Paper key={event.seq} variant="outlined" sx={{ p: 1.5 }}>
+                      <Stack direction="row" spacing={1} useFlexGap sx={{ mb: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <Chip size="small" color={failed ? 'error' : 'success'} label={failed ? 'Failed' : 'Done'} />
+                        <Typography sx={{ fontWeight: 600 }}>{label}</Typography>
+                        <Typography variant="caption" color="text.secondary">step #{event.seq}</Typography>
+                      </Stack>
+                      <Typography variant="subtitle2" color="text.secondary">Output</Typography>
+                      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                        {summary || (failed ? 'This step failed without a summary.' : 'This step completed without a summary.')}
+                      </Typography>
+                    </Paper>
+                  );
+                })}
+              </Stack>
+            </Paper>
           )}
-          <div className="flex flex-wrap gap-2">
-            {canEdit && <button type="button" className={primaryButtonClass} disabled={save.isPending || !edited} onClick={() => save.mutate()}>Save draft</button>}
-            {draft && session.can('workflow.publish.request') && <button type="button" className={buttonClass} disabled={publish.isPending} onClick={() => publish.mutate()}>Send for approval</button>}
-            {workflow.data?.status === 'in_review' && session.can('workflow.publish.approve') && <button type="button" className={primaryButtonClass} disabled={approve.isPending} onClick={() => approve.mutate()}>Approve and publish</button>}
-            {canDelete && <button type="button" className={buttonClass} disabled={remove.isPending} onClick={() => setConfirmDelete('ask')}>Delete workflow</button>}
-          </div>
+
+          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
+            {canEdit && <Button variant="contained" disabled={save.isPending || !edited} onClick={() => save.mutate()}>Save draft</Button>}
+            {draft && session.can('workflow.publish.request') && <Button disabled={publish.isPending} onClick={() => publish.mutate()}>Send for approval</Button>}
+            {workflow.data?.status === 'in_review' && session.can('workflow.publish.approve') && (
+              <Button variant="contained" disabled={approve.isPending} onClick={() => approve.mutate()}>Approve and publish</Button>
+            )}
+            {canDelete && <Button color="error" disabled={remove.isPending} onClick={() => setConfirmDelete('ask')}>Delete workflow</Button>}
+          </Stack>
+
           {confirmDelete && (
-            <div role="alertdialog" aria-label="Confirm delete" className="rounded border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
-              <p>
+            <Alert severity="warning" role="alertdialog" aria-label="Confirm delete">
+              <Typography sx={{ mb: 1 }}>
                 {confirmDelete === 'force'
                   ? 'This published workflow still has active runs. Delete it anyway? Queued or running work will lose its workflow, but past run history stays.'
                   : workflow.data?.status === 'published'
                     ? 'Delete this published workflow? You can only do that freely when no run is queued, running, or paused.'
                     : 'Delete this workflow? Drafts and unpublished versions are removed from the list.'}
-              </p>
-              <div className="mt-2 flex gap-2">
-                <button type="button" className={primaryButtonClass} disabled={remove.isPending} onClick={() => remove.mutate(confirmDelete === 'force')}>
+              </Typography>
+              <Stack direction="row" spacing={1}>
+                <Button variant="contained" color="error" disabled={remove.isPending} onClick={() => remove.mutate(confirmDelete === 'force')}>
                   {confirmDelete === 'force' ? 'Delete anyway' : 'Delete'}
-                </button>
-                <button type="button" className={buttonClass} onClick={() => setConfirmDelete(undefined)}>Cancel</button>
-              </div>
-            </div>
+                </Button>
+                <Button onClick={() => setConfirmDelete(undefined)}>Cancel</Button>
+              </Stack>
+            </Alert>
           )}
           {(save.isError || publish.isError || approve.isError || (remove.isError && !(remove.error instanceof ApiError && remove.error.status === 409 && /still active/i.test(remove.error.message)))) && (
             <ErrorNotice message={errorText(save.error ?? publish.error ?? approve.error ?? remove.error, 'That change was rejected.')} />
           )}
-        </div>
+        </Stack>
       )}
     </>
   );

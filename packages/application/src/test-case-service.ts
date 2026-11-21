@@ -359,14 +359,20 @@ export class TestCaseService {
   }
 
   async executionBoard() {
-    const counts = new Map<string, number>();
-    for (const item of await this.list()) if (item.workItem) counts.set(item.workItem, (counts.get(item.workItem) ?? 0) + 1);
+    // Align with Test Cases collections: only live members of a live work-item collection count
+    // (soft-deleted cases and orphans removed from a collection must not appear here).
+    const workItems: { workItem: string; caseCount: number }[] = [];
+    for (const collection of await this.d.cases.listCollections()) {
+      if (collection.size <= 0) continue;
+      workItems.push({ workItem: collection.name, caseCount: collection.size });
+    }
+    workItems.sort((a, b) => a.workItem.localeCompare(b.workItem));
     const items = [];
     for (const row of await this.d.cases.listWorkItemRuns()) {
       const results = row.status === 'prepared' || row.status === 'queued' ? undefined : await this.d.cases.listCaseResults(row.id);
       items.push(runOf(row, results));
     }
-    return { workItems: [...counts].map(([workItem, caseCount]) => ({ workItem, caseCount })), items };
+    return { workItems, items };
   }
 
   async getWorkItemExecution(id: string) {
@@ -379,7 +385,7 @@ export class TestCaseService {
   async startWorkItemExecution(actor: ActorRef, input: { workItem: string; environmentId: string; environmentName: string }) {
     const workItem = this.summary(input.workItem);
     if (!workItem) throw new PlatformError('validation', 'Choose a work item.');
-    const caseCount = (await this.list()).filter((item) => item.workItem === workItem).length;
+    const caseCount = (await this.casesForWorkItem(workItem)).length;
     if (caseCount === 0) throw new PlatformError('validation', 'That work item has no test cases.');
     const row = await this.d.cases.insertWorkItemRun({ id: randomUUID(), workItem, environmentId: input.environmentId, environmentName: input.environmentName, caseCount });
     await this.d.audit.append({ actorId: actor.id, action: 'workitem.execution.prepare', subjectType: 'work_item_execution', subjectId: row.id, detail: { workItem, environmentId: input.environmentId, caseCount } });
@@ -416,8 +422,20 @@ export class TestCaseService {
     return { testCaseId: row.testCaseId, name: row.name, contentType: 'image/png' as const, pngBase64: row.screenshotPng };
   }
 
-  casesForWorkItem(workItem: string) {
-    return this.list().then((items) => items.filter((item) => item.workItem === workItem));
+  /** Live cases that belong to the work-item collection (excludes soft-deleted and uncollected orphans). */
+  async casesForWorkItem(workItem: string) {
+    const wanted = this.summary(workItem).toLowerCase();
+    if (!wanted) return [];
+    const collection = (await this.d.cases.listCollections()).find((c) => c.name.toLowerCase() === wanted);
+    if (!collection) return [];
+    const detail = await this.d.cases.getCollection(collection.id);
+    if (!detail) return [];
+    const out: TestCaseView[] = [];
+    for (const member of detail.cases) {
+      const view = await this.get(member.id).catch(() => undefined);
+      if (view) out.push(view);
+    }
+    return out;
   }
 
   private async ensureWorkItemCollection(actor: ActorRef, workItem: string) {
