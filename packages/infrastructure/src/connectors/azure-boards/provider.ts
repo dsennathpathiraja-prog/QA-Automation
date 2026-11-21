@@ -16,17 +16,6 @@ const ConfigSchema = z.object({
 const SecretSchema = z.object({ token: z.string().min(20).max(500) });
 const API = '7.1';
 
-/** Fields requested when expand=All still omits System.Title / Description. */
-const READ_FIELDS = [
-  'System.Id',
-  'System.Title',
-  'System.State',
-  'System.WorkItemType',
-  'System.Description',
-  'Microsoft.VSTS.TCM.ReproSteps',
-  'Microsoft.VSTS.Common.AcceptanceCriteria',
-].join(',');
-
 const FIELD_KEYS = ['System.Title', 'System.Description', 'System.State', 'System.WorkItemType'] as const;
 
 /** Turn a WIT fields array `[{ referenceName, value }]` into a map. */
@@ -253,32 +242,15 @@ class AzureBoardsClient implements ConnectorClient {
     if (cap.id === 'workitem.read') {
       const acField = this.cfg.acceptanceCriteriaField;
       const id = required(i.id, 'Work item id');
-      const fieldList = READ_FIELDS.includes(acField) ? READ_FIELDS : `${READ_FIELDS},${acField}`;
-      // Org-scoped path (no project segment). Matches Dasun’s trafforge curl:
-      // GET https://dev.azure.com/{org}/_apis/wit/workitems/{id}?%24expand=All&api-version=7.1
-      // Auth: Bearer <PAT> (Test connection / probe / read / attachments). Not Basic, not Cookie.
-      // `$expand` / `%24expand` are both accepted by ADO; joinUrl emits a literal `$`.
-      let r = await this.call('GET', `/_apis/wit/workitems/${encodeURIComponent(id)}`, { $expand: 'All' });
+      // Org-scoped path only — no project segment, no fields= filter.
+      // GET https://dev.azure.com/{org}/_apis/wit/workitems/{id}?$expand=All&api-version=7.1
+      // Auth: Bearer <PAT>. Parse title / description / AC from the expand=All payload alone.
+      const r = await this.call('GET', `/_apis/wit/workitems/${encodeURIComponent(id)}`, { $expand: 'All' });
       if (!r.body || typeof r.body !== 'object') {
         throw new PlatformError('transient', 'Azure Boards returned an empty work item payload');
       }
-      let f = azureWorkItemFields(r.body);
-      let title = azureWorkItemTitle(r.body);
-      // When expand=All succeeds but fields are missing/unparsed, request an explicit field list.
-      if (!title || !azureFieldHtml(f, 'System.Description')) {
-        const listed = await this.call('GET', `/_apis/wit/workitems/${encodeURIComponent(id)}`, { fields: fieldList });
-        if (listed.body && typeof listed.body === 'object') {
-          const listedFields = azureWorkItemFields(listed.body);
-          if (!title) title = azureWorkItemTitle(listed.body);
-          if (Object.keys(listedFields).length > 0) {
-            f = { ...f, ...listedFields };
-            r = listed;
-          }
-        }
-      }
-      if (!title) {
-        title = await this.titleFromWiql(id);
-      }
+      const f = azureWorkItemFields(r.body);
+      const title = azureWorkItemTitle(r.body);
       const descriptionHtml = azureFieldHtml(f, 'System.Description');
       const reproHtml = azureFieldHtml(f, 'Microsoft.VSTS.TCM.ReproSteps');
       const descriptionText = fieldText(f['System.Description']);
@@ -314,31 +286,6 @@ class AzureBoardsClient implements ConnectorClient {
       return { name: file.attributes?.name ?? attachmentId, mimeType: downloaded.mimeType, contentBase64: Buffer.from(downloaded.body).toString('base64') };
     }
     throw new PlatformError('unsupported', `Azure Boards does not implement ${cap.id}`);
-  }
-
-  /** WIQL fallback when expand=All / fields still omit System.Title. */
-  private async titleFromWiql(id: string): Promise<string> {
-    const numeric = Number(id);
-    if (!Number.isInteger(numeric) || numeric <= 0) return '';
-    try {
-      const r = await this.call(
-        'POST',
-        `/${encodeURIComponent(this.cfg.project)}/_apis/wit/wiql`,
-        undefined,
-        { query: `SELECT [System.Id], [System.Title] FROM WorkItems WHERE [System.Id] = ${numeric}` },
-      );
-      const ids = ((r.body?.workItems ?? []) as { id: number }[]).map((w) => w.id);
-      if (ids.length === 0) return '';
-      const details = await this.call(
-        'GET',
-        `/${encodeURIComponent(this.cfg.project)}/_apis/wit/workitems`,
-        { ids: String(ids[0]), fields: 'System.Title' },
-      );
-      const row = ((details.body?.value ?? []) as unknown[])[0];
-      return azureWorkItemTitle(row);
-    } catch {
-      return '';
-    }
   }
 
   async dispose() {}

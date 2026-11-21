@@ -271,36 +271,25 @@ describe('source and work-item providers', () => {
     });
   });
 
-  it('falls back to fields= then WIQL when expand=All omits System.Title (WI 2357-style)', async () => {
-    let expandReads = 0;
+  it('parses title and description HTML from expand=All only — no fields= on workitem.read (WI 2357)', async () => {
     const m = await mock((hit) => {
       const path = pathOf(hit);
       const raw = hit.path;
-      if (hit.method === 'POST' && path.endsWith('/_apis/wit/wiql')) {
-        return { body: { workItems: [{ id: 2357 }] } };
-      }
-      // Batch GET /workitems?ids=2357 (query string is on hit.path, not pathname).
-      if (path.endsWith('/workitems') && /[?&]ids=2357\b/.test(raw)) {
-        return { body: { value: [{ id: 2357, fields: { 'System.Title': 'Settlement reasons for payment ledger' } }] } };
-      }
       if (path === '/_apis/wit/workitems/2357') {
-        if (/[?&]fields=/.test(raw)) {
-          // Explicit fields projection supplies title + description HTML.
-          return {
-            body: {
-              id: 2357,
-              fields: {
-                'System.Title': 'Settlement reasons for payment ledger',
-                'System.Description': '<p>Body</p>',
-                'System.State': 'Active',
-              },
-            },
-          };
-        }
-        expandReads += 1;
         expect(raw).toMatch(/(\$|%24)expand=All/);
-        // expand=All primary read returns the item without System.Title.
-        return { body: { id: 2357, fields: { 'System.State': 'Active' } } };
+        expect(raw).not.toMatch(/[?&]fields=/);
+        return {
+          body: {
+            id: 2357,
+            fields: {
+              'System.Title': 'Settlement reasons for payment ledger',
+              'System.Description': '<p>Body</p>',
+              'System.State': 'Active',
+              'System.WorkItemType': 'User Story',
+              'Microsoft.VSTS.Common.AcceptanceCriteria': '<div>Ledger settles</div>',
+            },
+          },
+        };
       }
       return { status: 404, body: {} };
     });
@@ -309,8 +298,10 @@ describe('source and work-item providers', () => {
       id: '2357',
       title: 'Settlement reasons for payment ledger',
       description: '<p>Body</p>',
+      acceptanceCriteria: 'Ledger settles',
     });
-    expect(expandReads).toBe(1);
+    expect(m.hits).toHaveLength(1);
+    expect(m.hits[0]?.path).not.toMatch(/[?&]fields=/);
   });
 
   it('scores Azure Repos source paths above HTML/SDK noise', () => {
