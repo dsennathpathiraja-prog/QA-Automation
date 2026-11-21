@@ -117,11 +117,12 @@ services:
       retries: 5
 
   # Managed Playwright MCP. Start with --profile browser. Connector URL: http://playwright-mcp:8931
+  # Rebuild after Dockerfile changes: docker compose --profile browser up --build -d playwright-mcp
   playwright-mcp:
     <<: *common
     profiles: [browser]
-    image: mcr.microsoft.com/playwright:v1.55.0-noble
-    command: ["bash", "-lc", "npx --yes @playwright/mcp@latest --headless --port 8931 --host 0.0.0.0 --allowed-hosts '*'"]
+    image: qa-playwright-mcp:local
+    build: { context: ../.., dockerfile: deploy/images/playwright-mcp.Dockerfile }
     networks: [app]
     read_only: true
     tmpfs: [/tmp]
@@ -132,6 +133,7 @@ services:
       timeout: 5s
       retries: 10
       start_period: 60s
+
 
   runner-launcher:
     <<: *common

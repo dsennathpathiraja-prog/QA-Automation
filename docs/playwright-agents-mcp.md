@@ -37,11 +37,14 @@ VLLM_MODEL=your-model
 1. Start the managed browser Compose profile (service name `playwright-mcp`, listens on **8931** inside the stack):
 
 ```bash
-# Local trial
-docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d
+# Local trial (rebuilds qa-playwright-mcp:local — Chromium + pinned @playwright/mcp)
+docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d playwright-mcp
 # Host / production compose
-docker compose --profile browser up -d playwright-mcp
+docker compose --profile browser up --build -d playwright-mcp
 ```
+
+The managed image launches with `--browser chromium` (the Playwright base image does not include Google Chrome at `/opt/google/chrome/chrome`). Rebuild the `browser` profile after changing `deploy/images/playwright-mcp.Dockerfile`.
+
 
 2. In the UI, add a **Playwright (managed)** connector:
    - **Server address:** `http://playwright-mcp:8931` (from the worker container — not `localhost`; do not append `/mcp`).
