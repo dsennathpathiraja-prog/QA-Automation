@@ -62,7 +62,7 @@ If `docker compose … ps` shows `playwright-mcp` **Restarting** and logs say `u
 
 Desktop Chrome can open `http://sdk.paynsure.internal/shop` via the **host** resolver (`/etc/hosts` or VPN DNS). Chromium inside `playwright-mcp` does **not** inherit host `/etc/hosts`.
 
-Local Compose **defaults** `sdk.paynsure.internal` → `host-gateway` (override with `PLAYWRIGHT_MCP_SHOP_IP`, see `env.playwright.example`).
+Local Compose **defaults** `sdk.paynsure.internal` → `host-gateway` (override with `PLAYWRIGHT_MCP_SHOP_IP`, see `env.playwright.example`). `extra_hosts` uses **YAML mapping** form (`host: ip`) — Compose on Windows rejects a list of `"host:ip"` strings (`extra_hosts must be a mapping`).
 
 ```bash
 # One rebuild so Explore UI Chromium sees the shop host
