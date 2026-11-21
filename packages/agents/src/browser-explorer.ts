@@ -49,9 +49,11 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
           });
         }
       } catch (e) {
-        if (isPlatformError(e) && (e.errorClass === 'denied' || e.errorClass === 'not-found' || e.errorClass === 'unsupported' || e.errorClass === 'auth')) {
+        // Explore UI is best-effort before planning: surface the URL and reason instead of failing the run blankly.
+        if (isPlatformError(e) || e instanceof Error) {
+          const reason = e instanceof Error ? e.message : 'unknown error';
           return {
-            summary: `UI note for ${input.application}: the Playwright browser could not open ${input.url} (${e.message}).`,
+            summary: `UI note for ${input.application}: could not explore ${input.url} (${reason}).`,
             findings: `url ${input.url}; browser unavailable`,
             details: [],
             source: 'skipped',

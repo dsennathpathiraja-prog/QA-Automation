@@ -376,7 +376,9 @@ export function WorkflowPage() {
                   const stepType = String(event.payload.stepType ?? '');
                   const label = STEP_LABEL[stepType] || STEP_LABEL[stepId] || stepId || stepType || event.kind;
                   const summary = typeof event.payload.summary === 'string' ? event.payload.summary : '';
+                  const message = typeof event.payload.message === 'string' ? event.payload.message : '';
                   const failed = event.kind === 'step.failed';
+                  const output = summary || message;
                   return (
                     <Paper key={event.seq} variant="outlined" sx={{ p: 1.5 }}>
                       <Stack direction="row" spacing={1} useFlexGap sx={{ mb: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -386,7 +388,7 @@ export function WorkflowPage() {
                       </Stack>
                       <Typography variant="subtitle2" color="text.secondary">Output</Typography>
                       <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                        {summary || (failed ? 'This step failed without a summary.' : 'This step completed without a summary.')}
+                        {output || (failed ? 'This step failed without a summary.' : 'This step completed without a summary.')}
                       </Typography>
                     </Paper>
                   );

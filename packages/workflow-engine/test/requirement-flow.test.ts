@@ -120,6 +120,22 @@ describe('requirement validation stages', () => {
     expect(read.summary).toMatch(/7189 — Guest checkout/);
     expect(read.outputs.title).toBe('Guest checkout');
   });
+
+  it('explains when the work item title could not be loaded', () => {
+    const read = runFlowStep({
+      id: 'read_story',
+      type: 'rv.read-user-story',
+      params: {
+        story: '1971',
+        applicationName: 'PayNSure',
+        workItemFetchNote: 'No work-item connector is bound',
+      },
+      prior: {},
+    });
+    expect(read.summary).toMatch(/Read work item 1971\./);
+    expect(read.summary).toMatch(/No work-item connector is bound/);
+    expect(read.summary).toMatch(/no separate acceptance criteria/);
+  });
 });
 
 describe('workflow engine step notes', () => {
@@ -136,6 +152,36 @@ describe('workflow engine step notes', () => {
     };
     expect(await tick(store, { owner: 'w', now: new Date(), perform: (step) => Promise.resolve(runFlowStep(step)) })).toBe('busy');
     expect(events.find((event) => event.kind === 'step.completed')?.payload.summary).toMatch(/QA-1/);
+  });
+
+  it('records summary and message on step.failed so the UI can show the error', async () => {
+    const events: { kind: string; payload: Record<string, unknown> }[] = [];
+    const store: EngineStore = {
+      async claim() {
+        return {
+          id: 'run-1',
+          status: 'running',
+          stepIndex: 0,
+          phase: 'pending',
+          control: null,
+          definition: { spec: { steps: [{ id: 'explore_ui', type: 'rv.explore-ui' }] } },
+          params: { environment: 'env-1' },
+        };
+      },
+      async recordEffect() { return 'new'; },
+      async save() { return undefined; },
+      async append(_id, kind, payload) { events.push({ kind, payload }); },
+      async stepsDone() { return []; },
+    };
+    expect(await tick(store, {
+      owner: 'w',
+      now: new Date(),
+      perform: async () => { throw new Error('The browser may not open https://qa.example/'); },
+    })).toBe('busy');
+    const failed = events.find((event) => event.kind === 'step.failed');
+    expect(failed?.payload.message).toMatch(/browser may not open/);
+    expect(failed?.payload.summary).toMatch(/browser may not open/);
+    expect(failed?.payload.stepType).toBe('rv.explore-ui');
   });
 });
 

@@ -180,16 +180,21 @@ const loop = new WorkerLoop({
       perform: async (step) => {
         let params = step.params;
         if (step.type === 'rv.read-user-story') {
-          const enriched = await enrichStoryFromConnector({
+          const enrich = await enrichStoryFromConnector({
             story: typeof step.params.story === 'string' ? step.params.story : '',
             connectors: squash,
             actor: { type: 'step', id: step.id, executionId: step.runId, stepId: step.id },
           });
-          if (enriched) {
+          if (enrich.status === 'enriched') {
             params = {
               ...step.params,
-              story: enriched.story,
-              ...(enriched.title ? { workItemTitle: enriched.title } : {}),
+              story: enrich.enrichment.story,
+              ...(enrich.enrichment.title ? { workItemTitle: enrich.enrichment.title } : {}),
+            };
+          } else if (enrich.status === 'missed') {
+            params = {
+              ...step.params,
+              workItemFetchNote: enrich.reason,
             };
           }
         }
