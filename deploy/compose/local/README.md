@@ -62,21 +62,26 @@ If `docker compose … ps` shows `playwright-mcp` **Restarting** and logs say `u
 
 Desktop Chrome can open `http://sdk.paynsure.internal/shop` via the **host** resolver (`/etc/hosts` or VPN DNS). Chromium inside `playwright-mcp` does **not** inherit host `/etc/hosts`.
 
-Local Compose **defaults** `sdk.paynsure.internal` → `host-gateway` (override with `PLAYWRIGHT_MCP_SHOP_IP`, see `env.playwright.example`). `extra_hosts` uses **YAML mapping** form (`host: ip`) — Compose on Windows rejects a list of `"host:ip"` strings (`extra_hosts must be a mapping`).
+**Do not** map the shop to `host-gateway` by default — that often returns **HTTP 4xx/5xx** (`ERR_HTTP_RESPONSE_CODE_FAILURE`) from the Docker host instead of the shop VirtualHost. Set `PLAYWRIGHT_MCP_SHOP_IP` to the real LAN/VPN IP and apply the shop overlay (`docker-compose.playwright-shop.yml`). `extra_hosts` uses **YAML mapping** form (`host: ip`) — Compose on Windows rejects a list of `"host:ip"` strings.
 
 ```bash
-# One rebuild so Explore UI Chromium sees the shop host
-docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up -d --force-recreate playwright-mcp
+# Linux/macOS — use the same A record the host browser uses
+export PLAYWRIGHT_MCP_SHOP_IP=$(getent hosts sdk.paynsure.internal | awk '{print $1; exit}')
+docker compose -f deploy/compose/local/docker-compose.local.yml \
+  -f deploy/compose/local/docker-compose.playwright-shop.yml \
+  --profile browser up -d --force-recreate playwright-mcp
 
-# Prove DNS (+ optional HTTP) from inside the container
-bash deploy/compose/scripts/verify-playwright-shop-dns.sh
+bash deploy/compose/scripts/verify-playwright-shop-dns.sh   # expect HTTP 2xx
 ```
 
-If `getent hosts sdk.paynsure.internal` on the host shows a LAN IP (not the Docker host), set that IP before recreate:
+Windows PowerShell:
 
-```bash
-export PLAYWRIGHT_MCP_SHOP_IP=$(getent hosts sdk.paynsure.internal | awk '{print $1; exit}')
-docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up -d --force-recreate playwright-mcp
+```powershell
+$env:PLAYWRIGHT_MCP_SHOP_IP = (Resolve-DnsName sdk.paynsure.internal -Type A |
+  Where-Object { $_.IPAddress } | Select-Object -First 1).IPAddress
+docker compose -f deploy/compose/local/docker-compose.local.yml `
+  -f deploy/compose/local/docker-compose.playwright-shop.yml `
+  --profile browser up -d --force-recreate playwright-mcp
 ```
 
 Keep `http://sdk.paynsure.internal` (or the bare host) on the Playwright connector allowlist, then retry Explore UI — the MD artifact should list storefront cues (Search products, Add to cart, Proceed to checkout, …).

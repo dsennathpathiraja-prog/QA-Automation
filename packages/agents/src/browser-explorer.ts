@@ -2,9 +2,10 @@ import { PlatformError } from '@qa/domain';
 import {
   DOM_PROBE_SCRIPT,
   describeEmptyCapture,
-  dnsExtraHostsGuidance,
   domProbeIsActionable,
   isBrowserNavigationFailure,
+  isHttpResponseCodeFailure,
+  navigationFailureGuidance,
   parseEvaluateToolResult,
   parsedSnapshotFromDomProbe,
   type DomProbeResult,
@@ -92,7 +93,8 @@ function throwIfNavigationFailed(input: {
   if (!isBrowserNavigationFailure({ url: input.pageUrl || input.targetUrl, rawSnapshot: input.raw, probe: input.probe })) {
     return;
   }
-  throw new PlatformError('transient', dnsExtraHostsGuidance(input.targetUrl));
+  const raw = `${input.raw || ''}\n${input.probe?.bodyText || ''}\n${input.probe?.loadError || ''}\n${input.pageUrl || ''}`;
+  throw new PlatformError('transient', navigationFailureGuidance(input.targetUrl, raw));
 }
 
 /**
@@ -212,9 +214,18 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
       const limit = Math.min(input.maxPages ?? 5, Math.max(1, labels.length), 8);
       try {
         await browser.openSession();
-        const nav = await browser.navigate(input.url);
+        let nav: Awaited<ReturnType<BrowserAutomationPort['navigate']>>;
+        try {
+          nav = await browser.navigate(input.url);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (isHttpResponseCodeFailure(msg) || /ERR_NAME_NOT_RESOLVED|DNS_PROBE|chrome-error/i.test(msg)) {
+            throw new PlatformError('transient', navigationFailureGuidance(input.url, msg), undefined, e);
+          }
+          throw e;
+        }
 
-        // Fail fast on chrome-error / DNS before spending retries on empty aria trees.
+        // Fail fast on chrome-error / DNS / HTTP status before spending retries on empty aria trees.
         throwIfNavigationFailed({
           targetUrl: input.url,
           pageUrl: nav.finalUrl,

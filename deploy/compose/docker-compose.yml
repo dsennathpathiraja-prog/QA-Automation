@@ -138,10 +138,10 @@ services:
     expose: ["8931"]
     # Private app hosts that resolve on the Docker host are invisible here unless listed.
     # Mapping form required (Compose on Windows rejects list/"host:ip" strings).
-    # Default PayNSure shop → host-gateway; override with PLAYWRIGHT_MCP_SHOP_IP=<LAN-IP> when needed.
+    # Do NOT default sdk.paynsure.internal → host-gateway (wrong HTTP status / VirtualHost).
+    # PayNSure: set PLAYWRIGHT_MCP_SHOP_IP and also use docker-compose.playwright-shop.yml.
     extra_hosts:
       host.docker.internal: host-gateway
-      sdk.paynsure.internal: ${PLAYWRIGHT_MCP_SHOP_IP:-host-gateway}
     healthcheck:
       test: ["CMD", "node", "-e", "require('net').connect(8931,'127.0.0.1',()=>process.exit(0)).on('error',()=>process.exit(1))"]
       interval: 15s
