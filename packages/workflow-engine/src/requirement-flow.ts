@@ -182,7 +182,8 @@ const casesOf = (value: unknown): FlowCase[] => {
 /**
  * One requirement-validation stage.
  * Order: explore UI/code → consolidate → plan (MD) → generate → heal → publish.
- * This sync path does not call a browser, a repository, or Squash.
+ * This sync path is the offline / unit-test fallback: the worker binds Playwright
+ * and source-repo connectors for real exploration before planning.
  */
 export function runFlowStep(step: FlowStep): FlowResult {
   const story = text(step.params.story);
@@ -216,14 +217,14 @@ export function runFlowStep(step: FlowStep): FlowResult {
     case 'rv.explore-ui':
       return {
         summary: environment
-          ? `UI note for ${application} on ${environment}: exploration runs before the plan. This run does not drive the browser.`
+          ? `UI note for ${application} on ${environment}: offline fallback recorded the environment id; bind Playwright in the worker to open the screen.`
           : 'UI note: no environment was given, so the screen was not opened (exploration still precedes planning).',
-        outputs: { findings: environment ? `environment ${environment}` : 'no environment' },
+        outputs: { findings: environment ? `environment ${environment}` : 'no environment', source: 'skipped' },
       };
     case 'rv.explore-code':
       return {
-        summary: 'Source note: exploration runs before the plan. This run does not read the repository.',
-        outputs: { findings: 'repository not read' },
+        summary: `Source note for ${application}: offline fallback did not read the repository; bind a source-repo connector in the worker to explore code.`,
+        outputs: { findings: 'repository not read', source: 'skipped' },
       };
     case 'rv.consolidate-findings': {
       const ui = text(step.prior.explore_ui?.findings);

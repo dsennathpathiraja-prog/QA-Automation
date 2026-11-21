@@ -70,7 +70,7 @@ Source repositories remain read-only. See [`adr/0012-source-repositories-are-rea
 1. Bind work-item connector (Azure Boards / Jira) and Squash as needed.
 2. Bind Playwright browser (and/or source repo). Enable Explore UI and/or Explore code — at least one is required.
 3. Optional: set `OLLAMA_URL` (and model) on the worker for model-backed plan / generate / heal.
-4. On **Run**, enter the work item id (e.g. `7189`) and application name. Supply an environment when you want real UI exploration.
+4. On **Run**, enter the work item id (e.g. `7189`) and application name. When **Explore UI** is on, select an environment so the worker can resolve its application URL and open it with Playwright before planning. When **Explore code** is on, bind a source-repo connector so matching files are read before planning.
 5. Confirm stage Done lines:
    - Explore names pages or records a skip note
    - Plan names `playwright-test-planner` and a `.plan.md` artifact with many scenarios

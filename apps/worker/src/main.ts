@@ -1,9 +1,11 @@
 import {
   browserPortFromInvoker,
   createBrowserExplorer,
+  createCodeExplorer,
   createLlmTestGenerator,
   createLlmTestHealer,
   createLlmTestPlanner,
+  sourceRepoPortFromInvoker,
   PLAYWRIGHT_TEST_GENERATOR,
   PLAYWRIGHT_TEST_HEALER,
   PLAYWRIGHT_TEST_PLANNER,
@@ -185,13 +187,24 @@ const loop = new WorkerLoop({
           });
           if (enriched) params = { ...step.params, story: enriched.story };
         }
+        const actor = { type: 'step' as const, id: step.id, executionId: step.runId, stepId: step.id };
         const explorer = createBrowserExplorer(
           squash
             ? browserPortFromInvoker(async (capability, input) => squash.invoke({
               role: 'browserAutomation',
               capability,
               input: input ?? {},
-              actor: { type: 'step', id: step.id, executionId: step.runId, stepId: step.id },
+              actor,
+            }))
+            : undefined,
+        );
+        const codeExplorer = createCodeExplorer(
+          squash
+            ? sourceRepoPortFromInvoker(async (capability, input) => squash.invoke({
+              role: 'sourceRepo',
+              capability,
+              input: input ?? {},
+              actor,
             }))
             : undefined,
         );
@@ -202,6 +215,7 @@ const loop = new WorkerLoop({
             generator: generatorPort,
             healer: healerPort,
             explorer,
+            codeExplorer,
             resolveEnvironmentUrl: environments
               ? async (id) => {
                 const row = await environments.get(id);

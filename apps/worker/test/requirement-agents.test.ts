@@ -1,8 +1,66 @@
 import { describe, expect, it } from 'vitest';
-import type { TestGeneratorPort, TestHealerPort, TestPlannerPort } from '@qa/agents';
+import type { BrowserExplorerPort, CodeExplorerPort, TestGeneratorPort, TestHealerPort, TestPlannerPort } from '@qa/agents';
 import { performRequirementStep } from '../src/requirement-agents';
 
 describe('performRequirementStep', () => {
+  it('resolves the environment URL and drives explore_ui before planning', async () => {
+    let seenUrl: string | undefined;
+    const explorer: BrowserExplorerPort = {
+      async explore(input) {
+        seenUrl = input.url;
+        return {
+          summary: `opened ${input.url}`,
+          findings: `page @ ${input.url}`,
+          details: [{ scenarioName: 'home', url: input.url ?? '', snapshotExcerpt: 'button Pay' }],
+          source: 'browser',
+        };
+      },
+    };
+    const out = await performRequirementStep(
+      {
+        id: 'explore_ui',
+        type: 'rv.explore-ui',
+        runId: 'run-1',
+        params: { applicationName: 'PayNSure', environment: 'env-qa' },
+        prior: { read_story: { workItem: '7189', acceptanceCriteria: ['listed'] } },
+      },
+      {
+        explorer,
+        resolveEnvironmentUrl: async (id) => (id === 'env-qa' ? 'https://qa.shop.example/' : undefined),
+      },
+    );
+    expect(seenUrl).toBe('https://qa.shop.example/');
+    expect(out.summary).toMatch(/opened/);
+    expect(out.outputs.source).toBe('browser');
+    expect(out.outputs.findings).toMatch(/qa\.shop\.example/);
+  });
+
+  it('drives explore_code through the source-repo explorer before planning', async () => {
+    const codeExplorer: CodeExplorerPort = {
+      async explore(input) {
+        return {
+          summary: `read files for ${input.application}`,
+          findings: '- src/pay.ts\n  export function pay()',
+          details: [{ path: 'src/pay.ts', excerpt: 'export function pay()' }],
+          source: 'repo',
+        };
+      },
+    };
+    const out = await performRequirementStep(
+      {
+        id: 'explore_code',
+        type: 'rv.explore-code',
+        runId: 'run-1',
+        params: { applicationName: 'PayNSure' },
+        prior: { read_story: { workItem: '7189', acceptanceCriteria: ['pay'] } },
+      },
+      { codeExplorer },
+    );
+    expect(out.summary).toMatch(/read files/);
+    expect(out.outputs.source).toBe('repo');
+    expect(out.outputs.findings).toMatch(/pay\.ts/);
+  });
+
   it('uses the planner port for rv.generate-test-plan and persists MD outputs', async () => {
     const planner: TestPlannerPort = {
       async plan(input) {
