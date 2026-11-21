@@ -37,8 +37,8 @@ function fieldsFromArray(rows: unknown[]): Record<string, unknown> {
  * Some gateways nest again as `{ fields: { fields: { 'System.Title': '…' } } }`,
  * wrap the item as `{ value: { fields } }`, or emit fields as a referenceName array.
  */
-export function azureWorkItemFields(body: unknown): Record<string, unknown> {
-  if (!body || typeof body !== 'object') return {};
+export function azureWorkItemFields(body: unknown, depth = 0): Record<string, unknown> {
+  if (!body || typeof body !== 'object' || depth > 4) return {};
   const root = body as Record<string, unknown>;
 
   const fromCandidate = (candidate: unknown): Record<string, unknown> => {
@@ -73,6 +73,12 @@ export function azureWorkItemFields(body: unknown): Record<string, unknown> {
   } else if (value && typeof value === 'object') {
     const fromValue = fromCandidate((value as { fields?: unknown }).fields ?? value);
     if (Object.keys(fromValue).length > 0) return fromValue;
+  }
+
+  // Connector / gateway wrappers: `{ data: { fields } }` or `{ data: fieldsMap }`.
+  if ('data' in root && root.data != null) {
+    const fromData = azureWorkItemFields(root.data, depth + 1);
+    if (Object.keys(fromData).length > 0) return fromData;
   }
 
   // Rare: title flattened next to id on the root.
@@ -251,28 +257,48 @@ class AzureBoardsClient implements ConnectorClient {
       }
       const f = azureWorkItemFields(r.body);
       const title = azureWorkItemTitle(r.body);
+      // expand=All Succeeded but System.Title missing after parse — fail clearly (do not return empty title).
+      if (!title) {
+        const keys = Object.keys(f).slice(0, 12).join(', ') || '(none)';
+        throw new PlatformError(
+          'validation',
+          `Azure Boards work item ${id} had no System.Title after expand=All (parsed field keys: ${keys}). Confirm Organisation matches the WIT org and rebuild the worker.`,
+        );
+      }
       const descriptionHtml = azureFieldHtml(f, 'System.Description');
       const reproHtml = azureFieldHtml(f, 'Microsoft.VSTS.TCM.ReproSteps');
+      const acceptanceCriteriaHtml = azureFieldHtml(f, acField) || undefined;
       const descriptionText = fieldText(f['System.Description']);
       const reproText = fieldText(f['Microsoft.VSTS.TCM.ReproSteps']);
       const fromField = fieldText(f[acField]);
       const fromDescription = acceptanceCriteriaFromDescription(descriptionText) ?? (scenarioCuesFromDescription(descriptionText).join('\n') || undefined);
       const acceptanceCriteria = fromField || fromDescription || (reproText ? scenarioCuesFromDescription(reproText).join('\n') || reproText : undefined);
-      // Keep Description HTML in the story blob (planner still gets AC as plain text).
+      // Keep Description HTML in the story blob (planner still gets AC as plain text + HTML).
       const descriptionParts = [
         descriptionHtml,
         reproHtml ? `Repro steps\n${reproHtml}` : '',
       ].filter(Boolean);
+      const body = r.body as { id?: unknown; data?: { id?: unknown; _links?: { html?: { href?: unknown } } }; _links?: { html?: { href?: unknown } } };
+      const nested = body.data && typeof body.data === 'object' ? body.data : undefined;
+      const htmlHref = body._links?.html?.href ?? nested?._links?.html?.href;
+      const parentRaw = f['System.Parent'];
+      const parentId = azureFieldString(f, 'System.Parent')
+        || (typeof parentRaw === 'number' && Number.isFinite(parentRaw) ? String(parentRaw) : '');
       return {
-        id: String((r.body as { id?: unknown })?.id ?? i.id),
+        id: String(body.id ?? nested?.id ?? i.id),
         title,
         type: azureFieldString(f, 'System.WorkItemType') || undefined,
         state: azureFieldString(f, 'System.State') || undefined,
         description: descriptionParts.join('\n\n') || undefined,
         acceptanceCriteria: acceptanceCriteria || undefined,
-        url: typeof (r.body as { _links?: { html?: { href?: unknown } } })?._links?.html?.href === 'string'
-          ? (r.body as { _links: { html: { href: string } } })._links.html.href
-          : undefined,
+        acceptanceCriteriaHtml,
+        areaPath: azureFieldString(f, 'System.AreaPath') || undefined,
+        iterationPath: azureFieldString(f, 'System.IterationPath') || undefined,
+        priority: azureFieldString(f, 'Microsoft.VSTS.Common.Priority') || undefined,
+        requirementType: azureFieldString(f, 'Microsoft.VSTS.Common.RequirementType') || undefined,
+        valueArea: azureFieldString(f, 'Microsoft.VSTS.Common.ValueArea') || undefined,
+        parentId: parentId || undefined,
+        url: typeof htmlHref === 'string' ? htmlHref : undefined,
       };
     }
     if (cap.id === 'workitem.attachment.read') {

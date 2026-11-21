@@ -192,6 +192,7 @@ const loop = new WorkerLoop({
               ...step.params,
               story: enrich.enrichment.story,
               workItemTitle: enrich.enrichment.title,
+              workItemFields: enrich.enrichment.fields,
               ...(enrich.enrichment.descriptionExcerpt
                 ? { workItemDescriptionExcerpt: enrich.enrichment.descriptionExcerpt }
                 : {}),

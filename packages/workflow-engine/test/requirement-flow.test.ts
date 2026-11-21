@@ -159,6 +159,48 @@ describe('requirement validation stages', () => {
     expect(String(read.outputs.artifactPath)).toMatch(/\.story\.md$/);
   });
 
+  it('surfaces expand=All work item fields in Read story MD Context', () => {
+    const title = 'Order Amount Placement in Escrow Notification Template';
+    const read = runFlowStep({
+      id: 'read_story',
+      type: 'rv.read-user-story',
+      params: {
+        story: `2357 — ${title}\n\nWork item fields\n- Type: Requirement\n- Parent: 2353`,
+        applicationName: 'PayNSure',
+        workItemTitle: title,
+        workItemDescriptionExcerpt: 'Amount Placement in escrow Notification',
+        workItemFields: {
+          type: 'Requirement',
+          state: 'Proposed',
+          areaPath: 'PayNSure\\Escrow',
+          iterationPath: 'PayNSure\\Sprint 12',
+          priority: '2',
+          requirementType: 'Feature',
+          valueArea: 'Business',
+          parentId: '2353',
+          descriptionHtml: '<div><h2>1. Title</h2><p>Amount Placement in escrow Notification</p></div>',
+          acceptanceCriteriaHtml: '<div><img src="https://example.com/ac.png" alt="Image"></div>',
+        },
+      },
+      prior: {},
+    });
+    const md = String(read.outputs.artifactMarkdown);
+    expect(md).toMatch(/\*\*Title:\*\* Order Amount Placement/);
+    expect(md).toMatch(/\*\*Type:\*\* Requirement/);
+    expect(md).toMatch(/\*\*State:\*\* Proposed/);
+    expect(md).toMatch(/\*\*Area path:\*\* PayNSure/);
+    expect(md).toMatch(/\*\*Iteration path:\*\* PayNSure/);
+    expect(md).toMatch(/\*\*Priority:\*\* 2/);
+    expect(md).toMatch(/\*\*Requirement type:\*\* Feature/);
+    expect(md).toMatch(/\*\*Value area:\*\* Business/);
+    expect(md).toMatch(/\*\*Parent:\*\* 2353/);
+    expect(md).toMatch(/## Description/);
+    expect(md).toContain('<h2>1. Title</h2>');
+    expect(md).toMatch(/## Acceptance criteria/);
+    expect(md).toContain('<img');
+    expect(read.outputs.fields).toMatchObject({ type: 'Requirement', parentId: '2353' });
+  });
+
   it('explains when the work item title could not be loaded', () => {
     const read = runFlowStep({
       id: 'read_story',

@@ -1,8 +1,76 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { PlatformError } from '@qa/domain';
-import { descriptionExcerpt, enrichStoryFromConnector, storyFromWorkItem, workItemRefFromStory } from '../src/read-story';
+import {
+  descriptionExcerpt,
+  enrichStoryFromConnector,
+  storyFromWorkItem,
+  workItemDetailsFromReadResult,
+  workItemRefFromStory,
+} from '../src/read-story';
+
+const fixtureDir = dirname(fileURLToPath(import.meta.url));
+const wi2357 = JSON.parse(readFileSync(join(fixtureDir, 'fixtures/wi-2357-expand-all.json'), 'utf8')) as Record<string, unknown>;
 
 describe('read-story enrichment', () => {
+  it('maps WI 2357 expand=All fields into title + description HTML + context', () => {
+    const mapped = workItemDetailsFromReadResult(wi2357, '2357');
+    expect(mapped).toMatchObject({
+      id: '2357',
+      title: 'Order Amount Placement in Escrow Notification Template',
+      type: 'Requirement',
+      state: 'Proposed',
+      areaPath: 'PayNSure\\Escrow',
+      iterationPath: 'PayNSure\\Sprint 12',
+      priority: '2',
+      valueArea: 'Business',
+      requirementType: 'Feature',
+      parentId: '2353',
+    });
+    expect(mapped?.description).toContain('<div>');
+    expect(mapped?.description).toMatch(/Amount Placement in escrow Notification/);
+    expect(mapped?.acceptanceCriteriaHtml).toContain('<img');
+
+    const wrappedDataBody = workItemDetailsFromReadResult({ data: wi2357 }, '2357');
+    expect(wrappedDataBody?.title).toBe('Order Amount Placement in Escrow Notification Template');
+    expect(wrappedDataBody?.description).toContain('<h2>1. Title</h2>');
+    expect(wrappedDataBody?.parentId).toBe('2353');
+
+    const wrappedFieldsOnly = workItemDetailsFromReadResult({ data: (wi2357 as { fields: unknown }).fields }, '2357');
+    expect(wrappedFieldsOnly?.title).toBe('Order Amount Placement in Escrow Notification Template');
+    expect(wrappedFieldsOnly?.areaPath).toBe('PayNSure\\Escrow');
+  });
+
+  it('enriches story blob + fields from a raw WIT 2357-shaped invoke result', async () => {
+    const invoke = vi.fn().mockResolvedValue(wi2357);
+    const out = await enrichStoryFromConnector({
+      story: '2357',
+      connectors: { invoke } as never,
+      actor: { type: 'step', id: 'read_story', executionId: 'run-1', stepId: 'read_story' },
+    });
+    expect(out.status).toBe('enriched');
+    if (out.status !== 'enriched') return;
+    expect(out.enrichment.title).toBe('Order Amount Placement in Escrow Notification Template');
+    expect(out.enrichment.story).toMatch(/^2357 — Order Amount Placement in Escrow Notification Template/);
+    expect(out.enrichment.story).toContain('Work item fields');
+    expect(out.enrichment.story).toMatch(/Type: Requirement/);
+    expect(out.enrichment.story).toMatch(/Parent: 2353/);
+    expect(out.enrichment.story).toContain('<div>');
+    expect(out.enrichment.story).toMatch(/Acceptance criteria/);
+    expect(out.enrichment.descriptionExcerpt).toMatch(/Amount Placement/i);
+    expect(out.enrichment.fields).toMatchObject({
+      type: 'Requirement',
+      state: 'Proposed',
+      parentId: '2353',
+      priority: '2',
+      valueArea: 'Business',
+    });
+    expect(out.enrichment.fields.descriptionHtml).toContain('<h2>1. Title</h2>');
+    expect(out.enrichment.fields.acceptanceCriteriaHtml).toContain('<img');
+  });
+
   it('reads a numeric Azure Boards id or a Jira key from the first line', () => {
     expect(workItemRefFromStory('7189')).toBe('7189');
     expect(workItemRefFromStory('7189\nAcceptance criteria\nPay')).toBe('7189');

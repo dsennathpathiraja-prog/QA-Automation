@@ -7,7 +7,42 @@ import {
 
 const slugPath = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'item';
 
-/** Compact Markdown for the Read step so Run UI can show the loaded work item. */
+/** Optional Azure Boards fields from expand=All (worker enrich → Read story MD). */
+export interface StoryWorkItemFields {
+  type?: string;
+  state?: string;
+  areaPath?: string;
+  iterationPath?: string;
+  priority?: string;
+  requirementType?: string;
+  valueArea?: string;
+  parentId?: string;
+  descriptionHtml?: string;
+  acceptanceCriteriaHtml?: string;
+}
+
+function asWorkItemFields(value: unknown): StoryWorkItemFields {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const o = value as Record<string, unknown>;
+  const pick = (key: keyof StoryWorkItemFields) => {
+    const raw = o[key];
+    return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
+  };
+  return {
+    ...(pick('type') ? { type: pick('type') } : {}),
+    ...(pick('state') ? { state: pick('state') } : {}),
+    ...(pick('areaPath') ? { areaPath: pick('areaPath') } : {}),
+    ...(pick('iterationPath') ? { iterationPath: pick('iterationPath') } : {}),
+    ...(pick('priority') ? { priority: pick('priority') } : {}),
+    ...(pick('requirementType') ? { requirementType: pick('requirementType') } : {}),
+    ...(pick('valueArea') ? { valueArea: pick('valueArea') } : {}),
+    ...(pick('parentId') ? { parentId: pick('parentId') } : {}),
+    ...(pick('descriptionHtml') ? { descriptionHtml: pick('descriptionHtml') } : {}),
+    ...(pick('acceptanceCriteriaHtml') ? { acceptanceCriteriaHtml: pick('acceptanceCriteriaHtml') } : {}),
+  };
+}
+
+/** Compact Markdown for the Read step so Run UI / planner can use loaded work item fields. */
 function renderStoryArtifactMarkdown(input: {
   workItem: string;
   application: string;
@@ -15,7 +50,9 @@ function renderStoryArtifactMarkdown(input: {
   story: string;
   acceptanceCriteria: string[];
   descriptionExcerpt: string;
+  fields?: StoryWorkItemFields;
 }): string {
+  const f = input.fields ?? {};
   const lines = [
     `# Work item ${input.workItem}${input.title ? ` — ${input.title}` : ''}`,
     '',
@@ -24,12 +61,24 @@ function renderStoryArtifactMarkdown(input: {
     `- **Work item:** ${input.workItem}`,
     `- **Application:** ${input.application}`,
     input.title ? `- **Title:** ${input.title}` : '- **Title:** _(not loaded)_',
-    '',
   ];
-  if (input.descriptionExcerpt) {
+  if (f.type) lines.push(`- **Type:** ${f.type}`);
+  if (f.state) lines.push(`- **State:** ${f.state}`);
+  if (f.areaPath) lines.push(`- **Area path:** ${f.areaPath}`);
+  if (f.iterationPath) lines.push(`- **Iteration path:** ${f.iterationPath}`);
+  if (f.priority) lines.push(`- **Priority:** ${f.priority}`);
+  if (f.requirementType) lines.push(`- **Requirement type:** ${f.requirementType}`);
+  if (f.valueArea) lines.push(`- **Value area:** ${f.valueArea}`);
+  if (f.parentId) lines.push(`- **Parent:** ${f.parentId}`);
+  lines.push('');
+  if (f.descriptionHtml) {
+    lines.push('## Description', '', f.descriptionHtml, '');
+  } else if (input.descriptionExcerpt) {
     lines.push('## Description excerpt', '', input.descriptionExcerpt, '');
   }
-  if (input.acceptanceCriteria.length > 0) {
+  if (f.acceptanceCriteriaHtml) {
+    lines.push('## Acceptance criteria', '', f.acceptanceCriteriaHtml, '');
+  } else if (input.acceptanceCriteria.length > 0) {
     lines.push('## Acceptance criteria', '');
     for (const c of input.acceptanceCriteria) lines.push(`- ${c}`);
     lines.push('');
@@ -287,12 +336,13 @@ export function runFlowStep(step: FlowStep): FlowResult {
       const title = text(step.params.workItemTitle) || workItemTitleFromStory(story);
       const fetchNote = text(step.params.workItemFetchNote);
       const descriptionExcerpt = text(step.params.workItemDescriptionExcerpt);
+      const fields = asWorkItemFields(step.params.workItemFields);
       const titled = title
         ? `Read work item ${workItem} — ${title}.`
         : `Read work item ${workItem || '(none)'}.`;
       const excerptPart = title && descriptionExcerpt ? ` ${descriptionExcerpt}` : '';
-      const acPart = acceptanceCriteria.length > 0
-        ? `${acceptanceCriteria.length} acceptance criteria.`
+      const acPart = acceptanceCriteria.length > 0 || fields.acceptanceCriteriaHtml
+        ? `${Math.max(acceptanceCriteria.length, fields.acceptanceCriteriaHtml ? 1 : 0)} acceptance criteria.`
         : 'The story text has no separate acceptance criteria, so the plan uses the work item itself.';
       const missPart = !title && fetchNote ? ` ${fetchNote}` : '';
       const storyMarkdown = renderStoryArtifactMarkdown({
@@ -302,6 +352,7 @@ export function runFlowStep(step: FlowStep): FlowResult {
         story,
         acceptanceCriteria,
         descriptionExcerpt,
+        fields,
       });
       const storyArtifact = `explore/${slugPath(application)}/${slugPath(workItem)}.story.md`;
       return {
@@ -317,6 +368,7 @@ export function runFlowStep(step: FlowStep): FlowResult {
           artifactPath: storyArtifact,
           ...(descriptionExcerpt ? { descriptionExcerpt } : {}),
           ...(fetchNote ? { fetchNote } : {}),
+          ...(Object.keys(fields).length > 0 ? { fields } : {}),
         },
       };
     }
