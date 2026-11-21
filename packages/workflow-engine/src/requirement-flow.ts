@@ -1,4 +1,9 @@
-import { generateWithPlaywrightGenerator, planWithPlaywrightPlanner, type PlannerScenario } from './playwright-agents';
+import {
+  generateWithPlaywrightGenerator,
+  healWithPlaywrightHealer,
+  planWithPlaywrightPlanner,
+  type PlannerScenario,
+} from './playwright-agents';
 
 export interface FlowStep {
   id: string;
@@ -161,8 +166,9 @@ const casesOf = (value: unknown): FlowCase[] => {
 };
 
 /**
- * One requirement-validation stage. The story text is the source of the plan.
- * UI and source notes are recorded; this function does not call a browser, a repository, or Squash.
+ * One requirement-validation stage.
+ * Order: explore UI/code → consolidate → plan (MD) → generate → heal → publish.
+ * This sync path does not call a browser, a repository, or Squash.
  */
 export function runFlowStep(step: FlowStep): FlowResult {
   const story = text(step.params.story);
@@ -172,7 +178,14 @@ export function runFlowStep(step: FlowStep): FlowResult {
   const criteria = list(storyOut.acceptanceCriteria);
   const workItem = text(storyOut.workItem) || workItemIdFromStory(story) || 'work-item';
   const scenarios = scenariosOf(step.prior.plan?.scenarios);
-  const cases = casesOf(step.prior.generate_tests?.cases);
+  const planMarkdown = text(step.prior.plan?.planMarkdown);
+  const planArtifact = text(step.prior.plan?.planArtifact);
+  const findings = text(step.prior.consolidate?.findings)
+    || text(step.prior.consolidate?.combined)
+    || text(step.prior.explore_ui?.findings);
+  const generatedCases = casesOf(step.prior.generate_tests?.cases);
+  const healedCases = casesOf(step.prior.heal_tests?.cases);
+  const cases = healedCases.length > 0 ? healedCases : generatedCases;
 
   switch (step.type) {
     case 'rv.read-user-story': {
@@ -186,23 +199,16 @@ export function runFlowStep(step: FlowStep): FlowResult {
         outputs: { story, workItem, acceptanceCriteria, applicationName: application, environment },
       };
     }
-    case 'rv.generate-test-plan': {
-      const planned = planWithPlaywrightPlanner({ workItem, application, criteria });
-      return {
-        summary: planned.summary,
-        outputs: { scenarios: planned.scenarios, workItem, applicationName: application, environment, agent: 'playwright-test-planner' },
-      };
-    }
     case 'rv.explore-ui':
       return {
         summary: environment
-          ? `UI note for ${application} on ${environment}: the scenarios stay in the plan. This run does not drive the browser.`
-          : 'UI note: no environment was given, so the screen was not opened.',
+          ? `UI note for ${application} on ${environment}: exploration runs before the plan. This run does not drive the browser.`
+          : 'UI note: no environment was given, so the screen was not opened (exploration still precedes planning).',
         outputs: { findings: environment ? `environment ${environment}` : 'no environment' },
       };
     case 'rv.explore-code':
       return {
-        summary: 'Source note: the scenarios stay in the plan. This run does not read the repository.',
+        summary: 'Source note: exploration runs before the plan. This run does not read the repository.',
         outputs: { findings: 'repository not read' },
       };
     case 'rv.consolidate-findings': {
@@ -210,17 +216,56 @@ export function runFlowStep(step: FlowStep): FlowResult {
       const code = text(step.prior.explore_code?.findings);
       const combined = [ui && `UI: ${ui}`, code && `Source: ${code}`].filter(Boolean).join('\n') || 'no exploration findings';
       return {
-        summary: `Combined the story, the UI note, and the source note. ${scenarios.length || criteria.length || 1} scenario${(scenarios.length || criteria.length) === 1 ? '' : 's'} go forward.`,
-        outputs: { scenarios: scenarios.length > 0 ? scenarios : criteria, workItem, findings: combined, combined },
+        summary: `Combined the story, the UI note, and the source note for the planner. ${criteria.length || 1} acceptance cue${(criteria.length || 1) === 1 ? '' : 's'} go forward.`,
+        outputs: { workItem, findings: combined, combined, acceptanceCriteria: criteria },
+      };
+    }
+    case 'rv.generate-test-plan': {
+      const planned = planWithPlaywrightPlanner({ workItem, application, criteria, findings: findings || undefined });
+      return {
+        summary: planned.summary,
+        outputs: {
+          scenarios: planned.scenarios,
+          planMarkdown: planned.planMarkdown,
+          planArtifact: planned.planArtifact,
+          workItem,
+          applicationName: application,
+          environment,
+          agent: 'playwright-test-planner',
+        },
       };
     }
     case 'rv.generate-tests': {
-      const source = scenarios.length > 0 ? scenarios : planWithPlaywrightPlanner({ workItem, application, criteria }).scenarios;
-      const findings = text(step.prior.consolidate?.findings) || text(step.prior.consolidate?.combined) || text(step.prior.explore_ui?.findings);
-      const generated = generateWithPlaywrightGenerator({ workItem, application, scenarios: source, findings });
+      const source = scenarios.length > 0
+        ? scenarios
+        : planWithPlaywrightPlanner({ workItem, application, criteria, findings: findings || undefined }).scenarios;
+      const generated = generateWithPlaywrightGenerator({
+        workItem,
+        application,
+        scenarios: source,
+        planMarkdown: planMarkdown || undefined,
+        findings: findings || undefined,
+      });
       return {
         summary: generated.summary,
-        outputs: { cases: generated.cases, workItem, agent: 'playwright-test-generator' },
+        outputs: {
+          cases: generated.cases,
+          workItem,
+          planArtifact: planArtifact || undefined,
+          agent: 'playwright-test-generator',
+        },
+      };
+    }
+    case 'rv.heal-tests': {
+      const healed = healWithPlaywrightHealer({ workItem, cases: generatedCases });
+      return {
+        summary: healed.summary,
+        outputs: {
+          cases: healed.cases,
+          fixed: healed.fixed,
+          workItem,
+          agent: 'playwright-test-healer',
+        },
       };
     }
     case 'rv.publish-testcases':

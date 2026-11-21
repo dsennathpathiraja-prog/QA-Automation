@@ -10,6 +10,11 @@
       "args": ["-y", "@playwright/test-generator-mcp"],
       "env": {}
     },
+    "playwright-test-healer": {
+      "command": "npx",
+      "args": ["-y", "@playwright/test-healer-mcp"],
+      "env": {}
+    },
     "playwright-browser": {
       "command": "npx",
       "args": ["-y", "@playwright/mcp@latest"],

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { LlmGateway, StaticAssignmentResolver, StaticProviderRegistry, type ChatRequest, type ChatResult, type LlmPort, type ModelInfo } from '@qa/llm';
 import { createLlmTestGenerator } from '../src/generator';
-import { PLAYWRIGHT_TEST_GENERATOR, PLAYWRIGHT_TEST_PLANNER } from '../src/heuristic';
+import { createLlmTestHealer } from '../src/healer';
+import { PLAYWRIGHT_TEST_GENERATOR, PLAYWRIGHT_TEST_HEALER, PLAYWRIGHT_TEST_PLANNER } from '../src/heuristic';
 import { createLlmTestPlanner } from '../src/planner';
 
 class FakePort implements LlmPort {
@@ -35,6 +36,7 @@ function gateway(reply: string) {
     assignments: new StaticAssignmentResolver({
       [PLAYWRIGHT_TEST_PLANNER]: { primary: { providerId: 'local', model: 'fake' }, temperature: 0 },
       [PLAYWRIGHT_TEST_GENERATOR]: { primary: { providerId: 'local', model: 'fake' }, temperature: 0 },
+      [PLAYWRIGHT_TEST_HEALER]: { primary: { providerId: 'local', model: 'fake' }, temperature: 0 },
     }),
     redactor: { redact: (s) => s },
     audit: { append: async () => undefined },
@@ -61,6 +63,8 @@ describe('LLM planner / generator', () => {
     expect(out.source).toBe('model');
     expect(out.scenarios).toHaveLength(3);
     expect(out.summary).toMatch(/with a model/);
+    expect(out.summary).toMatch(/plan artifact/i);
+    expect(out.planMarkdown).toMatch(/# Test plan: 7189/);
     expect(out.scenarios[1]?.priority).toBe('high');
   });
 
@@ -101,6 +105,37 @@ describe('LLM planner / generator', () => {
       criteria: ['User can sign in'],
     });
     expect(out.source).toBe('heuristic');
-    expect(out.scenarios[1]?.steps).toMatch(/password|credentials/i);
+    expect(out.scenarios.length).toBeGreaterThan(3);
+    expect(out.scenarios.some((s) => /password|credentials/i.test(s.steps))).toBe(true);
+  });
+
+  it('heals broken cases through the LLM healer port', async () => {
+    const healJson = JSON.stringify({
+      cases: [{
+        name: 'Positive: card listed',
+        kind: 'positive',
+        steps: "import { test, expect } from '@playwright/test';\ntest('Positive: card listed', async ({ page }) => { await page.goto('/'); await expect(page.locator('body')).toBeVisible(); });\n",
+        expected: 'Card appears',
+      }],
+    });
+    const healer = createLlmTestHealer(gateway(healJson));
+    const out = await healer.heal({
+      workItem: '7189',
+      application: 'PayNSure',
+      cases: [{
+        name: 'Positive: card listed',
+        kind: 'positive',
+        priority: 'medium',
+        steps: 'broken',
+        expected: 'Card appears',
+        workItem: '7189',
+        reference: 'QAP-1',
+        file: 'tests/a.spec.js',
+        testId: 't1',
+      }],
+    });
+    expect(out.source).toBe('model');
+    expect(out.fixed).toBe(1);
+    expect(out.cases[0]?.steps).toMatch(/@playwright\/test/);
   });
 });

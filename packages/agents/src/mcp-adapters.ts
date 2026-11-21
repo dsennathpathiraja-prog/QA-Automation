@@ -1,5 +1,5 @@
 /**
- * Adapter contracts for Cursor / local MCP servers that play the same three roles
+ * Adapter contracts for Cursor / local MCP servers that play the same roles
  * as the in-repo agents. Names match common catalogs; configure them in
  * `.cursor/mcp.json` (see docs/playwright-agents-mcp.md).
  *
@@ -9,15 +9,20 @@
  * in-repo ports in `types.ts` instead.
  */
 
+import { MAX_GENERATED_CASES, MAX_HEAL_CASES, MAX_PLAN_SCENARIOS } from './limits';
+import { planArtifactPath, renderPlanMarkdown } from './plan-markdown';
 import type {
   BrowserExplorerPort,
   ExploreRequest,
   ExploreResult,
   GenerateRequest,
   GenerateResult,
+  HealRequest,
+  HealResult,
   PlanRequest,
   PlanResult,
   TestGeneratorPort,
+  TestHealerPort,
   TestPlannerPort,
 } from './types';
 
@@ -25,6 +30,7 @@ import type {
 export const PLAYWRIGHT_MCP_ROLES = {
   planner: 'playwright-test-planner',
   generator: 'playwright-test-generator',
+  healer: 'playwright-test-healer',
   /** Managed browser MCP used by the platform connector (`playwright-mcp` provider). */
   browser: 'playwright-browser',
   browserManaged: 'playwright-mcp',
@@ -43,6 +49,7 @@ export interface PlaywrightTestPlannerMcp {
     acceptanceCriteria: string[];
     application: string;
     workItem: string;
+    findings?: string;
   }): Promise<{
     scenarios: Array<{
       name: string;
@@ -52,6 +59,7 @@ export interface PlaywrightTestPlannerMcp {
       steps: string;
       expected: string;
     }>;
+    planMarkdown?: string;
   }>;
 }
 
@@ -60,6 +68,7 @@ export interface PlaywrightTestGeneratorMcp {
   generate(input: {
     workItem: string;
     application: string;
+    planMarkdown?: string;
     scenarios: Array<{
       name: string;
       kind: 'positive' | 'negative' | 'edge';
@@ -79,6 +88,36 @@ export interface PlaywrightTestGeneratorMcp {
       file?: string;
       testId?: string;
     }>;
+  }>;
+}
+
+/** Expected tool surface for a healer MCP (e.g. `healer_fix_tests`). */
+export interface PlaywrightTestHealerMcp {
+  heal(input: {
+    workItem: string;
+    application: string;
+    cases: Array<{
+      name: string;
+      kind: 'positive' | 'negative' | 'edge';
+      priority?: 'high' | 'medium' | 'low';
+      steps: string;
+      expected: string;
+      file?: string;
+      testId?: string;
+    }>;
+    findings?: string;
+    failures?: Array<{ testId?: string; name?: string; error: string }>;
+  }): Promise<{
+    cases: Array<{
+      name: string;
+      kind: 'positive' | 'negative' | 'edge';
+      priority?: 'high' | 'medium' | 'low';
+      steps: string;
+      expected: string;
+      file?: string;
+      testId?: string;
+    }>;
+    fixed?: number;
   }>;
 }
 
@@ -102,8 +141,9 @@ export function plannerPortFromMcp(mcp: PlaywrightTestPlannerMcp): TestPlannerPo
         acceptanceCriteria: input.criteria,
         application: input.application,
         workItem: input.workItem,
+        findings: input.findings,
       });
-      const scenarios = out.scenarios.map((row) => ({
+      const scenarios = out.scenarios.slice(0, MAX_PLAN_SCENARIOS).map((row) => ({
         name: row.name,
         kind: row.kind,
         priority: row.priority ?? (row.kind === 'negative' ? 'high' as const : row.kind === 'edge' ? 'low' as const : 'medium' as const),
@@ -111,9 +151,20 @@ export function plannerPortFromMcp(mcp: PlaywrightTestPlannerMcp): TestPlannerPo
         steps: row.steps,
         expected: row.expected,
       }));
+      const planArtifact = planArtifactPath(input.workItem, input.application);
+      const planMarkdown = out.planMarkdown?.trim()
+        || renderPlanMarkdown(scenarios, {
+          workItem: input.workItem,
+          application: input.application,
+          criteria: input.criteria,
+          findings: input.findings,
+          source: 'mcp',
+        });
       return {
-        summary: `${PLAYWRIGHT_MCP_ROLES.planner} (MCP) wrote ${scenarios.length} scenario${scenarios.length === 1 ? '' : 's'} for ${input.workItem}.`,
-        scenarios: scenarios.slice(0, 40),
+        summary: `${PLAYWRIGHT_MCP_ROLES.planner} (MCP) wrote ${scenarios.length} scenario${scenarios.length === 1 ? '' : 's'} for ${input.workItem}. Plan artifact ${planArtifact}.`,
+        scenarios,
+        planMarkdown,
+        planArtifact,
         source: 'mcp',
       };
     },
@@ -128,12 +179,13 @@ export function generatorPortFromMcp(mcp: PlaywrightTestGeneratorMcp): TestGener
       const out = await mcp.generate({
         workItem: input.workItem,
         application: input.application,
+        planMarkdown: input.planMarkdown,
         scenarios: input.scenarios,
         findings: input.findings,
       });
       const work = slug(input.workItem);
       const application = slug(input.application);
-      const cases = out.cases.slice(0, 40).map((row, index) => ({
+      const cases = out.cases.slice(0, MAX_GENERATED_CASES).map((row, index) => ({
         name: row.name,
         kind: row.kind,
         priority: row.priority ?? (row.kind === 'negative' ? 'high' as const : row.kind === 'edge' ? 'low' as const : 'medium' as const),
@@ -145,8 +197,46 @@ export function generatorPortFromMcp(mcp: PlaywrightTestGeneratorMcp): TestGener
         testId: row.testId ?? `${work}-${row.kind}-${index + 1}`,
       }));
       return {
-        summary: `${PLAYWRIGHT_MCP_ROLES.generator} (MCP) wrote ${cases.length} Playwright test${cases.length === 1 ? '' : 's'} for ${input.workItem}.`,
+        summary: `${PLAYWRIGHT_MCP_ROLES.generator} (MCP) wrote ${cases.length} Playwright test${cases.length === 1 ? '' : 's'} for ${input.workItem} from the MD plan.`,
         cases,
+        source: 'mcp',
+      };
+    },
+  };
+}
+
+/** Wrap a healer MCP client as the platform `TestHealerPort`. */
+export function healerPortFromMcp(mcp: PlaywrightTestHealerMcp): TestHealerPort {
+  return {
+    async heal(input: HealRequest): Promise<HealResult> {
+      const out = await mcp.heal({
+        workItem: input.workItem,
+        application: input.application,
+        cases: input.cases,
+        findings: input.findings,
+        failures: input.failures,
+      });
+      const byName = new Map(out.cases.map((row) => [row.name, row]));
+      let fixed = 0;
+      const cases = input.cases.slice(0, MAX_HEAL_CASES).map((item) => {
+        const updated = byName.get(item.name);
+        if (!updated) return item;
+        fixed += 1;
+        return {
+          ...item,
+          steps: updated.steps,
+          expected: updated.expected || item.expected,
+          kind: updated.kind ?? item.kind,
+          priority: updated.priority ?? item.priority,
+          file: updated.file ?? item.file,
+          testId: updated.testId ?? item.testId,
+        };
+      });
+      const count = out.fixed ?? fixed;
+      return {
+        summary: `${PLAYWRIGHT_MCP_ROLES.healer} (MCP) fixed ${count} case${count === 1 ? '' : 's'} for ${input.workItem}.`,
+        cases,
+        fixed: count,
         source: 'mcp',
       };
     },
@@ -167,16 +257,18 @@ export function explorerPortFromBrowserMcp(mcp: PlaywrightBrowserMcp): BrowserEx
           source: 'skipped',
         };
       }
+      const labels = input.scenarios.length > 0
+        ? input.scenarios.map((s) => s.name)
+        : (input.criteria?.length ? input.criteria : [input.application]);
       const details = [];
-      const limit = Math.min(input.maxPages ?? 5, Math.max(1, input.scenarios.length || 1));
+      const limit = Math.min(input.maxPages ?? 5, Math.max(1, labels.length));
       try {
         await mcp.navigate(input.url);
         for (let i = 0; i < limit; i += 1) {
-          const scenario = input.scenarios[i];
           const snap = await mcp.snapshot();
           const shot = await mcp.takeScreenshot({ fullPage: true });
           details.push({
-            scenarioName: scenario?.name ?? `page-${i + 1}`,
+            scenarioName: labels[i] ?? `page-${i + 1}`,
             url: snap.url ?? input.url,
             snapshotExcerpt: (snap.text ?? '').slice(0, 1_500),
             screenshotBase64: shot.data || undefined,
@@ -187,7 +279,7 @@ export function explorerPortFromBrowserMcp(mcp: PlaywrightBrowserMcp): BrowserEx
       }
       const findings = details.map((d) => `${d.scenarioName} @ ${d.url}: ${d.snapshotExcerpt.slice(0, 240)}`).join('\n') || `opened ${input.url}`;
       return {
-        summary: `${PLAYWRIGHT_MCP_ROLES.browser} opened ${details.length} page${details.length === 1 ? '' : 's'} for ${input.application}.`,
+        summary: `${PLAYWRIGHT_MCP_ROLES.browser} opened ${details.length} page${details.length === 1 ? '' : 's'} for ${input.application} (before planning).`,
         findings,
         details,
         source: 'mcp',

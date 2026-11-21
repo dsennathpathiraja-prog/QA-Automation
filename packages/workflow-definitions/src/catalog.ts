@@ -18,14 +18,19 @@ export interface StepType {
 const rv = (type: string, extra: Omit<StepType, 'type' | 'workflow'>): StepType => ({ type, workflow: 'requirement-validation', ...extra });
 const rg = (type: string, extra: Omit<StepType, 'type' | 'workflow'>): StepType => ({ type, workflow: 'regression-testing', ...extra });
 
+/**
+ * Requirement-validation step order (explore → plan MD → generate many → heal → publish):
+ * read → explore UI/code → consolidate → plan → generate → heal → publish
+ */
 export const STEP_TYPES: readonly StepType[] = [
   rv('rv.read-user-story', { mandatory: true, after: [], pause: 'boundary', roles: [{ role: 'workItemSource', required: ['workitem.read', 'workitem.attachment.read'] }] }),
-  rv('rv.generate-test-plan', { mandatory: true, after: ['rv.read-user-story'], pause: 'boundary', roles: [] }),
-  rv('rv.explore-ui', { mandatory: false, after: ['rv.generate-test-plan'], pause: 'safe', roles: [{ role: 'browserAutomation', required: ['browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.interact', 'browser.screenshot'] }] }),
-  rv('rv.explore-code', { mandatory: false, after: ['rv.generate-test-plan'], pause: 'safe', roles: [{ role: 'sourceRepo', required: ['scm.tree.list', 'scm.file.read', 'scm.code.search', 'scm.branch.list'] }] }),
+  rv('rv.explore-ui', { mandatory: false, after: ['rv.read-user-story'], pause: 'safe', roles: [{ role: 'browserAutomation', required: ['browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.interact', 'browser.screenshot'] }] }),
+  rv('rv.explore-code', { mandatory: false, after: ['rv.read-user-story'], pause: 'safe', roles: [{ role: 'sourceRepo', required: ['scm.tree.list', 'scm.file.read', 'scm.code.search', 'scm.branch.list'] }] }),
   rv('rv.consolidate-findings', { mandatory: false, mandatoryIfAnyEnabled: ['rv.explore-ui', 'rv.explore-code'], after: ['rv.explore-ui', 'rv.explore-code'], pause: 'boundary', roles: [] }),
-  rv('rv.generate-tests', { mandatory: true, after: ['rv.consolidate-findings'], pause: 'safe', roles: [] }),
-  rv('rv.publish-testcases', { mandatory: true, after: ['rv.generate-tests'], pause: 'safe', roles: [{ role: 'testManagement', required: ['tm.testcase.read'] }] }),
+  rv('rv.generate-test-plan', { mandatory: true, after: ['rv.consolidate-findings'], pause: 'boundary', roles: [] }),
+  rv('rv.generate-tests', { mandatory: true, after: ['rv.generate-test-plan'], pause: 'safe', roles: [] }),
+  rv('rv.heal-tests', { mandatory: true, after: ['rv.generate-tests'], pause: 'safe', roles: [] }),
+  rv('rv.publish-testcases', { mandatory: true, after: ['rv.heal-tests'], pause: 'safe', roles: [{ role: 'testManagement', required: ['tm.testcase.read'] }] }),
   rv('rv.execute-tests', { mandatory: false, after: ['rv.publish-testcases'], pause: 'safe', roles: [{ role: 'testRunner', required: ['runner.test.execute'] }] }),
   rv('rv.sync-results', { mandatory: false, after: ['rv.execute-tests'], pause: 'safe', roles: [{ role: 'testManagement', required: ['tm.testcase.read'] }] }),
   rv('rv.qa-report', { mandatory: false, after: ['rv.sync-results'], pause: 'boundary', roles: [] }),

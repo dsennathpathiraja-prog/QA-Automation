@@ -1,4 +1,4 @@
-/** Shared shapes for requirement-validation planner / generator / browser agents. */
+/** Shared shapes for requirement-validation planner / generator / healer / browser agents. */
 
 export type ScenarioKind = 'positive' | 'negative' | 'edge';
 export type ScenarioPriority = 'high' | 'medium' | 'low';
@@ -30,6 +30,8 @@ export interface PlanRequest {
   /** Full story blob (title, description, acceptance criteria). */
   story: string;
   criteria: string[];
+  /** Exploration findings from UI / source (available before planning). */
+  findings?: string;
   executionId?: string;
   stepId?: string;
 }
@@ -37,6 +39,10 @@ export interface PlanRequest {
 export interface PlanResult {
   summary: string;
   scenarios: PlannerScenario[];
+  /** Durable Markdown plan artifact body for the generator. */
+  planMarkdown: string;
+  /** Relative path of the plan artifact in the platform workspace. */
+  planArtifact: string;
   /** How the plan was produced. */
   source: 'model' | 'heuristic' | 'mcp';
 }
@@ -45,6 +51,9 @@ export interface GenerateRequest {
   workItem: string;
   application: string;
   scenarios: PlannerScenario[];
+  /** Markdown plan artifact from playwright-test-planner (preferred generator input). */
+  planMarkdown?: string;
+  planArtifact?: string;
   /** Optional notes from UI / source exploration. */
   findings?: string;
   executionId?: string;
@@ -57,11 +66,37 @@ export interface GenerateResult {
   source: 'model' | 'heuristic' | 'mcp';
 }
 
+export interface HealFailure {
+  testId?: string;
+  name?: string;
+  error: string;
+}
+
+export interface HealRequest {
+  workItem: string;
+  application: string;
+  cases: GeneratedPlaywrightCase[];
+  findings?: string;
+  /** Optional run/diagnostic failures to target. */
+  failures?: HealFailure[];
+  executionId?: string;
+  stepId?: string;
+}
+
+export interface HealResult {
+  summary: string;
+  cases: GeneratedPlaywrightCase[];
+  fixed: number;
+  source: 'model' | 'heuristic' | 'mcp';
+}
+
 export interface ExploreRequest {
   application: string;
   /** Absolute URL the browser may open (must be on the connector allowlist). */
   url?: string;
   environment?: string;
+  /** Optional criteria / path labels when exploring before the plan exists. */
+  criteria?: string[];
   scenarios: PlannerScenario[];
   /** Cap pages / screenshots for a single run. */
   maxPages?: number;
@@ -93,6 +128,10 @@ export interface TestPlannerPort {
 
 export interface TestGeneratorPort {
   generate(input: GenerateRequest): Promise<GenerateResult>;
+}
+
+export interface TestHealerPort {
+  heal(input: HealRequest): Promise<HealResult>;
 }
 
 export interface BrowserExplorerPort {
