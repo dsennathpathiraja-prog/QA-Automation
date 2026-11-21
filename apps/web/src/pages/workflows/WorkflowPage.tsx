@@ -16,7 +16,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { ConnectorListResponse, ExecutionEventList, ExecutionListResponse, ExecutionSchema, ValidationReportSchema, WorkflowDefinitionResponse, WorkflowSchema } from '@qa/contracts';
+import { ConnectorListResponse, EnvironmentListResponse, ExecutionEventList, ExecutionListResponse, ExecutionSchema, ValidationReportSchema, WorkflowDefinitionResponse, WorkflowSchema } from '@qa/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
@@ -128,6 +128,13 @@ export function WorkflowPage() {
   const generation = workflow.data?.type === 'requirement-validation';
   const steps = (def?.spec?.steps ?? []).filter((s) => !(generation && ['rv.execute-tests', 'rv.sync-results', 'rv.qa-report'].includes(s.type)));
   const enabled = steps.filter((s) => s.enabled !== false);
+  const exploreUiOn = enabled.some((s) => s.type === 'rv.explore-ui');
+  const exploreCodeOn = enabled.some((s) => s.type === 'rv.explore-code');
+  const environments = useQuery({
+    queryKey: ['environments'],
+    queryFn: () => api.get('/api/v1/environments', EnvironmentListResponse),
+    enabled: exploreUiOn && session.can('environment.view'),
+  });
   const stepEvents = (events.data?.items ?? []).filter((event) => event.kind === 'step.completed' || event.kind === 'step.failed');
 
   return (
@@ -290,23 +297,60 @@ export function WorkflowPage() {
               {workflow.data?.status === 'published' && session.can('execution.start') && (
                 <Stack component="form" spacing={2} sx={{ mb: 2 }} onSubmit={(e) => { e.preventDefault(); start.mutate(); }}>
                   {generation && (
-                    <Alert severity="info">Starting this run creates the test cases. Choose the environment on Executions when you run the work item.</Alert>
+                    <Alert severity="info">
+                      Starting this run prepares cases (explore → plan → generate → heal → publish).
+                      {exploreUiOn ? ' Explore UI opens the environment URL with Playwright before planning.' : ''}
+                      {exploreCodeOn ? ' Explore code searches the bound source repository before planning.' : ''}
+                      {' '}Running prepared cases against an environment later is a separate action on Executions.
+                    </Alert>
                   )}
-                  {(def.spec?.parameters ?? []).filter((p) => p.required && (p.pinned === undefined || p.pinned === null) && !(generation && p.name === 'environment')).map((p) => (
-                    <TextField
-                      key={p.name}
-                      id={`param-${p.name}`}
-                      label={`${p.name} (${p.type})`}
-                      helperText={p.type === 'work-item-ref' ? 'Enter the work item id (for example 7189). Bound Azure Boards / Jira load title, description, and acceptance criteria.' : undefined}
-                      multiline={p.type === 'work-item-ref'}
-                      minRows={p.type === 'work-item-ref' ? 3 : undefined}
-                      value={params[p.name] ?? ''}
-                      onChange={(e) => setParams({ ...params, [p.name]: e.target.value })}
-                      fullWidth
-                    />
+                  {(def.spec?.parameters ?? []).filter((p) => {
+                    if (p.pinned !== undefined && p.pinned !== null) return false;
+                    if (p.name === 'environment') return exploreUiOn;
+                    return p.required;
+                  }).map((p) => (
+                    p.name === 'environment' && exploreUiOn ? (
+                      <FormControl key={p.name} fullWidth required>
+                        <InputLabel id="run-environment-label">Environment</InputLabel>
+                        <Select
+                          labelId="run-environment-label"
+                          id="param-environment"
+                          label="Environment"
+                          value={params.environment ?? ''}
+                          onChange={(e) => setParams({ ...params, environment: String(e.target.value) })}
+                        >
+                          {(environments.data?.items ?? []).filter((item) => item.enabled && item.selectable).map((item) => (
+                            <MenuItem key={item.id} value={item.id}>{item.name} · {item.kind}</MenuItem>
+                          ))}
+                        </Select>
+                        {environments.isError && <Alert severity="error" sx={{ mt: 1 }}>Environments could not be loaded.</Alert>}
+                        {environments.data && environments.data.items.filter((item) => item.enabled && item.selectable).length === 0 && (
+                          <Alert severity="warning" sx={{ mt: 1 }}>Create and enable an environment with an application URL before Explore UI.</Alert>
+                        )}
+                      </FormControl>
+                    ) : (
+                      <TextField
+                        key={p.name}
+                        id={`param-${p.name}`}
+                        label={`${p.name} (${p.type})`}
+                        helperText={p.type === 'work-item-ref' ? 'Enter the work item id (for example 7189). Bound Azure Boards / Jira load title, description, and acceptance criteria.' : undefined}
+                        multiline={p.type === 'work-item-ref'}
+                        minRows={p.type === 'work-item-ref' ? 3 : undefined}
+                        value={params[p.name] ?? ''}
+                        onChange={(e) => setParams({ ...params, [p.name]: e.target.value })}
+                        fullWidth
+                        required={p.required || (p.name === 'environment' && exploreUiOn)}
+                      />
+                    )
                   ))}
                   <Box>
-                    <Button type="submit" variant="contained" disabled={start.isPending}>Start run</Button>
+                    <Button
+                      type="submit"
+                      variant="contained"
+                      disabled={start.isPending || (exploreUiOn && !params.environment)}
+                    >
+                      Start run
+                    </Button>
                   </Box>
                   {start.isError && <ErrorNotice message={errorText(start.error, 'The run could not be started.')} />}
                 </Stack>
@@ -325,7 +369,9 @@ export function WorkflowPage() {
                   const stepType = String(event.payload.stepType ?? '');
                   const label = STEP_LABEL[stepType] || STEP_LABEL[stepId] || stepId || stepType || event.kind;
                   const summary = typeof event.payload.summary === 'string' ? event.payload.summary : '';
+                  const message = typeof event.payload.message === 'string' ? event.payload.message : '';
                   const failed = event.kind === 'step.failed';
+                  const detail = summary || message;
                   return (
                     <Paper key={event.seq} variant="outlined" sx={{ p: 1.5 }}>
                       <Stack direction="row" spacing={1} useFlexGap sx={{ mb: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -335,7 +381,7 @@ export function WorkflowPage() {
                       </Stack>
                       <Typography variant="subtitle2" color="text.secondary">Output</Typography>
                       <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                        {summary || (failed ? 'This step failed without a summary.' : 'This step completed without a summary.')}
+                        {detail || (failed ? 'This step failed without a summary.' : 'This step completed without a summary.')}
                       </Typography>
                     </Paper>
                   );

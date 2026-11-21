@@ -8,4 +8,5 @@ export * from './planner';
 export * from './generator';
 export * from './healer';
 export * from './browser-explorer';
+export * from './code-explorer';
 export * from './mcp-adapters';

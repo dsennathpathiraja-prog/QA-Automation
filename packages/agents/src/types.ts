@@ -124,6 +124,33 @@ export interface ExploreResult {
   source: 'browser' | 'skipped' | 'mcp';
 }
 
+export interface CodeExploreRequest {
+  application: string;
+  workItem?: string;
+  /** Bound repository name when known; otherwise the connector config supplies it. */
+  repo?: string;
+  criteria?: string[];
+  maxFiles?: number;
+  maxQueries?: number;
+  executionId?: string;
+  stepId?: string;
+}
+
+export interface CodeFinding {
+  path: string;
+  query: string;
+  snippet: string;
+  contentExcerpt: string;
+}
+
+export interface CodeExploreResult {
+  summary: string;
+  findings: string;
+  details: CodeFinding[];
+  source: 'repo';
+  repo?: string;
+}
+
 /**
  * Capability ports the worker binds. In-repo defaults use the LLM gateway and
  * Playwright MCP connector; Cursor MCP packages can implement the same ports.
@@ -144,6 +171,10 @@ export interface BrowserExplorerPort {
   explore(input: ExploreRequest): Promise<ExploreResult>;
 }
 
+export interface CodeExplorerPort {
+  explore(input: CodeExploreRequest): Promise<CodeExploreResult>;
+}
+
 /** Thin browser connector surface used by the in-repo explorer (maps to playwright-mcp capabilities). */
 export interface BrowserAutomationPort {
   openSession(): Promise<void>;
@@ -151,4 +182,10 @@ export interface BrowserAutomationPort {
   snapshot(): Promise<{ accessibilityTree: string; url: string }>;
   screenshot(): Promise<{ artifactBase64: string }>;
   closeSession(): Promise<void>;
+}
+
+/** Thin source-repo surface for Explore code (scm.code.search + scm.file.read). */
+export interface SourceRepoPort {
+  search(input: { query: string; repo?: string; branch?: string }): Promise<{ path: string; snippet: string }[]>;
+  readFile(input: { path: string; repo?: string; branch?: string }): Promise<{ path: string; content: string; truncated: boolean }>;
 }

@@ -86,7 +86,7 @@ export async function tick(store: EngineStore, opts: TickOptions): Promise<'busy
     } catch (e) {
       const message = e instanceof Error ? e.message : 'The step failed.';
       await store.save(run.id, { status: 'failed', ...clear });
-      await store.append(run.id, 'step.failed', { stepId: step.id, message });
+      await store.append(run.id, 'step.failed', { stepId: step.id, stepType: step.type, message, summary: message });
       return 'busy';
     }
   }

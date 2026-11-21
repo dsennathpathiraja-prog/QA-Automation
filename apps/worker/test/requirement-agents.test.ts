@@ -1,8 +1,84 @@
 import { describe, expect, it } from 'vitest';
-import type { TestGeneratorPort, TestHealerPort, TestPlannerPort } from '@qa/agents';
+import type { BrowserExplorerPort, CodeExplorerPort, TestGeneratorPort, TestHealerPort, TestPlannerPort } from '@qa/agents';
 import { performRequirementStep } from '../src/requirement-agents';
 
 describe('performRequirementStep', () => {
+  it('requires a browser explorer for rv.explore-ui and records real findings', async () => {
+    await expect(performRequirementStep(
+      {
+        id: 'explore_ui',
+        type: 'rv.explore-ui',
+        runId: 'run-1',
+        params: { applicationName: 'PayNSure', environment: 'qa-env' },
+        prior: { read_story: { workItem: '7189', acceptanceCriteria: ['listed'] } },
+      },
+      {},
+    )).rejects.toMatchObject({ errorClass: 'denied' });
+
+    const explorer: BrowserExplorerPort = {
+      async explore() {
+        return {
+          summary: 'opened 1 page',
+          findings: '- Pay @ https://shop.example.com',
+          details: [{ scenarioName: 'Pay', url: 'https://shop.example.com', snapshotExcerpt: 'button Pay' }],
+          source: 'browser',
+        };
+      },
+    };
+    const out = await performRequirementStep(
+      {
+        id: 'explore_ui',
+        type: 'rv.explore-ui',
+        runId: 'run-1',
+        params: { applicationName: 'PayNSure', environment: 'qa-env' },
+        prior: { read_story: { workItem: '7189', acceptanceCriteria: ['listed'] } },
+      },
+      {
+        explorer,
+        resolveEnvironmentUrl: async () => 'https://shop.example.com',
+      },
+    );
+    expect(out.outputs.source).toBe('browser');
+    expect(out.summary).toMatch(/opened 1 page/);
+  });
+
+  it('requires a code explorer for rv.explore-code', async () => {
+    await expect(performRequirementStep(
+      {
+        id: 'explore_code',
+        type: 'rv.explore-code',
+        runId: 'run-1',
+        params: { applicationName: 'PayNSure' },
+        prior: { read_story: { workItem: '7189', acceptanceCriteria: ['listed'] } },
+      },
+      {},
+    )).rejects.toMatchObject({ errorClass: 'denied' });
+
+    const codeExplorer: CodeExplorerPort = {
+      async explore() {
+        return {
+          summary: 'source-repo read 1 file',
+          findings: '- src/Pay.tsx',
+          details: [{ path: 'src/Pay.tsx', query: 'pay', snippet: 'Pay', contentExcerpt: 'export function Pay' }],
+          source: 'repo',
+          repo: 'shop',
+        };
+      },
+    };
+    const out = await performRequirementStep(
+      {
+        id: 'explore_code',
+        type: 'rv.explore-code',
+        runId: 'run-1',
+        params: { applicationName: 'PayNSure' },
+        prior: { read_story: { workItem: '7189', acceptanceCriteria: ['listed'] } },
+      },
+      { codeExplorer },
+    );
+    expect(out.outputs.source).toBe('repo');
+    expect(out.summary).toMatch(/source-repo read/);
+  });
+
   it('uses the planner port for rv.generate-test-plan and persists MD outputs', async () => {
     const planner: TestPlannerPort = {
       async plan(input) {

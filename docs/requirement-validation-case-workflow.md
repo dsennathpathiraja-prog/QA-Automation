@@ -15,16 +15,37 @@ Durable product workflow for preparing Playwright test cases from a work item (A
 8) Publish → Test Cases (+ Squash when READ_WRITE)
 ```
 
-Exploration **always runs before** the planner so UI/source notes feed the plan. The generator does **not** invent a tiny 1 positive + 1 negative + 1 edge sample from scratch when a plan exists — it consumes the Markdown plan. A rich work item (Description + many acceptance criteria / paths) may produce **100+** scenarios and cases (caps: 200 scenarios, 250 generated cases).
+Exploration **always runs before** the planner so UI/source notes feed the plan. When an explore step is enabled, it must **succeed with a real connector call** (not an offline stub) or the run stops — Plan does not start. The generator does **not** invent a tiny 1 positive + 1 negative + 1 edge sample from scratch when a plan exists — it consumes the Markdown plan. A rich work item (Description + many acceptance criteria / paths) may produce **100+** scenarios and cases (caps: 200 scenarios, 250 generated cases).
 
 Execution of prepared cases against an environment remains a **separate** Executions action (Phase 7). Regression stays on its own workflow and never plans or generates.
+
+## How Explore works end-to-end
+
+### Explore UI (Playwright MCP)
+
+1. On **Run**, pick an **environment** (required when Explore UI is on).
+2. Worker resolves that environment’s `applicationUrl`.
+3. `browser.session.open` creates the managed Playwright MCP session and returns a `sessionId`.
+4. `browser.navigate` / `browser.snapshot` / `browser.screenshot` / `browser.session.close` all pass that `sessionId` (catalog requirement).
+5. Findings (page labels + accessibility excerpts) go into consolidate → planner.
+
+If the browser connector is unbound, the URL is missing, or navigate fails validation, Explore UI **fails** (not a fake Done).
+
+### Explore code (bound source repo)
+
+1. Bind a **source-repo** connector (GitHub or Azure DevOps) with a repository name on the connector when possible.
+2. Worker invokes `scm.code.search` (and `scm.file.read` for hits). The connector manager fills `repo` from the bound connector `config.repo` when the request omits it.
+3. Search queries are derived from the application name and acceptance criteria.
+4. Findings (paths + excerpts) go into consolidate → planner.
+
+If the source-repo role is unbound or search fails validation (for example missing repo with no bound default), Explore code **fails** before planning.
 
 ## Roles
 
 | Stage | Platform key | What it does |
 |-------|--------------|--------------|
-| Explore UI | `playwright-browser` / managed `playwright-mcp` | Opens the environment URL, snapshots pages, records findings **before** planning |
-| Explore code | source-repo connector (read-only) | Lists/reads matching files; never writes or commits |
+| Explore UI | `playwright-browser` / managed `playwright-mcp` | Opens MCP session → navigates environment URL → snapshots pages **before** planning |
+| Explore code | source-repo connector (read-only) | Searches/reads the bound repo; never writes or commits |
 | Plan | `playwright-test-planner` | Writes a solid Markdown plan (`plans/{app}/{work-item}.plan.md`) with many Positive / Negative / Edge scenarios per criterion and Description path |
 | Generate | `playwright-test-generator` | Turns **every** planned scenario into a Playwright test (`.spec.js` stubs in the platform workspace) |
 | Heal | `playwright-test-healer` | Checks generated cases; rewrites broken stubs **only** in the platform-owned workspace |
@@ -68,11 +89,12 @@ Source repositories remain read-only. See [`adr/0012-source-repositories-are-rea
 ## How to run (operator)
 
 1. Bind work-item connector (Azure Boards / Jira) and Squash as needed.
-2. Bind Playwright browser (and/or source repo). Enable Explore UI and/or Explore code — at least one is required.
+2. Bind Playwright browser (and/or source repo with a repository name). Enable Explore UI and/or Explore code — at least one is required.
 3. Optional: set `OLLAMA_URL` (and model) on the worker for model-backed plan / generate / heal.
-4. On **Run**, enter the work item id (e.g. `7189`) and application name. Supply an environment when you want real UI exploration.
-5. Confirm stage Done lines:
-   - Explore names pages or records a skip note
+4. On **Run**, enter the work item id (e.g. `7189`) and application name. When **Explore UI** is on, select an environment so Playwright can open its URL before planning.
+5. Confirm stage Done / Failed lines:
+   - Explore UI Done names opened pages (not an offline stub); Failed means session/navigate/repo issues — fix before planning
+   - Explore code Done names searched/read files in the bound repo
    - Plan names `playwright-test-planner` and a `.plan.md` artifact with many scenarios
    - Generate names `playwright-test-generator` with case count matching the plan
    - Heal names `playwright-test-healer` (fixed N / none needed)
@@ -82,10 +104,12 @@ Source repositories remain read-only. See [`adr/0012-source-repositories-are-rea
 
 | Concern | Package |
 |---------|---------|
-| Ports, LLM prompts, MD plan, heuristics, healer | `packages/agents` |
+| Ports, LLM prompts, MD plan, heuristics, healer, explorers | `packages/agents` (`browser-explorer`, `code-explorer`) |
 | Step catalog + templates (order + caps) | `packages/workflow-definitions` |
-| Sync offline `runFlowStep` | `packages/workflow-engine` |
-| Composition root (gateway + browser invoker) | `apps/worker` (`requirement-agents.ts`, `main.ts`) |
+| Sync offline `runFlowStep` (unit-test stubs only for explore) | `packages/workflow-engine` |
+| Composition root (gateway + browser + source-repo invokers) | `apps/worker` (`requirement-agents.ts`, `main.ts`) |
+| MCP session + allowlist | `packages/infrastructure` (`playwright-mcp`) |
+| Bound `config.repo` injection for scm.* | `packages/connector-sdk` (`ConnectorExecutionManager`) |
 
 ## Related docs
 

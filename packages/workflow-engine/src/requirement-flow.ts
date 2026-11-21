@@ -214,16 +214,19 @@ export function runFlowStep(step: FlowStep): FlowResult {
       };
     }
     case 'rv.explore-ui':
+      // Offline / unit-test stub only. The worker must wire createBrowserExplorer
+      // so production never reaches this Done line without a real MCP session.
       return {
         summary: environment
-          ? `UI note for ${application} on ${environment}: exploration runs before the plan. This run does not drive the browser.`
-          : 'UI note: no environment was given, so the screen was not opened (exploration still precedes planning).',
-        outputs: { findings: environment ? `environment ${environment}` : 'no environment' },
+          ? `Offline UI stub for ${application} on ${environment}: worker did not drive Playwright (no browser explorer port).`
+          : 'Offline UI stub: no environment and no browser explorer port — not a real Explore UI.',
+        outputs: { findings: environment ? `environment ${environment}` : 'no environment', source: 'offline-stub' },
       };
     case 'rv.explore-code':
+      // Offline / unit-test stub only. The worker must wire createCodeExplorer.
       return {
-        summary: 'Source note: exploration runs before the plan. This run does not read the repository.',
-        outputs: { findings: 'repository not read' },
+        summary: 'Offline source stub: worker did not search the bound repository (no code explorer port).',
+        outputs: { findings: 'repository not read', source: 'offline-stub' },
       };
     case 'rv.consolidate-findings': {
       const ui = text(step.prior.explore_ui?.findings);
