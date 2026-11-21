@@ -55,7 +55,7 @@ describe('read-story enrichment', () => {
     expect(out.enrichment.story).toContain('Extra pasted criterion');
   });
 
-  it('flags a missing System.Title while keeping the description story', async () => {
+  it('treats a Succeeded read with an empty System.Title as a miss', async () => {
     const invoke = vi.fn().mockResolvedValue({
       id: '3421',
       title: '  ',
@@ -66,11 +66,10 @@ describe('read-story enrichment', () => {
       connectors: { invoke } as never,
       actor: { type: 'step', id: 'read_story', executionId: 'run-1', stepId: 'read_story' },
     });
-    expect(out.status).toBe('enriched');
-    if (out.status !== 'enriched') return;
-    expect(out.enrichment.title).toBeUndefined();
-    expect(out.enrichment.missingTitleReason).toMatch(/System\.Title/);
-    expect(out.enrichment.descriptionExcerpt).toMatch(/Ledger rows/);
+    expect(out.status).toBe('missed');
+    if (out.status !== 'missed') return;
+    expect(out.workItem).toBe('3421');
+    expect(out.reason).toMatch(/System\.Title/);
   });
 
   it('reports a miss when the connector is missing or denied', async () => {

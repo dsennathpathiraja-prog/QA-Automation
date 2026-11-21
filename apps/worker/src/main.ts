@@ -191,19 +191,17 @@ const loop = new WorkerLoop({
             params = {
               ...step.params,
               story: enrich.enrichment.story,
-              ...(enrich.enrichment.title ? { workItemTitle: enrich.enrichment.title } : {}),
+              workItemTitle: enrich.enrichment.title,
               ...(enrich.enrichment.descriptionExcerpt
                 ? { workItemDescriptionExcerpt: enrich.enrichment.descriptionExcerpt }
                 : {}),
-              ...(enrich.enrichment.missingTitleReason
-                ? { workItemFetchNote: enrich.enrichment.missingTitleReason }
-                : {}),
             };
           } else if (enrich.status === 'missed') {
-            params = {
-              ...step.params,
-              workItemFetchNote: enrich.reason,
-            };
+            // Work item id was supplied but title was not loaded — fail clearly (do not soft-skip).
+            throw new PlatformError(
+              'validation',
+              enrich.reason || `Could not load work item ${enrich.workItem} from the bound Azure Boards connector.`,
+            );
           }
         }
         const actor = { type: 'step' as const, id: step.id, executionId: step.runId, stepId: step.id };
