@@ -15,12 +15,12 @@ function connect(over: { baseUrl?: string; token?: string; config?: Record<strin
 }
 const call = (c: ConnectorClient, id: string, input: Record<string, unknown> = {}, scope = {}) => c.handle(caps.get(id), input, { instanceId: 'sq', config: {}, scope });
 
-/** Worker-aligned egress: POST create/steps, DELETE test-steps, PATCH update on /test-cases/{id}. */
+/** Worker-aligned egress: test-case store plus iteration execution create and status PATCH. */
 function squashTestCaseWrites(req: { method: string; url: string }): boolean {
   const path = new URL(req.url).pathname;
-  if (req.method === 'POST' && /\/api\/rest\/[^/]+\/(test-cases(\/\d+\/steps)?)$/.test(path)) return true;
+  if (req.method === 'POST' && /\/api\/rest\/[^/]+\/(test-cases(\/\d+\/steps)?|iterations\/\d+\/executions)$/.test(path)) return true;
   if (req.method === 'DELETE' && /\/api\/rest\/[^/]+\/test-steps\/\d+$/.test(path)) return true;
-  return req.method === 'PATCH' && /\/api\/rest\/[^/]+\/test-cases\/\d+$/.test(path);
+  return req.method === 'PATCH' && /\/api\/rest\/[^/]+\/(test-cases|executions)\/\d+$/.test(path);
 }
 
 beforeEach(async () => {
@@ -134,16 +134,40 @@ describe('Squash provider against the documentation-based mock', () => {
     expect(by['tm.requirement.read']!.support).toBe('supported');
     expect(by['tm.testcase.search']).toMatchObject({ support: 'partial' });
     expect(by['tm.testcase.upsert']).toMatchObject({ support: 'partial', reason: expect.stringMatching(/READ_WRITE/) });
+    expect(by['tm.execution.upsert']).toMatchObject({ support: 'partial', reason: expect.stringMatching(/READ_WRITE/) });
+    expect(by['tm.execution.status.update']).toMatchObject({ support: 'partial', reason: expect.stringMatching(/READ_WRITE/) });
     for (const id of ['tm.tag.list', 'tm.customfield.list', 'tm.suite.list']) expect(by[id]!.support).toBe('unsupported');
     expect(mock.nonGetRequests()).toEqual([]);
   });
 
-  it('marks upsert supported when the token is READ_WRITE', async () => {
+  it('marks test-case and execution writes supported when the token is READ_WRITE', async () => {
     const rw = makeSquashToken({ permissions: 'READ_WRITE' });
     await mock.close();
     mock = await startSquashMock({ token: rw, permissions: 'READ_WRITE' });
     const probe = await connect({ token: rw }).probeCapabilities();
     expect(probe.find((p) => p.capability === 'tm.testcase.upsert')).toMatchObject({ support: 'supported' });
+    expect(probe.find((p) => p.capability === 'tm.execution.upsert')).toMatchObject({
+      support: 'supported',
+      reason: expect.stringMatching(/POST \/iterations\/\{id\}\/executions/),
+    });
+    expect(probe.find((p) => p.capability === 'tm.execution.status.update')).toMatchObject({
+      support: 'supported',
+      reason: expect.stringMatching(/PATCH \/executions\/\{id\}/),
+    });
+  });
+
+  it('still advertises execution upsert when the global iteration list is refused', async () => {
+    const rw = makeSquashToken({ permissions: 'READ_WRITE' });
+    await mock.close();
+    mock = await startSquashMock({
+      token: rw,
+      permissions: 'READ_WRITE',
+      override: (r) => (r.path.split('?')[0] === '/squash/api/rest/latest/iterations' ? { status: 403 } : undefined),
+    });
+    const probe = await connect({ token: rw }).probeCapabilities();
+    expect(probe.find((p) => p.capability === 'tm.iteration.list')).toMatchObject({ support: 'unsupported' });
+    expect(probe.find((p) => p.capability === 'tm.execution.upsert')).toMatchObject({ support: 'supported' });
+    expect(probe.find((p) => p.capability === 'tm.execution.status.update')).toMatchObject({ support: 'supported' });
   });
 
   it('reads test cases through a project when the global list is refused', async () => {
@@ -370,6 +394,54 @@ describe('Squash provider against the documentation-based mock', () => {
     expect(mock.requests.filter((item) => item.method === 'GET').every((item) => item.authorization === `Bearer ${rw}`)).toBe(true);
   });
 
+  it('creates an iteration execution and PATCHes its status with a READ_WRITE token', async () => {
+    const rw = makeSquashToken({ permissions: 'READ_WRITE' });
+    await mock.close();
+    mock = await startSquashMock({ token: rw, permissions: 'READ_WRITE' });
+    const rules: EgressRule[] = [{ hostPattern: '127.0.0.1', purpose: 'application', internal: true, allowHttp: true, allowLoopback: true }];
+    const http = new HardenedHttpClient({
+      egress: new EgressPolicy({ rules, profile: 'standard', platformEnv: 'development' }),
+      allowedMethods: ['GET'],
+      allowOther: squashTestCaseWrites,
+    });
+    const client = squashProvider.create({ baseUrl: mock.baseUrl }, { value: { token: rw }, expiresAt: new Date(Date.now() + 60_000), release() {} }, { http });
+    const created = (await call(client, 'tm.execution.upsert', { testCaseId: '238' })) as { id: string; created: boolean };
+    expect(created).toMatchObject({ created: true, id: expect.stringMatching(/^\d+$/) });
+    const posts = mock.nonGetRequests().filter((item) => item.method === 'POST' && /\/iterations\/\d+\/executions$/.test(item.path));
+    expect(posts).toHaveLength(1);
+    expect(posts[0]!.body).toEqual({
+      _type: 'execution',
+      test_case: { _type: 'test-case', id: 238 },
+      execution_status: 'READY',
+    });
+    expect(posts[0]!.authorization).toBe(`Bearer ${rw}`);
+    await expect(call(client, 'tm.execution.status.update', { executionId: created.id, status: 'SUCCESS', actualResult: 'Passed' })).resolves.toEqual({ ok: true });
+    const patches = mock.nonGetRequests().filter((item) => item.method === 'PATCH' && /\/executions\/\d+$/.test(item.path));
+    expect(patches).toHaveLength(1);
+    expect(patches[0]!.body).toMatchObject({ _type: 'execution', execution_status: 'SUCCESS' });
+    expect(patches[0]!.authorization).toBe(`Bearer ${rw}`);
+  });
+
+  it('finds an iteration via a campaign when the global iteration list is refused', async () => {
+    const rw = makeSquashToken({ permissions: 'READ_WRITE' });
+    await mock.close();
+    mock = await startSquashMock({
+      token: rw,
+      permissions: 'READ_WRITE',
+      override: (r) => (r.path.split('?')[0] === '/squash/api/rest/latest/iterations' ? { status: 403 } : undefined),
+    });
+    const rules: EgressRule[] = [{ hostPattern: '127.0.0.1', purpose: 'application', internal: true, allowHttp: true, allowLoopback: true }];
+    const http = new HardenedHttpClient({
+      egress: new EgressPolicy({ rules, profile: 'standard', platformEnv: 'development' }),
+      allowedMethods: ['GET'],
+      allowOther: squashTestCaseWrites,
+    });
+    const client = squashProvider.create({ baseUrl: mock.baseUrl }, { value: { token: rw }, expiresAt: new Date(Date.now() + 60_000), release() {} }, { http });
+    const created = (await call(client, 'tm.execution.upsert', { testCaseId: '238' })) as { id: string; created: boolean };
+    expect(created).toMatchObject({ created: true, id: expect.stringMatching(/^\d+$/) });
+    expect(mock.requests.some((item) => item.method === 'GET' && /\/campaigns\/\d+\/iterations/.test(item.path))).toBe(true);
+  });
+
   it('explains that a READ token can Test Connection but not store cases (Squash answers 401 on write)', async () => {
     const read = makeSquashToken({ permissions: 'READ' });
     await mock.close();
@@ -453,6 +525,7 @@ describe('Squash through the Connector Execution Manager (read-only instance)', 
     const before = mock.requests.length;
     for (const [capability, input] of [
       ['tm.testcase.upsert', { reference: 'X-1', name: 'x' }],
+      ['tm.execution.upsert', { testCaseId: '238' }],
       ['tm.execution.status.update', { executionId: '1', status: 'SUCCESS' }],
     ] as const) {
       await expect(h.manager.invoke({ role: 'testManagement', capability, input, idempotencyKey: 'k', actor })).rejects.toMatchObject({ errorClass: 'denied' });
