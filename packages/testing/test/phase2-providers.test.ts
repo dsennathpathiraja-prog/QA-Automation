@@ -193,13 +193,11 @@ describe('source and work-item providers', () => {
     expect(await client.handle({ id: 'workitem.search' } as never, { query: 'Checkout' }, {} as never)).toMatchObject({ items: [{ id: '12', title: 'Checkout' }] });
     expect(m.hits.some((h) => h.method === 'POST' && h.path.includes('wiql'))).toBe(true);
     const readHit = m.hits.find((h) => h.method === 'GET' && pathOf(h) === '/_apis/wit/workitems/12');
-    // Org-only path + expand=All + Basic `:PAT` (Dasun’s trafforge curl; %24expand also OK).
+    // Org-only path + expand=All + Bearer PAT (Dasun; %24expand also OK; never Cookie/Basic).
     expect(readHit?.path).toMatch(/(\$|%24)expand=All/);
     expect(readHit?.path).toMatch(/api-version=7\.1/);
     expect(readHit?.path).not.toMatch(/\/Web\//);
-    expect(readHit?.auth?.startsWith('Basic ')).toBe(true);
-    // Decode of Basic `:token` — never Cookie.
-    expect(Buffer.from(readHit!.auth!.slice('Basic '.length), 'base64').toString()).toBe(`:${TOKEN}`);
+    expect(readHit?.auth).toBe(`Bearer ${TOKEN}`);
   });
 
   it('builds org-scoped workitem.read URL for organization trafforge (no project segment)', async () => {
@@ -234,7 +232,7 @@ describe('source and work-item providers', () => {
     const readHit = m.hits.find((h) => h.method === 'GET' && pathOf(h) === '/_apis/wit/workitems/2357');
     expect(readHit?.path).toMatch(/(\$|%24)expand=All/);
     expect(readHit?.path).not.toMatch(/\/PayNSure\//);
-    expect(readHit?.auth?.startsWith('Basic ')).toBe(true);
+    expect(readHit?.auth).toBe(`Bearer ${TOKEN}`);
   });
 
   it('reads System.Title from nested fields.fields, value wrappers, and field arrays', async () => {

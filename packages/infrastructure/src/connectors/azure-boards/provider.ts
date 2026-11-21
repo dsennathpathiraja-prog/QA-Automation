@@ -186,7 +186,8 @@ class AzureBoardsClient implements ConnectorClient {
     token: string,
     private readonly deps: AdapterDeps,
   ) {
-    this.auth = `Basic ${Buffer.from(`:${token}`).toString('base64')}`;
+    // Same as GitHub / Squash: Authorization: Bearer <PAT> (not Basic :PAT, not Cookie).
+    this.auth = `Bearer ${token}`;
   }
 
   private async call(method: 'GET' | 'POST', path: string, query?: Record<string, string | undefined>, body?: unknown) {
@@ -255,7 +256,7 @@ class AzureBoardsClient implements ConnectorClient {
       const fieldList = READ_FIELDS.includes(acField) ? READ_FIELDS : `${READ_FIELDS},${acField}`;
       // Org-scoped path (no project segment). Matches Dasun’s trafforge curl:
       // GET https://dev.azure.com/{org}/_apis/wit/workitems/{id}?%24expand=All&api-version=7.1
-      // Auth stays Basic `:PAT` (browser Cookie from curl paste is not used).
+      // Auth: Bearer <PAT> (Test connection / probe / read / attachments). Not Basic, not Cookie.
       // `$expand` / `%24expand` are both accepted by ADO; joinUrl emits a literal `$`.
       let r = await this.call('GET', `/_apis/wit/workitems/${encodeURIComponent(id)}`, { $expand: 'All' });
       if (!r.body || typeof r.body !== 'object') {
