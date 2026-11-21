@@ -274,6 +274,14 @@ export function explorerPortFromBrowserMcp(mcp: PlaywrightBrowserMcp): BrowserEx
             screenshotBase64: shot.data || undefined,
           });
         }
+      } catch (e) {
+        const reason = e instanceof Error ? e.message : 'unknown error';
+        return {
+          summary: `UI note for ${input.application}: could not explore ${input.url} (${reason}).`,
+          findings: `url ${input.url}; browser unavailable`,
+          details: [],
+          source: 'skipped',
+        };
       } finally {
         await mcp.close().catch(() => undefined);
       }

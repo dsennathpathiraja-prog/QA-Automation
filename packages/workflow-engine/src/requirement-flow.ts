@@ -226,12 +226,25 @@ export function runFlowStep(step: FlowStep): FlowResult {
       const onlyId = found.length === 0 || (found.length === 1 && found[0] === workItem);
       const acceptanceCriteria = onlyId ? [] : found;
       const title = text(step.params.workItemTitle) || workItemTitleFromStory(story);
-      const titled = title ? `Read work item ${workItem} — ${title}.` : `Read work item ${workItem || '(none)'}.`;
+      const fetchNote = text(step.params.workItemFetchNote);
+      const titled = title
+        ? `Read work item ${workItem} — ${title}.`
+        : `Read work item ${workItem || '(none)'}.`;
+      const acPart = acceptanceCriteria.length > 0
+        ? `${acceptanceCriteria.length} acceptance criteria.`
+        : 'The story text has no separate acceptance criteria, so the plan uses the work item itself.';
+      const missPart = !title && fetchNote ? ` ${fetchNote}` : '';
       return {
-        summary: acceptanceCriteria.length > 0
-          ? `${titled} ${acceptanceCriteria.length} acceptance criteria.`
-          : `${titled} The story text has no separate acceptance criteria, so the plan uses the work item itself.`,
-        outputs: { story, workItem, title: title || undefined, acceptanceCriteria, applicationName: application, environment },
+        summary: `${titled}${missPart} ${acPart}`,
+        outputs: {
+          story,
+          workItem,
+          title: title || undefined,
+          acceptanceCriteria,
+          applicationName: application,
+          environment,
+          ...(fetchNote ? { fetchNote } : {}),
+        },
       };
     }
     case 'rv.explore-ui':

@@ -15,6 +15,12 @@ export interface StoryEnrichment {
   fetched: boolean;
 }
 
+/** Outcome of loading a work item for the Read stage Done line. */
+export type EnrichStoryResult =
+  | { status: 'enriched'; enrichment: StoryEnrichment }
+  | { status: 'missed'; workItem: string; reason: string }
+  | { status: 'none' };
+
 /** First line of the Run story field when it looks like an Azure Boards id or a Jira key. */
 export function workItemRefFromStory(raw: string): string | undefined {
   const first = raw.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
@@ -38,15 +44,21 @@ export function storyFromWorkItem(item: WorkItemDetails, pastedBelowId = ''): st
 /**
  * When the Run tab only has a work item id, load title / description / acceptance criteria
  * from the bound work-item connector. Pasted lines under the id are kept as extra input.
- * Returns undefined when there is no id, no connector, or the read is denied — the pasted story stays as-is.
  */
 export async function enrichStoryFromConnector(input: {
   story: string;
   connectors?: ConnectorExecutionManager;
   actor: { type: 'step'; id: string; executionId: string; stepId: string };
-}): Promise<StoryEnrichment | undefined> {
+}): Promise<EnrichStoryResult> {
   const id = workItemRefFromStory(input.story);
-  if (!id || !input.connectors) return undefined;
+  if (!id) return { status: 'none' };
+  if (!input.connectors) {
+    return {
+      status: 'missed',
+      workItem: id,
+      reason: 'No connector manager is available on the worker, so the work item title was not loaded.',
+    };
+  }
   const pasted = input.story.includes('\n') ? input.story.slice(input.story.indexOf('\n') + 1) : '';
   try {
     const item = await input.connectors.invoke<WorkItemDetails>({
@@ -55,23 +67,39 @@ export async function enrichStoryFromConnector(input: {
       input: { id },
       actor: input.actor,
     });
-    if (!item?.id) return undefined;
+    if (!item?.id) {
+      return {
+        status: 'missed',
+        workItem: id,
+        reason: 'The work-item connector returned no item for this id, so the title was not loaded.',
+      };
+    }
+    const title = typeof item.title === 'string' ? item.title.trim() : '';
     return {
-      story: storyFromWorkItem(
-        {
-          id: String(item.id),
-          title: typeof item.title === 'string' ? item.title : '',
-          description: typeof item.description === 'string' ? item.description : undefined,
-          acceptanceCriteria: typeof item.acceptanceCriteria === 'string' ? item.acceptanceCriteria : undefined,
-        },
-        pasted,
-      ),
-      workItem: String(item.id),
-      title: typeof item.title === 'string' ? item.title : undefined,
-      fetched: true,
+      status: 'enriched',
+      enrichment: {
+        story: storyFromWorkItem(
+          {
+            id: String(item.id),
+            title,
+            description: typeof item.description === 'string' ? item.description : undefined,
+            acceptanceCriteria: typeof item.acceptanceCriteria === 'string' ? item.acceptanceCriteria : undefined,
+          },
+          pasted,
+        ),
+        workItem: String(item.id),
+        title: title || undefined,
+        fetched: true,
+      },
     };
   } catch (e) {
-    if (isPlatformError(e) && (e.errorClass === 'denied' || e.errorClass === 'not-found' || e.errorClass === 'auth')) return undefined;
+    if (isPlatformError(e) && (e.errorClass === 'denied' || e.errorClass === 'not-found' || e.errorClass === 'auth')) {
+      return {
+        status: 'missed',
+        workItem: id,
+        reason: e.message || 'The work-item connector could not be read, so the title was not loaded.',
+      };
+    }
     throw e;
   }
 }
