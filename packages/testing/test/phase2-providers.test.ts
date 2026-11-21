@@ -339,12 +339,26 @@ describe('source and work-item providers', () => {
     const client = playwrightMcpProvider.create({ baseUrl: 'http://playwright-mcp:8931', allowedOrigins: 'https://shop.example.com' }, undefined, { http });
     const result = await client.testConnection();
     expect(result.ok).toBe(false);
-    expect(result.message).toMatch(/profile "browser"/);
+    expect(result.message).toMatch(/DNS could not resolve Playwright/);
     expect(result.message).toMatch(/http:\/\/playwright-mcp:8931/);
-    expect(result.message).toMatch(/PLAYWRIGHT_MCP_URL|same project network/);
+    expect(result.message).toMatch(/PLAYWRIGHT_MCP_URL|Compose profile "browser"/);
     await expect(client.handle({ id: 'browser.session.open' } as never, {}, {} as never)).rejects.toMatchObject({
-      message: expect.stringMatching(/could not reach Playwright at http:\/\/playwright-mcp:8931/i),
+      message: expect.stringMatching(/DNS could not resolve Playwright host for http:\/\/playwright-mcp:8931/i),
     });
+  });
+
+  it('explains connection refused as MCP not listening (crash loop / bad flags)', async () => {
+    const { PlatformError } = await import('@qa/domain');
+    const http = {
+      request: async () => {
+        throw new PlatformError('transient', 'connection refused: connect ECONNREFUSED 172.18.0.8:8931');
+      },
+    };
+    const client = playwrightMcpProvider.create({ baseUrl: 'http://playwright-mcp:8931', allowedOrigins: 'https://shop.example.com' }, undefined, { http });
+    const result = await client.testConnection();
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/refused the TCP connection/);
+    expect(result.message).toMatch(/--allowed-hosts|unknown option|logs playwright-mcp/);
   });
 
   it('reads a Playwright event-stream reply', async () => {

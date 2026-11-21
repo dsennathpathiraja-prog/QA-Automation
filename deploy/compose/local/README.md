@@ -56,6 +56,8 @@ docker compose -f deploy/compose/local/docker-compose.local.yml --profile browse
 
 If Explore UI / Test connection says `could not resolve playwright-mcp`, the browser container is not on network `qa-platform-local` with the worker — re-run the profile `up` above (do not start MCP with a different Compose project name).
 
+If `docker compose … ps` shows `playwright-mcp` **Restarting** and logs say `unknown option '--allowed-hosts'`, rebuild after pulling a Dockerfile that only uses flags supported by `@playwright/mcp@0.0.35` (`--browser chromium --headless --port 8931 --host 0.0.0.0`).
+
 ## Runner
 
 The reachability button checks the address from the worker unless you also start the runner:

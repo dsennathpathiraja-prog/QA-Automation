@@ -93,7 +93,10 @@ class PlaywrightClient implements ConnectorClient {
       res = await requestJson(this.deps.http, { method: 'POST', url: joinUrl(this.cfg.baseUrl, '/mcp'), headers: this.headers(), body: JSON.stringify(payload) }, 'Playwright');
     } catch (e) {
       // Explore UI and other live calls must get the same reachability guidance as Test connection.
-      if (e instanceof PlatformError && /could not resolve|network error|Could not reach|timed out|aborted/i.test(e.message)) {
+      if (
+        e instanceof PlatformError &&
+        /could not resolve|connection refused|ECONNREFUSED|network error|Could not reach|timed out|aborted|protocol .* not allowed|ERR_SSL/i.test(e.message)
+      ) {
         throw new PlatformError(e.errorClass, this.connectionFailureMessage(e), e.details, e);
       }
       throw e;
@@ -145,16 +148,45 @@ class PlaywrightClient implements ConnectorClient {
   /** Turn reachability / policy failures into an actionable message for Test Connection / Explore UI. */
   private connectionFailureMessage(e: unknown): string {
     const msg = e instanceof PlatformError ? e.message : 'Could not reach Playwright';
-    if (/could not resolve|network error|Could not reach|timed out|aborted/i.test(msg)) {
+    // Already rewritten (Explore UI path wraps before Test connection).
+    if (/^Could not reach Playwright at |^DNS could not resolve Playwright|^Playwright refused the TCP connection|^Timed out reaching Playwright|^Wrong URL scheme for Playwright/i.test(msg)) {
+      return msg;
+    }
+    const workerUrlHint =
+      'From the worker use http://playwright-mcp:8931 (Compose DNS / PLAYWRIGHT_MCP_URL — not localhost, not qa-playwright-mcp). ' +
+      'Rebuild Compose profile "browser" if docker logs show "unknown option", then approve host playwright-mcp for plain http if asked.';
+    if (/could not resolve/i.test(msg)) {
       return (
-        `Could not reach Playwright at ${this.cfg.baseUrl}. ` +
-        'From the worker container use http://playwright-mcp:8931 (Compose DNS / PLAYWRIGHT_MCP_URL — not localhost, not the image name qa-playwright-mcp). ' +
-        'Start Compose profile "browser" on the same project network as the worker, approve host playwright-mcp for plain http if asked, then retry.'
+        `DNS could not resolve Playwright host for ${this.cfg.baseUrl}. ` +
+        'The playwright-mcp container is missing from the worker’s Compose network (wrong project, profile not started, or crash loop). ' +
+        workerUrlHint
       );
+    }
+    if (/connection refused|ECONNREFUSED/i.test(msg)) {
+      return (
+        `Playwright refused the TCP connection at ${this.cfg.baseUrl} (nothing listening on :8931). ` +
+        'Check `docker compose … logs playwright-mcp` — pinned @playwright/mcp@0.0.35 must not receive unsupported flags such as --allowed-hosts. ' +
+        workerUrlHint
+      );
+    }
+    if (/timed out|aborted/i.test(msg)) {
+      return (
+        `Timed out reaching Playwright at ${this.cfg.baseUrl}. ` +
+        'Confirm the browser service is healthy (`docker compose … ps`) on the same network as the worker. ' +
+        workerUrlHint
+      );
+    }
+    if (/wrong protocol|ERR_SSL|SSL|https?.*mismatch|protocol .* not allowed/i.test(msg)) {
+      return (
+        `Wrong URL scheme for Playwright at ${this.cfg.baseUrl}. Use plain http://playwright-mcp:8931 from the worker (not https).`
+      );
+    }
+    if (/network error|Could not reach/i.test(msg)) {
+      return `Could not reach Playwright at ${this.cfg.baseUrl}. ${workerUrlHint}`;
     }
     if (e instanceof PlatformError && e.errorClass === 'denied') {
       if (/approved-host|plain http|loopback|HTTP method/i.test(msg)) return msg;
-      return 'The Playwright server refused the call because the Host header was not allowed. Restart the browser service so it allows the name playwright-mcp (Compose already passes --allowed-hosts *).';
+      return 'The Playwright server refused this call (HTTP 403). Confirm the connector uses http://playwright-mcp:8931 and host playwright-mcp is approved for plain http.';
     }
     return msg;
   }

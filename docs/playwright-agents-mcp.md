@@ -55,7 +55,7 @@ The managed image launches with `--browser chromium` (the Playwright base image 
    - **Application addresses:** comma-separated origins the browser may open.
    - Optional saved session name for MFA.
 3. Approve host `playwright-mcp` for plain http when Test Connection / Approved hosts asks (Administrator).
-4. Run **Test connection** — it should say the managed Playwright server is connected. If it says `could not resolve playwright-mcp`, the browser service is not running on the worker’s Compose network (see `deploy/compose/local/README.md`).
+4. Run **Test connection** — it should say the managed Playwright server is connected. If it says `could not resolve playwright-mcp`, the browser service is not on the worker’s Compose network. If it says connection refused / nothing listening on `:8931`, check `docker compose … logs playwright-mcp` (a crash loop from unsupported CLI flags such as `--allowed-hosts` on `@playwright/mcp@0.0.35` is a common cause — rebuild the image after fixing the Dockerfile). See `deploy/compose/local/README.md`.
 5. Bind that connector as **Browser automation** on the requirement-validation workflow. Enable the Explore UI step (UI / both templates).
 6. On Run, supply an **environment** whose application URL matches an allowed origin (environments are optional for plan/generate; required for a real explore).
 
