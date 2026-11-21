@@ -68,7 +68,14 @@ export class HardenedHttpClient implements HttpPort {
 
   private async resolveAndCheck(url: URL, rule: EgressRule): Promise<string[]> {
     const host = url.hostname.replace(/^\[|\]$/g, '');
-    const ips = (await (this.o.resolve ?? defaultResolve)(host));
+    let ips: string[];
+    try {
+      ips = await (this.o.resolve ?? defaultResolve)(host);
+    } catch (e) {
+      // DNS failures must stay PlatformErrors so connectors can show a clear message
+      // (raw ENOTFOUND otherwise becomes a generic "Could not reach …").
+      throw new PlatformError('transient', `could not resolve ${host}`, undefined, e);
+    }
     if (ips.length === 0) throw new PlatformError('transient', `could not resolve ${host}`);
     this.o.egress.assertIps(ips, rule);
     return ips;

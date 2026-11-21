@@ -63,14 +63,23 @@ services:
     depends_on:
       api: { condition: service_healthy }
 
-  # Managed browser. Start it with: docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build
-  # Then add a connector at http://playwright-mcp:8931. The server allows that name; without it, Test connection is refused. For MFA, sign in once and pass --storage-state to this service.
+  # Managed Playwright MCP browser (required for Connectors → Playwright → Test connection).
+  # Start: docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d
+  # Connector URL from the worker: http://playwright-mcp:8931  (not localhost — the worker is another container).
+  # Approve host playwright-mcp for plain http when the UI asks. MCP path is /mcp (added by the connector).
+  # For MFA, sign in once and pass --storage-state to this service.
   playwright-mcp:
     profiles: [browser]
     image: mcr.microsoft.com/playwright:v1.55.0-noble
-    command: ["bash", "-lc", "npx --yes @playwright/mcp --port 8931 --host 0.0.0.0 --allowed-hosts '*'"]
+    command: ["bash", "-lc", "npx --yes @playwright/mcp@latest --headless --port 8931 --host 0.0.0.0 --allowed-hosts '*'"]
     init: true
     expose: ["8931"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(8931,'127.0.0.1',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
 
   # Builds the runner image and exits. The launcher starts a fresh container from qa-runner:local for each check.
   # Start with: docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser --profile runners up --build -d

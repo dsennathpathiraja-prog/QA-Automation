@@ -116,15 +116,22 @@ services:
       timeout: 5s
       retries: 5
 
+  # Managed Playwright MCP. Start with --profile browser. Connector URL: http://playwright-mcp:8931
   playwright-mcp:
     <<: *common
     profiles: [browser]
     image: mcr.microsoft.com/playwright:v1.55.0-noble
-    command: ["bash", "-lc", "npx --yes @playwright/mcp --port 8931 --host 0.0.0.0 --allowed-hosts '*'"]
+    command: ["bash", "-lc", "npx --yes @playwright/mcp@latest --headless --port 8931 --host 0.0.0.0 --allowed-hosts '*'"]
     networks: [app]
     read_only: true
     tmpfs: [/tmp]
     expose: ["8931"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(8931,'127.0.0.1',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
 
   runner-launcher:
     <<: *common

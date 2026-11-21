@@ -35,6 +35,25 @@ The trial realm accepts any `http://localhost:<port>` as a sign-in return addres
 3. `docker compose -f deploy/compose/local/docker-compose.local.yml ps` shows `api` as healthy and `worker` running.
 4. To see local models on the AI Models page, run Ollama on your machine and uncomment `OLLAMA_URL` in `docker-compose.local.yml`.
 
+## Playwright browser connector (Test connection)
+
+The managed Playwright MCP server is **not** part of the default stack. Without it, Connectors → Playwright → **Test connection** fails with “Could not reach Playwright”.
+
+1. Start the browser profile (worker must already be up):
+
+```
+docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d
+```
+
+2. Confirm the service is running: `docker compose -f deploy/compose/local/docker-compose.local.yml ps` should list `playwright-mcp`.
+3. In the UI, add **Playwright (managed)** with:
+   - **Server address:** `http://playwright-mcp:8931` (Docker DNS name the **worker** uses — not `localhost`, and do not append `/mcp`; the connector adds that path).
+   - **Application addresses:** comma-separated origins the browser may open (for example `https://shop.example.com`).
+4. If the page says `playwright-mcp` is not approved, click **Approve playwright-mcp (internal, plain http)** (Administrator).
+5. Run **Test connection**. A pass shows “Connected to the managed Playwright server.”
+
+Optional: publish port `8931:8931` on that service only if you need to hit MCP from the host machine; the worker does not need a published port.
+
 ## Runner
 
 The reachability button checks the address from the worker unless you also start the runner:

@@ -246,6 +246,20 @@ describe('source and work-item providers', () => {
     expect((await client.testConnection()).message).toMatch(/playwright-mcp/);
   });
 
+  it('explains an unreachable Playwright server with the Compose browser profile address', async () => {
+    const { PlatformError } = await import('@qa/domain');
+    const http = {
+      request: async () => {
+        throw new PlatformError('transient', 'could not resolve playwright-mcp');
+      },
+    };
+    const client = playwrightMcpProvider.create({ baseUrl: 'http://playwright-mcp:8931', allowedOrigins: 'https://shop.example.com' }, undefined, { http });
+    const result = await client.testConnection();
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/profile "browser"/);
+    expect(result.message).toMatch(/http:\/\/playwright-mcp:8931/);
+  });
+
   it('reads a Playwright event-stream reply', async () => {
     const m = await mock((hit) => {
       const body = JSON.parse(hit.body || '{}') as { method?: string };
