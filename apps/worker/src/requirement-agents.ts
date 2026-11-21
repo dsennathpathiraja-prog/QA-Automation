@@ -1,5 +1,9 @@
 import {
+  exploreCodeArtifactPath,
+  exploreUiArtifactPath,
   parsePlanMarkdown,
+  renderExploreCodeMarkdown,
+  renderExploreUiMarkdown,
   type BrowserExplorerPort,
   type CodeExploreResult,
   type CodeExplorerPort,
@@ -125,16 +129,25 @@ export async function performRequirementStep(
     if (explored.source === 'skipped') {
       throw new PlatformError('validation', explored.summary || 'Explore UI did not open the application.');
     }
+    const details = explored.details.map(({ scenarioName, url: pageUrl, snapshotExcerpt }) => ({
+      scenarioName,
+      url: pageUrl,
+      snapshotExcerpt,
+    }));
+    const artifactMarkdown = renderExploreUiMarkdown({
+      workItem,
+      application,
+      findings: explored.findings,
+      details: explored.details,
+    });
     return {
       summary: explored.summary,
       outputs: {
         findings: explored.findings,
-        details: explored.details.map(({ scenarioName, url: pageUrl, snapshotExcerpt }) => ({
-          scenarioName,
-          url: pageUrl,
-          snapshotExcerpt,
-        })),
+        details,
         source: explored.source,
+        artifactMarkdown,
+        artifactPath: exploreUiArtifactPath(workItem, application),
       },
     };
   }
@@ -152,13 +165,23 @@ export async function performRequirementStep(
       executionId: step.runId,
       stepId: step.id,
     });
+    const details = explored.details.map(({ path, excerpt, query }) => ({ path, excerpt, query }));
+    const artifactMarkdown = renderExploreCodeMarkdown({
+      workItem,
+      application,
+      findings: explored.findings,
+      details: explored.details,
+      repo: explored.repo,
+    });
     return {
       summary: explored.summary,
       outputs: {
         findings: explored.findings,
-        details: explored.details.map(({ path, excerpt, query }) => ({ path, excerpt, query })),
+        details,
         source: explored.source,
         repo: explored.repo,
+        artifactMarkdown,
+        artifactPath: exploreCodeArtifactPath(workItem, application),
       },
     };
   }

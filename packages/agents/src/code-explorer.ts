@@ -32,15 +32,30 @@ export function isHumanFilePath(path: string): boolean {
   return true;
 }
 
+/**
+ * Prefer application source over accidental HTML / SDK / docs hits (common when a
+ * GitHub docs repo or Azure HTML/SDK tree is bound instead of the real Azure Repos app).
+ */
+export function isExplorableSourcePath(path: string): boolean {
+  if (!isHumanFilePath(path)) return false;
+  const p = displayFilePath(path);
+  if (/\.(html?|htm)$/i.test(p)) return false;
+  if (/(^|\/)(node_modules|dist|build|out|coverage|\.git)\//i.test(p)) return false;
+  if (/(^|\/)(sdk|html-sdk|api-docs|typedoc|jsdoc)(\/|$)/i.test(p)) return false;
+  if (/(^|\/)(docs\/api|documentation\/api|wwwroot\/lib)\//i.test(p)) return false;
+  return true;
+}
+
 /** Strip a leading slash so Azure DevOps `/src/a.ts` reads as `src/a.ts`. */
 export function displayFilePath(path: string): string {
   return path.trim().replace(/^\/+/, '') || path.trim();
 }
 
 /**
- * Read-only source explorer. Searches the bound GitHub / Azure DevOps repo and
- * reads matching files BEFORE the planner so findings feed the Markdown plan.
- * Failures throw — Explore code must succeed with a real connector call.
+ * Read-only source explorer. Prefer a bound Azure DevOps Repos connector (real app
+ * source) over GitHub/HTML SDK trees. Searches and reads matching files BEFORE the
+ * planner so findings feed the Markdown plan. Failures throw — Explore code must
+ * succeed with a real connector call.
  * `repo` may be omitted when the connector binds one (manager injects config.repo).
  */
 export function createCodeExplorer(source: SourceRepoPort | undefined): CodeExplorerPort {
@@ -49,7 +64,7 @@ export function createCodeExplorer(source: SourceRepoPort | undefined): CodeExpl
       if (!source) {
         throw new PlatformError(
           'denied',
-          'Explore code needs a bound source-repo connector (GitHub or Azure DevOps) before planning.',
+          'Explore code needs a bound Azure DevOps Repos (or GitHub) source-repo connector before planning.',
         );
       }
 
@@ -63,7 +78,7 @@ export function createCodeExplorer(source: SourceRepoPort | undefined): CodeExpl
         if (byPath.size >= maxFiles) break;
         const found = await source.search({ query, ...repoOpts });
         for (const hit of found.items) {
-          if (!hit.path || !isHumanFilePath(hit.path)) continue;
+          if (!hit.path || !isExplorableSourcePath(hit.path)) continue;
           const path = displayFilePath(hit.path);
           if (!path || byPath.has(path)) continue;
           byPath.set(path, {
@@ -75,10 +90,12 @@ export function createCodeExplorer(source: SourceRepoPort | undefined): CodeExpl
         }
       }
 
-      // When search returns nothing (or only non-path hits such as SHAs), list the tree.
+      // When search returns nothing (or only HTML/SDK/SHA noise), list the tree.
       if (byPath.size === 0) {
         const tree = await source.listTree(repoOpts);
-        const files = tree.entries.filter((e) => e.type === 'file' && isHumanFilePath(e.path)).slice(0, maxFiles);
+        const files = tree.entries
+          .filter((e) => e.type === 'file' && isExplorableSourcePath(e.path))
+          .slice(0, maxFiles);
         for (const entry of files) {
           const path = displayFilePath(entry.path);
           const file = await source.readFile({ path: entry.path, ...repoOpts });
@@ -99,7 +116,7 @@ export function createCodeExplorer(source: SourceRepoPort | undefined): CodeExpl
       const repoLabel = input.repo?.trim() || 'bound repository';
       if (details.length === 0) {
         return {
-          summary: `source-repo searched ${repoLabel} for ${input.application} before planning (${queries.length} quer${queries.length === 1 ? 'y' : 'ies'}, no file hits).`,
+          summary: `source-repo searched ${repoLabel} for ${input.application} before planning (${queries.length} quer${queries.length === 1 ? 'y' : 'ies'}, no file hits). Bind Azure DevOps Repos to the application source when HTML/SDK paths appear instead.`,
           findings: `searched ${repoLabel} for: ${queries.join(', ')} (no file hits)`,
           details: [],
           source: 'repo',
@@ -135,7 +152,7 @@ export function sourceRepoPortFromInvoker(
       return {
         items: (out?.items ?? []).flatMap((item) => {
           const path = typeof item?.path === 'string' ? item.path : '';
-          if (!path || !isHumanFilePath(path)) return [];
+          if (!path || !isExplorableSourcePath(path)) return [];
           return [{ path: displayFilePath(path), snippet: typeof item.snippet === 'string' ? item.snippet : '' }];
         }),
       };
@@ -149,7 +166,7 @@ export function sourceRepoPortFromInvoker(
       return {
         entries: (out?.entries ?? []).flatMap((e) => {
           const p = typeof e.path === 'string' ? e.path : '';
-          if (!p) return [];
+          if (!p || (e.type !== 'dir' && !isExplorableSourcePath(p))) return [];
           return [{ path: p, type: e.type === 'dir' ? 'dir' as const : 'file' as const }];
         }),
       };

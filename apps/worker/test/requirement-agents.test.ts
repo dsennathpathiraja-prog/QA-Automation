@@ -44,6 +44,8 @@ describe('performRequirementStep', () => {
     expect(out.summary).toMatch(/Visited/);
     expect(out.outputs.source).toBe('browser');
     expect(out.outputs.findings).toMatch(/qa\.shop\.example/);
+    expect(String(out.outputs.artifactMarkdown)).toMatch(/Explore UI/);
+    expect(String(out.outputs.artifactPath)).toMatch(/\.ui\.md$/);
   });
 
   it('requires a code explorer for rv.explore-code and records file findings', async () => {
@@ -82,6 +84,9 @@ describe('performRequirementStep', () => {
     expect(out.summary).toMatch(/Visited files: src\/pay\.ts/);
     expect(out.outputs.source).toBe('repo');
     expect(out.outputs.findings).toMatch(/pay\.ts/);
+    expect(String(out.outputs.artifactMarkdown)).toMatch(/Explore code/);
+    expect(String(out.outputs.artifactMarkdown)).toMatch(/src\/pay\.ts/);
+    expect(String(out.outputs.artifactPath)).toMatch(/\.code\.md$/);
   });
 
   it('uses the planner port for rv.generate-test-plan and persists MD outputs', async () => {

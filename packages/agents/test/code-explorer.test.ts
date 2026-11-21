@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PlatformError } from '@qa/domain';
-import { createCodeExplorer, displayFilePath, isHumanFilePath, searchQueriesFor, sourceRepoPortFromInvoker } from '../src/code-explorer';
+import { createCodeExplorer, displayFilePath, isExplorableSourcePath, isHumanFilePath, searchQueriesFor, sourceRepoPortFromInvoker } from '../src/code-explorer';
 import type { SourceRepoPort } from '../src/types';
 
 describe('searchQueriesFor', () => {
@@ -17,6 +17,13 @@ describe('human file paths', () => {
     expect(isHumanFilePath('abcdef0')).toBe(false);
     expect(isHumanFilePath('src/pay/CardList.tsx')).toBe(true);
     expect(displayFilePath('/src/pay/CardList.tsx')).toBe('src/pay/CardList.tsx');
+  });
+
+  it('skips HTML and SDK documentation paths', () => {
+    expect(isExplorableSourcePath('src/pay/CardList.tsx')).toBe(true);
+    expect(isExplorableSourcePath('sdk/html/index.html')).toBe(false);
+    expect(isExplorableSourcePath('docs/api/Client.html')).toBe(false);
+    expect(isExplorableSourcePath('html-sdk/readme.md')).toBe(false);
   });
 });
 
@@ -97,6 +104,31 @@ describe('code explorer', () => {
     expect(out.details.map((d) => d.path)).toEqual(['src/pay.ts']);
     expect(out.summary).toMatch(/Visited files: src\/pay\.ts/);
     expect(out.summary).not.toMatch(/a1b2c3d4/);
+  });
+
+  it('ignores HTML/SDK search hits and falls back to source files', async () => {
+    const source: SourceRepoPort = {
+      async search() {
+        return {
+          items: [
+            { path: 'sdk/Client.html', snippet: '<html>SDK</html>' },
+            { path: 'docs/api/index.html', snippet: 'API docs' },
+          ],
+        };
+      },
+      async listTree() {
+        return { entries: [{ path: 'src/ledger.ts', type: 'file' }, { path: 'sdk/Client.html', type: 'file' }] };
+      },
+      async readFile({ path }) {
+        return { path, content: path.endsWith('.ts') ? 'export const ledger = 1' : '<html/>', truncated: false };
+      },
+    };
+    const out = await createCodeExplorer(source).explore({
+      application: 'PayNSure',
+      criteria: ['ledger'],
+    });
+    expect(out.details.map((d) => d.path)).toEqual(['src/ledger.ts']);
+    expect(out.summary).not.toMatch(/\.html/);
   });
 
   it('omits repo from invoke when relying on connector-bound config', async () => {
