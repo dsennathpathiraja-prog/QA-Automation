@@ -155,6 +155,8 @@ describe('requirement validation stages', () => {
     expect(read.summary).toMatch(/no separate acceptance criteria/);
     expect(read.outputs.title).toBe(title);
     expect(read.outputs.descriptionExcerpt).toMatch(/Settle ledger/);
+    expect(String(read.outputs.artifactMarkdown)).toMatch(/Order transactions calculation flow/);
+    expect(String(read.outputs.artifactPath)).toMatch(/\.story\.md$/);
   });
 
   it('explains when the work item title could not be loaded', () => {

@@ -94,7 +94,24 @@ describe('route guard', () => {
           },
         },
         '/api/v1/executions': { status: 200, body: { items: [{ id: '1436518e-0000-4000-8000-000000000001', workflowId: '11111111-1111-4111-8111-111111111111', workflowName: 'Checkout', status: 'succeeded', stepIndex: 10, createdAt: '2026-11-18T10:00:00.000Z', updatedAt: '2026-11-18T10:05:00.000Z' }] } },
-        '/api/v1/executions/1436518e-0000-4000-8000-000000000001/events': { status: 200, body: { items: [{ seq: 1, kind: 'step.completed', at: '2026-11-18T10:00:00.000Z', payload: { stepId: 'read_story', summary: 'Read work item QA-1.' } }] } },
+        '/api/v1/executions/1436518e-0000-4000-8000-000000000001/events': {
+          status: 200,
+          body: {
+            items: [{
+              seq: 1,
+              kind: 'step.completed',
+              at: '2026-11-18T10:00:00.000Z',
+              payload: {
+                stepId: 'read_story',
+                summary: 'Read work item QA-1 — Guest checkout.',
+                outputs: {
+                  artifactMarkdown: '# Work item QA-1 — Guest checkout\n\n## Context\n\n- **Title:** Guest checkout\n',
+                  artifactPath: 'explore/checkout/qa-1.story.md',
+                },
+              },
+            }],
+          },
+        },
       },
     });
     expect(await screen.findByRole('tab', { name: 'Execution' })).toBeTruthy();
@@ -108,6 +125,10 @@ describe('route guard', () => {
     const checkout = await screen.findByRole('button', { name: /Checkout/ });
     await user.click(checkout);
     expect((await screen.findByRole('region', { name: 'Selected run' })).textContent).toMatch(/Read work item QA-1/);
+    expect(screen.getByText(/Markdown artifact/)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Show' }));
+    expect(screen.getByText(/explore\/checkout\/qa-1\.story\.md/)).toBeTruthy();
+    expect(document.querySelector('pre')?.textContent).toMatch(/Title:\*\* Guest checkout/);
   });
 });
 

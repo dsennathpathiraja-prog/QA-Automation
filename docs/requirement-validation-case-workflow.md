@@ -33,10 +33,10 @@ If the browser connector is unbound, the URL is missing, or navigate fails valid
 
 ### Explore code (bound source repo)
 
-1. Bind a **source-repo** connector (GitHub or Azure DevOps) with a repository name on the connector when possible.
-2. Worker invokes `scm.code.search` (and `scm.file.read` for hits). The connector manager fills `repo` from the bound connector `config.repo` when the request omits it.
+1. Bind a **source-repo** connector — prefer **Azure DevOps Repos** when the application source lives there (avoids accidental GitHub/HTML SDK trees). Set the repository name on the connector when possible.
+2. Worker invokes `scm.code.search` (and `scm.file.read` for hits). The connector manager fills `repo` from the bound connector `config.repo` when the request omits it. Search ranks real source extensions and skips HTML / SDK / docs-api noise.
 3. Search queries are derived from the application name and acceptance criteria.
-4. Findings (paths + excerpts) go into consolidate → planner.
+4. Findings (paths + excerpts) go into consolidate → planner. The Run / History UI shows an expandable **Markdown artifact** (`.code.md`) so you can verify the visited files.
 
 If the source-repo role is unbound or search fails validation (for example missing repo with no bound default), Explore code **fails** before planning.
 
@@ -51,6 +51,17 @@ If the source-repo role is unbound or search fails validation (for example missi
 | Heal | `playwright-test-healer` | Checks generated cases; rewrites broken stubs **only** in the platform-owned workspace |
 
 Local model (`OLLAMA_URL` / `VLLM_URL`) preferred for planner, generator, and healer. Without a model, description-aware heuristics still scale beyond a single triple per criterion. Cursor MCP package names and adapters: [`playwright-agents-mcp.md`](playwright-agents-mcp.md).
+
+## Markdown artifacts (Run output)
+
+Each of these steps stores Markdown on the step event (`outputs.artifactMarkdown` / `outputs.planMarkdown`). The Workflow **Run** tab and Executions **History** show a **Show** control under the Done line so you can verify real data:
+
+| Step | Artifact | Path pattern |
+|------|----------|--------------|
+| Read work item | Story blob + title / AC | `explore/{app}/{work-item}.story.md` |
+| Explore UI | Visited URLs + snapshots | `explore/{app}/{work-item}.ui.md` |
+| Explore code | Visited source paths + excerpts | `explore/{app}/{work-item}.code.md` |
+| Plan scenarios | Full test plan | `plans/{app}/{work-item}.plan.md` |
 
 ## Markdown plan artifact
 

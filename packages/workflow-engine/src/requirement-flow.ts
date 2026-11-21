@@ -5,6 +5,39 @@ import {
   type PlannerScenario,
 } from './playwright-agents';
 
+const slugPath = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'item';
+
+/** Compact Markdown for the Read step so Run UI can show the loaded work item. */
+function renderStoryArtifactMarkdown(input: {
+  workItem: string;
+  application: string;
+  title: string;
+  story: string;
+  acceptanceCriteria: string[];
+  descriptionExcerpt: string;
+}): string {
+  const lines = [
+    `# Work item ${input.workItem}${input.title ? ` — ${input.title}` : ''}`,
+    '',
+    '## Context',
+    '',
+    `- **Work item:** ${input.workItem}`,
+    `- **Application:** ${input.application}`,
+    input.title ? `- **Title:** ${input.title}` : '- **Title:** _(not loaded)_',
+    '',
+  ];
+  if (input.descriptionExcerpt) {
+    lines.push('## Description excerpt', '', input.descriptionExcerpt, '');
+  }
+  if (input.acceptanceCriteria.length > 0) {
+    lines.push('## Acceptance criteria', '');
+    for (const c of input.acceptanceCriteria) lines.push(`- ${c}`);
+    lines.push('');
+  }
+  lines.push('## Story blob', '', '```', input.story.trim() || '(empty)', '```', '');
+  return `${lines.join('\n').trim()}\n`;
+}
+
 export interface FlowStep {
   id: string;
   type: string;
@@ -262,6 +295,15 @@ export function runFlowStep(step: FlowStep): FlowResult {
         ? `${acceptanceCriteria.length} acceptance criteria.`
         : 'The story text has no separate acceptance criteria, so the plan uses the work item itself.';
       const missPart = !title && fetchNote ? ` ${fetchNote}` : '';
+      const storyMarkdown = renderStoryArtifactMarkdown({
+        workItem,
+        application,
+        title,
+        story,
+        acceptanceCriteria,
+        descriptionExcerpt,
+      });
+      const storyArtifact = `explore/${slugPath(application)}/${slugPath(workItem)}.story.md`;
       return {
         summary: `${titled}${missPart}${excerptPart} ${acPart}`,
         outputs: {
@@ -271,6 +313,8 @@ export function runFlowStep(step: FlowStep): FlowResult {
           acceptanceCriteria,
           applicationName: application,
           environment,
+          artifactMarkdown: storyMarkdown,
+          artifactPath: storyArtifact,
           ...(descriptionExcerpt ? { descriptionExcerpt } : {}),
           ...(fetchNote ? { fetchNote } : {}),
         },
@@ -279,18 +323,36 @@ export function runFlowStep(step: FlowStep): FlowResult {
     case 'rv.explore-ui':
       // Offline / unit-test stub only. The worker must wire createBrowserExplorer
       // so production never reaches this Done line without a real MCP session.
-      return {
-        summary: environment
-          ? `Offline UI stub for ${application} on ${environment}: worker did not drive Playwright (no browser explorer port).`
-          : 'Offline UI stub: no environment and no browser explorer port — not a real Explore UI.',
-        outputs: { findings: environment ? `environment ${environment}` : 'no environment', source: 'offline-stub' },
-      };
+      {
+        const findings = environment ? `environment ${environment}` : 'no environment';
+        const artifactMarkdown = `# Explore UI: ${workItem} — ${application}\n\n## Findings\n\n${findings}\n\n_(offline stub — not a real browser session)_\n`;
+        return {
+          summary: environment
+            ? `Offline UI stub for ${application} on ${environment}: worker did not drive Playwright (no browser explorer port).`
+            : 'Offline UI stub: no environment and no browser explorer port — not a real Explore UI.',
+          outputs: {
+            findings,
+            source: 'offline-stub',
+            artifactMarkdown,
+            artifactPath: `explore/${slugPath(application)}/${slugPath(workItem)}.ui.md`,
+          },
+        };
+      }
     case 'rv.explore-code':
       // Offline / unit-test stub only. The worker must wire createCodeExplorer.
-      return {
-        summary: `Offline source stub for ${application}: worker did not search the bound repository (no code explorer port).`,
-        outputs: { findings: 'repository not read', source: 'offline-stub' },
-      };
+      {
+        const findings = 'repository not read';
+        const artifactMarkdown = `# Explore code: ${workItem} — ${application}\n\n## Findings\n\n${findings}\n\n_(offline stub — bind Azure DevOps Repos for real source)_\n`;
+        return {
+          summary: `Offline source stub for ${application}: worker did not search the bound repository (no code explorer port).`,
+          outputs: {
+            findings,
+            source: 'offline-stub',
+            artifactMarkdown,
+            artifactPath: `explore/${slugPath(application)}/${slugPath(workItem)}.code.md`,
+          },
+        };
+      }
     case 'rv.consolidate-findings': {
       const ui = text(step.prior.explore_ui?.findings);
       const code = text(step.prior.explore_code?.findings);

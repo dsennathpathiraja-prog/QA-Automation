@@ -49,12 +49,30 @@ export function azureWorkItemFields(body: unknown): Record<string, unknown> {
   return map;
 }
 
-/** Plain string from a WIT field value (string or `{ value: string }`). */
+/** Plain string from a WIT field value (string, number, or `{ value: string }`). */
 export function azureFieldString(fields: Record<string, unknown>, key: string): string {
   const raw = fields[key];
   if (typeof raw === 'string') return raw.trim();
-  if (raw && typeof raw === 'object' && typeof (raw as { value?: unknown }).value === 'string') {
-    return ((raw as { value: string }).value).trim();
+  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const obj = raw as { value?: unknown; text?: unknown; name?: unknown };
+    if (typeof obj.value === 'string') return obj.value.trim();
+    if (typeof obj.text === 'string') return obj.text.trim();
+    if (typeof obj.name === 'string') return obj.name.trim();
+  }
+  return '';
+}
+
+/** Pull System.Title from a WIT body, including nested / wrapped shapes Azure gateways use. */
+export function azureWorkItemTitle(body: unknown): string {
+  const fields = azureWorkItemFields(body);
+  const fromFields = azureFieldString(fields, 'System.Title');
+  if (fromFields) return fromFields;
+  // Rare: title only on the root (some proxies flatten System.Title next to id).
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    const root = body as Record<string, unknown>;
+    const direct = azureFieldString(root, 'System.Title');
+    if (direct) return direct;
   }
   return '';
 }
@@ -167,13 +185,21 @@ class AzureBoardsClient implements ConnectorClient {
     if (cap.id === 'workitem.read') {
       const acField = this.cfg.acceptanceCriteriaField;
       const fieldList = READ_FIELDS.includes(acField) ? READ_FIELDS : `${READ_FIELDS},${acField}`;
-      const r = await this.call(
-        'GET',
-        `/${encodeURIComponent(this.cfg.project)}/_apis/wit/workitems/${encodeURIComponent(required(i.id, 'Work item id'))}`,
-        { fields: fieldList },
-      );
-      const f = azureWorkItemFields(r.body);
-      const title = azureFieldString(f, 'System.Title');
+      const id = required(i.id, 'Work item id');
+      const path = `/${encodeURIComponent(this.cfg.project)}/_apis/wit/workitems/${encodeURIComponent(id)}`;
+      // Prefer an explicit field list so System.Title is always requested; fall back to a
+      // full work-item GET (and WIQL) when a gateway returns the item without the title.
+      let r = await this.call('GET', path, { fields: fieldList });
+      let f = azureWorkItemFields(r.body);
+      let title = azureWorkItemTitle(r.body);
+      if (!title) {
+        r = await this.call('GET', path);
+        f = azureWorkItemFields(r.body);
+        title = azureWorkItemTitle(r.body);
+      }
+      if (!title) {
+        title = await this.titleFromWiql(id);
+      }
       const description = fieldText(f['System.Description']);
       const reproSteps = fieldText(f['Microsoft.VSTS.TCM.ReproSteps']);
       const fromField = fieldText(f[acField]);
@@ -201,6 +227,31 @@ class AzureBoardsClient implements ConnectorClient {
       return { name: file.attributes?.name ?? attachmentId, mimeType: downloaded.mimeType, contentBase64: Buffer.from(downloaded.body).toString('base64') };
     }
     throw new PlatformError('unsupported', `Azure Boards does not implement ${cap.id}`);
+  }
+
+  /** WIQL fallback when GET omits System.Title (seen on some orgs / field projections). */
+  private async titleFromWiql(id: string): Promise<string> {
+    const numeric = Number(id);
+    if (!Number.isInteger(numeric) || numeric <= 0) return '';
+    try {
+      const r = await this.call(
+        'POST',
+        `/${encodeURIComponent(this.cfg.project)}/_apis/wit/wiql`,
+        undefined,
+        { query: `SELECT [System.Id], [System.Title] FROM WorkItems WHERE [System.Id] = ${numeric}` },
+      );
+      const ids = ((r.body?.workItems ?? []) as { id: number }[]).map((w) => w.id);
+      if (ids.length === 0) return '';
+      const details = await this.call(
+        'GET',
+        `/${encodeURIComponent(this.cfg.project)}/_apis/wit/workitems`,
+        { ids: String(ids[0]), fields: 'System.Title' },
+      );
+      const row = ((details.body?.value ?? []) as unknown[])[0];
+      return azureWorkItemTitle(row);
+    } catch {
+      return '';
+    }
   }
 
   async dispose() {}

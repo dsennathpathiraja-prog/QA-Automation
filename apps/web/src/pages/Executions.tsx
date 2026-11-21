@@ -25,6 +25,7 @@ import { useApi } from '../api/context';
 import { useSession } from '../auth/session';
 import { ErrorNotice, PageHeader } from './common';
 import { errorText } from './connectors/shared';
+import { StepArtifact, markdownFromStepPayload } from './StepArtifact';
 
 const key = ['executions'] as const;
 const LIVE = new Set(['queued', 'running']);
@@ -348,6 +349,7 @@ export function Executions() {
                     const message = typeof event.payload.message === 'string' ? event.payload.message : '';
                     const failed = event.kind === 'step.failed';
                     const output = summary || message;
+                    const artifact = markdownFromStepPayload(event.payload);
                     return (
                       <Paper key={event.seq} variant="outlined" sx={{ p: 1.5 }}>
                         <Stack direction="row" spacing={1} useFlexGap sx={{ mb: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -359,6 +361,7 @@ export function Executions() {
                         <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
                           {output || (failed ? 'This step failed without a summary.' : 'This step completed without a summary.')}
                         </Typography>
+                        {artifact && <StepArtifact markdown={artifact.markdown} path={artifact.path} />}
                       </Paper>
                     );
                   })}

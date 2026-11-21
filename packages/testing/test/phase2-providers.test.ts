@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
-import { EgressPolicy, HardenedHttpClient, acceptanceCriteriaFromDescription, adfToText, azureBoardsProvider, azureDevOpsProvider, azureFieldString, azureWorkItemFields, githubProvider, githubWriteScopes, azureDevOpsWriteScopes, jiraProvider, playwrightMcpProvider, scenarioCuesFromDescription, splitAcceptanceCriteria } from '@qa/infrastructure';
+import { EgressPolicy, HardenedHttpClient, acceptanceCriteriaFromDescription, adfToText, azureBoardsProvider, azureDevOpsProvider, azureFieldString, azureReposSourceScore, azureWorkItemFields, azureWorkItemTitle, githubProvider, githubWriteScopes, azureDevOpsWriteScopes, jiraProvider, playwrightMcpProvider, scenarioCuesFromDescription, splitAcceptanceCriteria } from '@qa/infrastructure';
 import { assertProviderContract } from '../src';
 
 const TOKEN = 'readonly-token-value-0001';
@@ -198,6 +198,7 @@ describe('source and work-item providers', () => {
     };
     const flat = azureWorkItemFields(nested);
     expect(azureFieldString(flat, 'System.Title')).toMatch(/Order transactions calculation flow/);
+    expect(azureWorkItemTitle(nested)).toMatch(/Order transactions calculation flow/);
     const m = await mock((hit) => {
       const path = pathOf(hit);
       if (path.endsWith('/workitems/3421')) return { body: nested };
@@ -208,6 +209,42 @@ describe('source and work-item providers', () => {
       title: 'Order transactions calculation flow update to match new payment settlement and reasons',
       description: 'Settle ledger rows with the new payment reasons.',
     });
+  });
+
+  it('retries workitem.read without fields and via WIQL when System.Title is missing (WI 2357-style)', async () => {
+    let reads = 0;
+    const m = await mock((hit) => {
+      const path = pathOf(hit);
+      const raw = hit.path;
+      if (hit.method === 'POST' && path.endsWith('/_apis/wit/wiql')) {
+        return { body: { workItems: [{ id: 2357 }] } };
+      }
+      // Batch GET /workitems?ids=2357 (query string is on hit.path, not pathname).
+      if (path.endsWith('/workitems') && /[?&]ids=2357\b/.test(raw)) {
+        return { body: { value: [{ id: 2357, fields: { 'System.Title': 'Settlement reasons for payment ledger' } }] } };
+      }
+      if (path.endsWith('/workitems/2357')) {
+        reads += 1;
+        // First (fields=…) projection omits title; full GET still empty; WIQL batch supplies it.
+        if (reads === 1) return { body: { id: 2357, fields: { 'System.State': 'Active' } } };
+        if (reads === 2) return { body: { id: 2357, fields: { 'System.Description': '<p>Body</p>' } } };
+        return { status: 404, body: {} };
+      }
+      return { status: 404, body: {} };
+    });
+    const client = azureBoardsProvider.create({ organization: 'contoso', project: 'PayNSure', baseUrl: m.baseUrl }, lease, { http: m.http });
+    expect(await client.handle({ id: 'workitem.read' } as never, { id: '2357' }, {} as never)).toMatchObject({
+      id: '2357',
+      title: 'Settlement reasons for payment ledger',
+    });
+  });
+
+  it('scores Azure Repos source paths above HTML/SDK noise', () => {
+    expect(azureReposSourceScore('src/pay/CardList.tsx', 'card')).toBeGreaterThan(azureReposSourceScore('docs/readme.md', 'card'));
+    expect(azureReposSourceScore('README.md', 'readme')).toBeGreaterThan(0);
+    expect(azureReposSourceScore('sdk/html/index.html', 'index')).toBe(0);
+    expect(azureReposSourceScore('wwwroot/lib/jquery.js', 'jquery')).toBe(0);
+    expect(azureReposSourceScore('src/pay/CardList.tsx', 'missing')).toBe(0);
   });
 
   it('reads Azure Boards acceptance criteria from Description HTML when the field is empty', async () => {

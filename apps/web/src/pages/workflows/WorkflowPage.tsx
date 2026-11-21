@@ -25,6 +25,7 @@ import { useApi } from '../../api/context';
 import { useSession } from '../../auth/session';
 import { ErrorNotice, PageHeader } from '../common';
 import { errorText } from '../connectors/shared';
+import { StepArtifact, markdownFromStepPayload } from '../StepArtifact';
 
 interface Step { id: string; type: string; enabled?: boolean; mandatory?: boolean; locked?: boolean | string[]; dependsOn?: string[] }
 interface ConnectorRow { role: string; category: string; binding?: { connectorInstanceId: string | null } }
@@ -57,7 +58,7 @@ const STEP_LABEL: Record<string, string> = {
 const STEP_HELP: Record<string, string> = {
   'rv.read-user-story': 'Loads title, description, and acceptance criteria from the work item.',
   'rv.explore-ui': 'Opens the environment and records UI findings for the planner.',
-  'rv.explore-code': 'Reads matching source files (read-only) for the planner.',
+  'rv.explore-code': 'Reads matching source files from the bound Azure DevOps Repos (preferred) or GitHub connector.',
   'rv.consolidate-findings': 'Merges UI and code notes into one findings blob.',
   'rv.generate-test-plan': 'Writes the Markdown test plan artifact with many scenarios.',
   'rv.generate-tests': 'Turns each planned scenario into a Playwright case.',
@@ -244,8 +245,21 @@ export function WorkflowPage() {
                       <TextField key={c.role} label={ROLE_LABEL[c.role] ?? c.role} value="Platform runner" disabled fullWidth />
                     );
                   }
-                  const options = (savedConnectors.data?.items ?? []).filter((item) => item.category === c.category);
+                  const options = (savedConnectors.data?.items ?? [])
+                    .filter((item) => item.category === c.category)
+                    .slice()
+                    .sort((a, b) => {
+                      // Prefer Azure DevOps Repos for Explore code over accidental GitHub/HTML SDK bindings.
+                      if (c.role === 'sourceRepo') {
+                        const rank = (key: string) => (key === 'azure-devops-repos' ? 0 : key === 'github' ? 2 : 1);
+                        const byProvider = rank(a.providerKey) - rank(b.providerKey);
+                        if (byProvider !== 0) return byProvider;
+                      }
+                      return a.name.localeCompare(b.name);
+                    });
                   const known = options.some((item) => item.id === current);
+                  const azureRepos = options.filter((item) => item.providerKey === 'azure-devops-repos');
+                  const bound = options.find((item) => item.id === current);
                   return (
                     <FormControl key={c.role} fullWidth disabled={!canEdit}>
                       <InputLabel id={`role-${c.role}-label`}>{ROLE_LABEL[c.role] ?? c.role}</InputLabel>
@@ -267,9 +281,21 @@ export function WorkflowPage() {
                         <MenuItem value="">None</MenuItem>
                         {current && !known && <MenuItem value={current}>Saved connector</MenuItem>}
                         {options.map((item) => (
-                          <MenuItem key={item.id} value={item.id}>{item.name}{item.enabled ? '' : ' (disabled)'}</MenuItem>
+                          <MenuItem key={item.id} value={item.id}>
+                            {item.name} · {item.providerName}{item.enabled ? '' : ' (disabled)'}
+                          </MenuItem>
                         ))}
                       </Select>
+                      {c.role === 'sourceRepo' && azureRepos.length > 0 && bound?.providerKey === 'github' && (
+                        <Typography variant="caption" color="warning.main" sx={{ mt: 0.5 }}>
+                          Azure DevOps Repos is available — bind it for Explore code when the application source lives in Azure Repos (avoids GitHub/HTML SDK hits).
+                        </Typography>
+                      )}
+                      {c.role === 'sourceRepo' && azureRepos.length > 0 && !current && (
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                          Prefer Azure DevOps Repos when the app source is there.
+                        </Typography>
+                      )}
                     </FormControl>
                   );
                 })}
@@ -383,6 +409,7 @@ export function WorkflowPage() {
                   const message = typeof event.payload.message === 'string' ? event.payload.message : '';
                   const failed = event.kind === 'step.failed';
                   const output = summary || message;
+                  const artifact = markdownFromStepPayload(event.payload);
                   return (
                     <Paper key={event.seq} variant="outlined" sx={{ p: 1.5 }}>
                       <Stack direction="row" spacing={1} useFlexGap sx={{ mb: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -394,6 +421,7 @@ export function WorkflowPage() {
                       <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
                         {output || (failed ? 'This step failed without a summary.' : 'This step completed without a summary.')}
                       </Typography>
+                      {artifact && <StepArtifact markdown={artifact.markdown} path={artifact.path} />}
                     </Paper>
                   );
                 })}
