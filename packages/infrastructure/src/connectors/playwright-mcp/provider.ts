@@ -112,6 +112,27 @@ class PlaywrightClient implements ConnectorClient {
     return headers;
   }
 
+  /**
+   * The execution manager creates a **new** client per invoke(). Without adopting the
+   * platform `sessionId` into the MCP `mcp-session-id` header, navigate and evaluate
+   * each call `initialize` and get a blank browser ("No open pages available").
+   */
+  private adoptPlatformSession(sessionId: string): void {
+    const id = required(sessionId, 'sessionId').trim();
+    if (!id || id === 'managed') {
+      throw new PlatformError(
+        'validation',
+        'Playwright browser call needs the real mcp-session-id from browser.session.open (not "managed"). Re-run Explore UI after fixing the Playwright connector.',
+      );
+    }
+    if (this.sessionId === id && this.opening) return;
+    this.sessionId = id;
+    // Skip initialize — the MCP session (and its open tab) already exists on the server.
+    this.opening = Promise.resolve({ adopted: true });
+    // Avoid JSON-RPC id collisions with the client that opened the session.
+    this.rpc = (Date.now() % 1_000_000_000) + Math.floor(Math.random() * 1_000);
+  }
+
   private async post(payload: unknown) {
     let res;
     try {
@@ -250,12 +271,20 @@ class PlaywrightClient implements ConnectorClient {
     if (cap.id === 'browser.session.open') {
       // Establish the MCP session (initialize + session header) before navigate.
       await this.open();
-      const id = this.sessionId?.trim() || 'managed';
-      this.sessionId = id;
+      const id = this.sessionId?.trim();
+      if (!id) {
+        throw new PlatformError(
+          'transient',
+          'Playwright MCP did not return mcp-session-id on initialize. Explore UI cannot keep navigate and evaluate on the same browser tab.',
+        );
+      }
       return { sessionId: id };
     }
+    // Every follow-up capability must reuse the open MCP session (manager creates a new client each invoke).
+    if (cap.id !== 'browser.session.open') {
+      this.adoptPlatformSession(required(i.sessionId, 'sessionId'));
+    }
     if (cap.id === 'browser.navigate') {
-      required(i.sessionId, 'sessionId');
       const url = required(i.url, 'Address');
       let origin: string;
       try {
@@ -287,13 +316,18 @@ class PlaywrightClient implements ConnectorClient {
       };
     }
     if (cap.id === 'browser.snapshot') {
-      required(i.sessionId, 'sessionId');
       const result = await this.rpcCall('tools/call', { name: 'browser_snapshot', arguments: {} });
       const text = toolText(result);
       // Return empty tree instead of throwing — Explore UI retries + DOM probe handle blank
       // pages; throwing transient here opened the connector circuit breaker after a few attempts.
       if (!text) {
         return { accessibilityTree: '', url: '', title: undefined };
+      }
+      if (/No open pages?/i.test(text) || /No open tabs/i.test(text)) {
+        throw new PlatformError(
+          'transient',
+          'Playwright has no open page for browser.snapshot — navigate did not leave a tab on this MCP session. Retry Explore UI; if it persists, Test connection and confirm mcp-session-id is returned.',
+        );
       }
       const meta = pageMetaFromToolText(text);
       return {
@@ -303,7 +337,6 @@ class PlaywrightClient implements ConnectorClient {
       };
     }
     if (cap.id === 'browser.wait') {
-      required(i.sessionId, 'sessionId');
       const timeRaw = (input as { timeSeconds?: number })?.timeSeconds;
       const text = typeof i.text === 'string' && i.text.trim() ? i.text.trim() : undefined;
       const time = typeof timeRaw === 'number' && Number.isFinite(timeRaw) ? Math.min(30, Math.max(0.1, timeRaw)) : undefined;
@@ -324,13 +357,26 @@ class PlaywrightClient implements ConnectorClient {
       };
     }
     if (cap.id === 'browser.evaluate') {
-      required(i.sessionId, 'sessionId');
       const script = required(i.script, 'script');
-      const result = await this.rpcCall('tools/call', { name: 'browser_evaluate', arguments: { function: script } });
-      const body = toolText(result);
+      const noPage = (msg: string) => new PlatformError(
+        'transient',
+        'Playwright browser_evaluate has no open page (MCP session lost the tab after navigate). Explore UI must keep one mcp-session-id for open → navigate → evaluate.',
+        undefined,
+        msg ? new Error(msg) : undefined,
+      );
+      let body: string;
+      try {
+        const result = await this.rpcCall('tools/call', { name: 'browser_evaluate', arguments: { function: script } });
+        body = toolText(result);
+      } catch (e) {
+        const msg = e instanceof PlatformError ? e.message : String(e);
+        if (/No open pages?/i.test(msg) || /No open tabs/i.test(msg)) throw noPage(msg);
+        throw e;
+      }
       if (!body) {
         throw new PlatformError('transient', 'Playwright browser_evaluate returned no content');
       }
+      if (/No open pages?/i.test(body) || /No open tabs/i.test(body)) throw noPage(body);
       const meta = pageMetaFromToolText(body);
       // Prefer the ### Result JSON block; fall back to the full tool text.
       const resultMatch = /###\s*Result\s*\r?\n([\s\S]*?)(?=\r?\n###\s+|$)/i.exec(body);
@@ -343,14 +389,12 @@ class PlaywrightClient implements ConnectorClient {
       };
     }
     if (cap.id === 'browser.interact') {
-      required(i.sessionId, 'sessionId');
       const tool = INTERACT[required(i.action, 'Browser action')];
       if (!tool) throw new PlatformError('validation', 'That browser action is not supported');
       await this.rpcCall('tools/call', { name: tool, arguments: { target: i.target, element: i.target, text: i.value, key: i.value, value: i.value } });
       return { ok: true };
     }
     if (cap.id === 'browser.screenshot') {
-      required(i.sessionId, 'sessionId');
       // @playwright/mcp@0.0.35 omits image bytes when fullPage=true (saves to disk only).
       // Request a viewport screenshot so Explore UI can attach evidence.
       const result = await this.rpcCall('tools/call', { name: 'browser_take_screenshot', arguments: { type: 'png' } });
@@ -359,14 +403,16 @@ class PlaywrightClient implements ConnectorClient {
       return { artifactBase64: image };
     }
     if (cap.id === 'browser.network.observe') {
-      required(i.sessionId, 'sessionId');
       const result = await this.rpcCall('tools/call', { name: 'browser_network_requests', arguments: {} });
       const requests = (result?.requests ?? []) as { url: string; status?: number }[];
       return { requests };
     }
     if (cap.id === 'browser.session.close') {
-      required(i.sessionId, 'sessionId');
-      await this.rpcCall('tools/call', { name: 'browser_close', arguments: {} });
+      try {
+        await this.rpcCall('tools/call', { name: 'browser_close', arguments: {} });
+      } catch {
+        /* session may already be gone */
+      }
       this.sessionId = undefined;
       this.opening = undefined;
       return { ok: true };

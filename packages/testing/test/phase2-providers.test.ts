@@ -14,6 +14,12 @@ afterEach(async () => {
   closeServer = undefined;
 });
 
+/** Playwright MCP initialize must return mcp-session-id so Explore can reattach across invokes. */
+const mcpInit = (session = 'mcp-sess-1') => ({
+  headers: { 'mcp-session-id': session },
+  body: { result: { serverInfo: { name: 'playwright', version: '1.2.3' } } },
+});
+
 async function mock(handle: (hit: Hit) => { status?: number; headers?: Record<string, string>; body: unknown; raw?: string }) {
   const hits: Hit[] = [];
   const server = createServer(async (req, res) => {
@@ -291,7 +297,7 @@ describe('source and work-item providers', () => {
     const pageState = `### Page state\n- Page URL: https://shop.example.com/cart\n- Page Title: Cart\n- Page Snapshot:\n\`\`\`yaml\n- button "Checkout" [ref=e1]\n\`\`\`\n`;
     const m = await mock((hit) => {
       const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string; arguments?: { url?: string; fullPage?: boolean; type?: string } } };
-      if (body.method === 'initialize') return { body: { result: { serverInfo: { name: 'playwright', version: '1.2.3' } } } };
+      if (body.method === 'initialize') return mcpInit('sess-shop');
       if (body.method === 'tools/list') return { body: { result: { tools: ['browser_navigate', 'browser_snapshot', 'browser_wait_for', 'browser_evaluate', 'browser_click', 'browser_type', 'browser_select_option', 'browser_press_key', 'browser_take_screenshot', 'browser_network_requests', 'browser_close'].map((name) => ({ name })) } } };
       if (body.params?.name === 'browser_snapshot' || body.params?.name === 'browser_wait_for' || body.params?.name === 'browser_navigate') {
         return { body: { result: { content: [{ type: 'text', text: pageState }] } } };
@@ -310,7 +316,7 @@ describe('source and work-item providers', () => {
     const probes = await client.probeCapabilities();
     expect(probes.find((p) => p.capability === 'browser.navigate')).toMatchObject({ support: 'supported' });
     const opened = await client.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
-    expect(opened.sessionId).toBeTruthy();
+    expect(opened.sessionId).toBe('sess-shop');
     const nav = await client.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'https://shop.example.com/cart' }, {} as never) as { finalUrl: string; title?: string; accessibilityTree?: string };
     expect(nav).toMatchObject({ finalUrl: 'https://shop.example.com/cart', title: 'Cart' });
     expect(nav.accessibilityTree).toMatch(/Checkout/);
@@ -323,10 +329,47 @@ describe('source and work-item providers', () => {
     expect(await client.handle({ id: 'browser.screenshot' } as never, { sessionId: opened.sessionId }, {} as never)).toMatchObject({ artifactBase64: 'aW1n' });
   });
 
+  it('reattaches mcp-session-id across fresh clients (manager invoke pattern)', async () => {
+    const pageState = `### Page state\n- Page URL: http://sdk.paynsure.internal/shop\n- Page Title: Shop\n- Page Snapshot:\n\`\`\`yaml\n- button "Add to cart" [ref=e1]\n\`\`\`\n`;
+    const evalOk = `### Result\n${JSON.stringify({ url: 'http://sdk.paynsure.internal/shop', title: 'Shop', buttons: ['Add to cart'], headings: [], links: [], fields: [], bodyText: 'Add to cart', readyState: 'complete', iframes: [], frameDocs: [] }, null, 2)}\n`;
+    let initializes = 0;
+    const m = await mock((hit) => {
+      const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string } };
+      if (body.method === 'initialize') {
+        initializes += 1;
+        return mcpInit('sess-cross');
+      }
+      if (body.params?.name === 'browser_navigate' || body.params?.name === 'browser_wait_for') {
+        expect(hit.session).toBe('sess-cross');
+        return { body: { result: { content: [{ type: 'text', text: pageState }] } } };
+      }
+      if (body.params?.name === 'browser_evaluate') {
+        // Critical: evaluate must reuse the open session, not a blank initialize.
+        expect(hit.session).toBe('sess-cross');
+        expect(initializes).toBe(1);
+        return { body: { result: { content: [{ type: 'text', text: evalOk }] } } };
+      }
+      return { body: { result: { content: [] } } };
+    });
+    const openClient = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'http://sdk.paynsure.internal' }, undefined, { http: m.http });
+    const opened = await openClient.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
+    expect(opened.sessionId).toBe('sess-cross');
+    await openClient.dispose();
+
+    const navClient = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'http://sdk.paynsure.internal' }, undefined, { http: m.http });
+    await navClient.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'http://sdk.paynsure.internal/shop' }, {} as never);
+    await navClient.dispose();
+
+    const evalClient = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'http://sdk.paynsure.internal' }, undefined, { http: m.http });
+    const evaluated = await evalClient.handle({ id: 'browser.evaluate' } as never, { sessionId: opened.sessionId, script: '() => ({ ok: true })' }, {} as never) as { resultText: string };
+    expect(evaluated.resultText).toMatch(/Add to cart/);
+    expect(initializes).toBe(1);
+  });
+
   it('returns an empty accessibility tree when MCP snapshot content is empty (no circuit-trip throw)', async () => {
     const m = await mock((hit) => {
       const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string } };
-      if (body.method === 'initialize') return { body: { result: { serverInfo: { name: 'playwright', version: '1.2.3' } } } };
+      if (body.method === 'initialize') return mcpInit();
       if (body.params?.name === 'browser_snapshot') return { body: { result: { content: [] } } };
       return { body: { result: { content: [] } } };
     });
@@ -343,7 +386,7 @@ describe('source and work-item providers', () => {
     const evalBody = `### Result\n${JSON.stringify({ url: 'http://sdk.paynsure.internal/shop', title: 'Metro Mobile Store', buttons: ['Add to cart'] }, null, 2)}\n\n${pageState}`;
     const m = await mock((hit) => {
       const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string; arguments?: Record<string, unknown> } };
-      if (body.method === 'initialize') return { body: { result: { serverInfo: { name: 'playwright', version: '1.2.3' } } } };
+      if (body.method === 'initialize') return mcpInit();
       if (body.params?.name === 'browser_wait_for') {
         expect(body.params.arguments?.text === 'Add to cart' || typeof body.params.arguments?.time === 'number').toBe(true);
         return { body: { result: { content: [{ type: 'text', text: pageState }] } } };
@@ -368,7 +411,7 @@ describe('source and work-item providers', () => {
   it('accepts a bare host in Playwright allowedOrigins (URL vs host)', async () => {
     const m = await mock((hit) => {
       const body = JSON.parse(hit.body || '{}') as { method?: string };
-      if (body.method === 'initialize') return { body: { result: { serverInfo: { name: 'playwright', version: '1.2.3' } } } };
+      if (body.method === 'initialize') return mcpInit();
       return { body: { result: { content: [] } } };
     });
     const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'sdk.paynsure.internal' }, undefined, { http: m.http });
