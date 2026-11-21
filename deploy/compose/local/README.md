@@ -60,12 +60,26 @@ If `docker compose … ps` shows `playwright-mcp` **Restarting** and logs say `u
 
 ### Private shop hosts (PayNSure / `*.internal`)
 
-Desktop Chrome can open `http://sdk.paynsure.internal/shop` via the **host** resolver (`/etc/hosts` or VPN DNS). Chromium inside `playwright-mcp` does **not** inherit host `/etc/hosts`, so Explore UI may “reach” the URL yet capture an empty snapshot (DNS error / blank page).
+Desktop Chrome can open `http://sdk.paynsure.internal/shop` via the **host** resolver (`/etc/hosts` or VPN DNS). Chromium inside `playwright-mcp` does **not** inherit host `/etc/hosts`.
 
-1. Add the hostname under `playwright-mcp.extra_hosts` in `docker-compose.local.yml` (example: `sdk.paynsure.internal:host-gateway` if the shop is published on the host, or `sdk.paynsure.internal:<LAN-IP>`).
-2. Rebuild/restart: `docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d playwright-mcp`
-3. Keep the origin on the connector allowlist (`http://sdk.paynsure.internal` or the bare host).
-4. Retry Explore UI — the MD artifact should list storefront cues (Search products, Add to cart, Proceed to checkout, …).
+Local Compose **defaults** `sdk.paynsure.internal` → `host-gateway` (override with `PLAYWRIGHT_MCP_SHOP_IP`, see `env.playwright.example`).
+
+```bash
+# One rebuild so Explore UI Chromium sees the shop host
+docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up -d --force-recreate playwright-mcp
+
+# Prove DNS (+ optional HTTP) from inside the container
+bash deploy/compose/scripts/verify-playwright-shop-dns.sh
+```
+
+If `getent hosts sdk.paynsure.internal` on the host shows a LAN IP (not the Docker host), set that IP before recreate:
+
+```bash
+export PLAYWRIGHT_MCP_SHOP_IP=$(getent hosts sdk.paynsure.internal | awk '{print $1; exit}')
+docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up -d --force-recreate playwright-mcp
+```
+
+Keep `http://sdk.paynsure.internal` (or the bare host) on the Playwright connector allowlist, then retry Explore UI — the MD artifact should list storefront cues (Search products, Add to cart, Proceed to checkout, …).
 
 ## Runner
 

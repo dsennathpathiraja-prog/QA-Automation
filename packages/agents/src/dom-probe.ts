@@ -255,21 +255,51 @@ export function parseEvaluateToolResult(toolText: string): DomProbeResult | unde
   return undefined;
 }
 
-/** Human reason when capture failed after retries (blank vs iframe vs DNS). */
+/** True when navigate/snapshot/probe landed on Chromium's DNS/network error page. */
+export function isBrowserNavigationFailure(input: {
+  url?: string;
+  rawSnapshot?: string;
+  probe?: DomProbeResult;
+}): boolean {
+  const pageUrl = input.probe?.url || input.url || '';
+  const raw = `${input.rawSnapshot || ''}\n${input.probe?.bodyText || ''}`;
+  if (input.probe?.loadError) return true;
+  if (/^chrome-error:\/\//i.test(pageUrl) || /^chrome:\/\//i.test(pageUrl)) return true;
+  return /ERR_NAME_NOT_RESOLVED|DNS_PROBE_FINISHED_NXDOMAIN|ERR_CONNECTION_REFUSED|ERR_CONNECTION_TIMED_OUT|This site (can.t|cannot) be reached|took too long to respond/i.test(raw);
+}
+
+/** Operator-facing DNS / extra_hosts guidance (local Compose defaults sdk.paynsure.internal → host-gateway). */
+export function dnsExtraHostsGuidance(url: string): string {
+  let host = url;
+  try {
+    host = new URL(url).hostname;
+  } catch { /* keep raw */ }
+  return (
+    `Chromium inside Playwright MCP did not load ${url} (DNS/network error page). ` +
+    `Host Chrome can resolve ${host}, but the playwright-mcp container does not inherit host /etc/hosts. ` +
+    `Local Compose already maps sdk.paynsure.internal via extra_hosts (PLAYWRIGHT_MCP_SHOP_IP, default host-gateway) — ` +
+    `recreate the browser service (\`docker compose … --profile browser up -d --force-recreate playwright-mcp\`), ` +
+    `run \`deploy/compose/scripts/verify-playwright-shop-dns.sh\`, then retry Explore UI`
+  );
+}
+
+/** Human reason when capture failed after retries (blank vs iframe vs DNS vs probe denied). */
 export function describeEmptyCapture(input: {
   url: string;
   title?: string;
   rawSnapshot?: string;
   probe?: DomProbeResult;
+  probeError?: string;
 }): string {
   const probe = input.probe;
   const raw = input.rawSnapshot || '';
-  const pageUrl = probe?.url || input.url;
-  if (probe?.loadError || /^chrome-error:\/\//i.test(pageUrl) || /ERR_NAME_NOT_RESOLVED|DNS_PROBE|This site (can.t|cannot) be reached/i.test(probe?.bodyText || raw)) {
+  if (isBrowserNavigationFailure({ url: probe?.url || input.url, rawSnapshot: raw, probe })) {
+    return dnsExtraHostsGuidance(input.url);
+  }
+  if (input.probeError) {
     return (
-      `Chromium inside Playwright MCP did not load ${input.url} (DNS/network error page). ` +
-      'Host Chrome can open private hosts via the host resolver, but the playwright-mcp container does not see host /etc/hosts — ' +
-      'add the shop hostname under playwright-mcp extra_hosts (or shared DNS), rebuild the browser profile, then retry Explore UI'
+      `DOM probe failed (${input.probeError}). ` +
+      'Explore UI needs browser.evaluate on the Playwright connector — re-run Test connection after upgrading, confirm browser.evaluate is supported, then retry'
     );
   }
   const iframeCount = probe?.iframes?.length ?? (/\biframe\b/i.test(raw) ? 1 : 0);
@@ -286,6 +316,12 @@ export function describeEmptyCapture(input: {
   }
   if (probe && (probe.bodyText || '').trim().length === 0 && probe.readyState === 'complete') {
     return 'document ready but body text empty (blank render in headless Chromium — check viewport, CSP, or app gating)';
+  }
+  if (!probe && !input.probeError) {
+    return (
+      'empty accessibility snapshot and DOM probe did not run (browser.evaluate missing on the connector). ' +
+      'Re-run Playwright Test connection so browser.wait / browser.evaluate are granted, then retry Explore UI'
+    );
   }
   return 'empty accessibility snapshot and DOM probe found no buttons/links/fields (page blank, still loading, or MCP returned no content)';
 }

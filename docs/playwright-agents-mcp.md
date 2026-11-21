@@ -118,8 +118,10 @@ Run story id
        environment → applicationUrl
        → browser.session.open → sessionId
        → browser.navigate({ sessionId, url })
-       → browser.wait (SPA / shop copy) → browser.snapshot
+       → fail-fast if chrome-error / DNS (extra_hosts / PLAYWRIGHT_MCP_SHOP_IP)
+       → browser.wait (SPA settle) → browser.snapshot
        → browser.evaluate DOM probe when aria tree empty → screenshot
+       (playwright-mcp Compose defaults sdk.paynsure.internal → host-gateway)
   → rv.explore-code (when on):
        bound source-repo config.repo
        → scm.code.search({ query, repo }) → scm.file.read

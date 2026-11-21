@@ -60,7 +60,7 @@ ${JSON.stringify(SHOP_PROBE, null, 2)}
       loadError: 'browser_error_page',
     };
     expect(domProbeIsActionable(probe)).toBe(false);
-    expect(describeEmptyCapture({ url: 'http://sdk.paynsure.internal/shop', probe })).toMatch(/extra_hosts|DNS/i);
+    expect(describeEmptyCapture({ url: 'http://sdk.paynsure.internal/shop', probe })).toMatch(/PLAYWRIGHT_MCP_SHOP_IP|extra_hosts|DNS|verify-playwright-shop-dns/i);
   });
 
   it('names opaque iframe shells when no same-origin controls exist', () => {

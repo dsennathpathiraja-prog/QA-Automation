@@ -180,7 +180,31 @@ describe('browser explorer', () => {
       scenarios: [],
     })).rejects.toMatchObject({
       errorClass: 'transient',
-      message: expect.stringMatching(/extra_hosts|DNS|did not load/i),
+      message: expect.stringMatching(/PLAYWRIGHT_MCP_SHOP_IP|extra_hosts|DNS|did not load|verify-playwright-shop-dns/i),
+    });
+  });
+
+  it('fails fast with DNS guidance when navigate returns chrome-error URL', async () => {
+    const browser: BrowserAutomationPort = {
+      async openSession() {},
+      async navigate(url) {
+        return {
+          finalUrl: 'chrome-error://chromewebdata/',
+          accessibilityTree: '### Page state\n- Page URL: chrome-error://chromewebdata/\n- Page Title: \n',
+        };
+      },
+      async waitFor() {},
+      async snapshot() { return { accessibilityTree: '', url: 'chrome-error://chromewebdata/' }; },
+      async screenshot() { return { artifactBase64: '' }; },
+      async closeSession() {},
+    };
+    await expect(createBrowserExplorer(browser).explore({
+      application: 'PayNSure',
+      url: 'http://sdk.paynsure.internal/shop',
+      scenarios: [],
+    })).rejects.toMatchObject({
+      errorClass: 'transient',
+      message: expect.stringMatching(/did not load|PLAYWRIGHT_MCP_SHOP_IP|verify-playwright-shop-dns/i),
     });
   });
 
