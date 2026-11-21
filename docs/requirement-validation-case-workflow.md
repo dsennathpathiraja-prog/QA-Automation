@@ -29,7 +29,7 @@ Execution of prepared cases against an environment remains a **separate** Execut
 4. `browser.navigate` / `browser.snapshot` / `browser.screenshot` / `browser.session.close` all pass that `sessionId` (catalog requirement).
 5. Findings (page labels + accessibility excerpts) go into consolidate → planner.
 
-If the browser connector is unbound, the URL is missing, or navigate fails validation, Explore UI **fails** (not a fake Done).
+If the browser connector is unbound, the URL is missing, navigate fails validation, or the accessibility snapshot is empty after settle/retry, Explore UI **fails** (not a fake Done with `Snapshot: _(empty)_`). A successful Explore UI MD artifact includes page title, cues (links/buttons/fields), and a fenced YAML accessibility tree for the planner.
 
 ### Explore code (bound source repo)
 
@@ -107,7 +107,7 @@ Source repositories remain read-only. See [`adr/0012-source-repositories-are-rea
 4. On **Run**, enter the work item id (e.g. `7189`) and application name. When **Explore UI** is on, select an environment so Playwright can open its URL before planning. When **Explore code** is on, bind a source-repo connector (with a repository name when possible).
 5. Confirm stage Done / Failed lines:
    - Read acknowledges the work item **title** (from Azure Boards `fields.System.Title`), e.g. `Read work item 7189 — PayNSure checkout.` A short description excerpt may follow. If the title could not be loaded, the Done line says why (work-item connector missing / denied / empty System.Title).
-   - Explore UI Done names the visited **URL**(s); Failed means session/navigate/allowlist issues — fix before planning (not a blank “failed without a summary”)
+   - Explore UI Done names the visited **URL**(s) and the MD artifact has a non-empty YAML snapshot; Failed means session/navigate/allowlist/empty-snapshot issues — fix before planning (not a blank “failed without a summary”)
    - Explore code Done **lists human file paths visited** (e.g. `src/pay/CardList.tsx`), never git commit SHAs; Failed means missing repo/connector — fix before planning
    - Plan names `playwright-test-planner` and a `.plan.md` artifact with many scenarios whose names include the work item title
    - Generate names `playwright-test-generator` with case count matching the plan (same titled case names)

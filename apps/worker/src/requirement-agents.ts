@@ -129,10 +129,12 @@ export async function performRequirementStep(
     if (explored.source === 'skipped') {
       throw new PlatformError('validation', explored.summary || 'Explore UI did not open the application.');
     }
-    const details = explored.details.map(({ scenarioName, url: pageUrl, snapshotExcerpt }) => ({
+    const details = explored.details.map(({ scenarioName, url: pageUrl, snapshotExcerpt, title, cuesSummary }) => ({
       scenarioName,
       url: pageUrl,
       snapshotExcerpt,
+      ...(title ? { title } : {}),
+      ...(cuesSummary ? { cuesSummary } : {}),
     }));
     const artifactMarkdown = renderExploreUiMarkdown({
       workItem,
