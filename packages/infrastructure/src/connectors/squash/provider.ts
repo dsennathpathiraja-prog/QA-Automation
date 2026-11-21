@@ -238,14 +238,15 @@ class SquashClient implements ConnectorClient {
       support: supported.has('tm.testcase.list') ? 'supported' : 'unsupported',
       reason: 'Per test case: GET /test-cases/{id}/executions (checked when first used)',
     });
+    // Execution writes follow the token permission (create under an iteration, then PATCH status).
+    // Do not gate on tm.iteration.list — Squash often refuses the global /iterations list while
+    // POST /iterations/{id}/executions and campaign-scoped iteration reads still work.
     out.push({
       capability: 'tm.execution.upsert',
-      support: !supported.has('tm.iteration.list') ? 'unsupported' : canWrite ? 'supported' : 'partial',
-      reason: !supported.has('tm.iteration.list')
-        ? 'Needs an iteration list'
-        : canWrite
-          ? 'POST /iterations/{id}/executions records a run for a Squash test case'
-          : 'The token does not show WRITE. Execution status stays on the platform until the token is READ_WRITE.',
+      support: canWrite ? 'supported' : 'partial',
+      reason: canWrite
+        ? 'POST /iterations/{id}/executions records a run for a Squash test case'
+        : 'The token does not show WRITE. Execution status stays on the platform until the token is READ_WRITE.',
     });
     out.push({
       capability: 'tm.execution.status.update',
@@ -599,10 +600,26 @@ class SquashClient implements ConnectorClient {
   }
 
   private async firstIterationId(signal?: AbortSignal): Promise<string> {
-    const items = await this.collect('/iterations', 'iterations', signal);
-    const id = String(items[0]?.id ?? '');
-    if (!/^\d+$/.test(id)) throw new PlatformError('validation', 'Squash has no iteration this token can use for an execution.');
-    return id;
+    try {
+      const items = await this.collect('/iterations', 'iterations', signal);
+      const id = String(items[0]?.id ?? '');
+      if (/^\d+$/.test(id)) return id;
+    } catch {
+      // Global list may be refused; fall through to campaign-scoped iterations.
+    }
+    const campaigns = await this.collect('/campaigns', 'campaigns', signal);
+    for (const campaign of campaigns) {
+      const campaignId = String(campaign.id ?? '');
+      if (!/^\d+$/.test(campaignId)) continue;
+      try {
+        const items = await this.collect(`/campaigns/${campaignId}/iterations`, 'iterations', signal);
+        const id = String(items[0]?.id ?? '');
+        if (/^\d+$/.test(id)) return id;
+      } catch {
+        continue;
+      }
+    }
+    throw new PlatformError('validation', 'Squash has no iteration this token can use for an execution.');
   }
 
   private async get(path: string, query: Record<string, string | number>, signal?: AbortSignal): Promise<Json> {
