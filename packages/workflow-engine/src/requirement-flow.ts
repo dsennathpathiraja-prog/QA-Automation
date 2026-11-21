@@ -47,6 +47,24 @@ export function workItemIdFromStory(raw: string): string {
 }
 
 /**
+ * Title line from a connector-enriched story blob: the first non-empty line after the
+ * work-item id, before any blank line or section heading (matches storyFromWorkItem).
+ */
+export function workItemTitleFromStory(raw: string): string {
+  const lines = raw.replace(/\r/g, '').split('\n');
+  const firstIdx = lines.findIndex((line) => line.trim());
+  if (firstIdx < 0) return '';
+  for (let i = firstIdx + 1; i < lines.length; i += 1) {
+    const rawLine = lines[i] ?? '';
+    if (!rawLine.trim()) return '';
+    const line = stripBullet(rawLine);
+    if (!line || isSectionHeading(line) || isGwt(line)) return '';
+    return line.slice(0, 200);
+  }
+  return '';
+}
+
+/**
  * Lines under an "Acceptance criteria" heading, Given/When/Then blocks, or bullets.
  * The work-item id on the first line is never treated as a criterion by itself.
  */
@@ -182,7 +200,8 @@ const casesOf = (value: unknown): FlowCase[] => {
 /**
  * One requirement-validation stage.
  * Order: explore UI/code → consolidate → plan (MD) → generate → heal → publish.
- * This sync path does not call a browser, a repository, or Squash.
+ * This sync path is the offline / unit-test fallback: the worker binds Playwright
+ * and source-repo connectors for real exploration before planning.
  */
 export function runFlowStep(step: FlowStep): FlowResult {
   const story = text(step.params.story);
@@ -206,11 +225,26 @@ export function runFlowStep(step: FlowStep): FlowResult {
       const found = acceptanceLines(story);
       const onlyId = found.length === 0 || (found.length === 1 && found[0] === workItem);
       const acceptanceCriteria = onlyId ? [] : found;
+      const title = text(step.params.workItemTitle) || workItemTitleFromStory(story);
+      const fetchNote = text(step.params.workItemFetchNote);
+      const titled = title
+        ? `Read work item ${workItem} — ${title}.`
+        : `Read work item ${workItem || '(none)'}.`;
+      const acPart = acceptanceCriteria.length > 0
+        ? `${acceptanceCriteria.length} acceptance criteria.`
+        : 'The story text has no separate acceptance criteria, so the plan uses the work item itself.';
+      const missPart = !title && fetchNote ? ` ${fetchNote}` : '';
       return {
-        summary: acceptanceCriteria.length > 0
-          ? `Read work item ${workItem}. ${acceptanceCriteria.length} acceptance criteria.`
-          : `Read work item ${workItem || '(none)'}. The story text has no separate acceptance criteria, so the plan uses the work item itself.`,
-        outputs: { story, workItem, acceptanceCriteria, applicationName: application, environment },
+        summary: `${titled}${missPart} ${acPart}`,
+        outputs: {
+          story,
+          workItem,
+          title: title || undefined,
+          acceptanceCriteria,
+          applicationName: application,
+          environment,
+          ...(fetchNote ? { fetchNote } : {}),
+        },
       };
     }
     case 'rv.explore-ui':
@@ -225,7 +259,7 @@ export function runFlowStep(step: FlowStep): FlowResult {
     case 'rv.explore-code':
       // Offline / unit-test stub only. The worker must wire createCodeExplorer.
       return {
-        summary: 'Offline source stub: worker did not search the bound repository (no code explorer port).',
+        summary: `Offline source stub for ${application}: worker did not search the bound repository (no code explorer port).`,
         outputs: { findings: 'repository not read', source: 'offline-stub' },
       };
     case 'rv.consolidate-findings': {

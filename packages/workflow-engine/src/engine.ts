@@ -86,6 +86,7 @@ export async function tick(store: EngineStore, opts: TickOptions): Promise<'busy
     } catch (e) {
       const message = e instanceof Error ? e.message : 'The step failed.';
       await store.save(run.id, { status: 'failed', ...clear });
+      // summary mirrors message so Executions / Workflow Run UIs that only read summary still show the error.
       await store.append(run.id, 'step.failed', { stepId: step.id, stepType: step.type, message, summary: message });
       return 'busy';
     }

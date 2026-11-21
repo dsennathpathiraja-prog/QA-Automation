@@ -81,6 +81,11 @@ export function WorkflowPage() {
   const [runId, setRunId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<'ask' | 'force' | undefined>();
   const savedConnectors = useQuery({ queryKey: ['connectors'], queryFn: () => api.get('/api/v1/connectors', ConnectorListResponse), enabled: session.can('connector.view_status') });
+  const environments = useQuery({
+    queryKey: ['environments'],
+    queryFn: () => api.get('/api/v1/environments', EnvironmentListResponse),
+    enabled: session.can('environment.view'),
+  });
   const def = edited ?? (definition.data?.definition as Def | undefined);
   const draft = workflow.data?.status === 'draft';
   const canEdit = draft && session.can('workflow.edit');
@@ -128,14 +133,17 @@ export function WorkflowPage() {
   const generation = workflow.data?.type === 'requirement-validation';
   const steps = (def?.spec?.steps ?? []).filter((s) => !(generation && ['rv.execute-tests', 'rv.sync-results', 'rv.qa-report'].includes(s.type)));
   const enabled = steps.filter((s) => s.enabled !== false);
-  const exploreUiOn = enabled.some((s) => s.type === 'rv.explore-ui');
-  const exploreCodeOn = enabled.some((s) => s.type === 'rv.explore-code');
-  const environments = useQuery({
-    queryKey: ['environments'],
-    queryFn: () => api.get('/api/v1/environments', EnvironmentListResponse),
-    enabled: exploreUiOn && session.can('environment.view'),
-  });
+  const exploreUiOn = enabled.some((s) => s.type === 'rv.explore-ui' || s.id === 'explore_ui');
+  const exploreCodeOn = enabled.some((s) => s.type === 'rv.explore-code' || s.id === 'explore_code');
+  const selectableEnvironments = (environments.data?.items ?? []).filter((item) => item.enabled && item.selectable);
   const stepEvents = (events.data?.items ?? []).filter((event) => event.kind === 'step.completed' || event.kind === 'step.failed');
+  const runParams = (def?.spec?.parameters ?? []).filter((p) => {
+    if (p.pinned !== undefined && p.pinned !== null) return false;
+    if (p.name === 'environment') return exploreUiOn;
+    return p.required;
+  });
+  const missingEnvironment = exploreUiOn && !params.environment;
+  const canStartRun = !start.isPending && !(exploreUiOn && !params.environment);
 
   return (
     <>
@@ -295,37 +303,46 @@ export function WorkflowPage() {
                 <Alert severity="info">Publish this workflow before starting a run. The worker runs the steps; this page only starts it and shows each step&apos;s output.</Alert>
               )}
               {workflow.data?.status === 'published' && session.can('execution.start') && (
-                <Stack component="form" spacing={2} sx={{ mb: 2 }} onSubmit={(e) => { e.preventDefault(); start.mutate(); }}>
-                  {generation && (
+                <Stack component="form" spacing={2} sx={{ mb: 2 }} onSubmit={(e) => { e.preventDefault(); if (!canStartRun) return; start.mutate(); }}>
+                  {generation && exploreUiOn && (
                     <Alert severity="info">
-                      Starting this run prepares cases (explore → plan → generate → heal → publish).
-                      {exploreUiOn ? ' Explore UI opens the environment URL with Playwright before planning.' : ''}
+                      Explore UI opens the selected environment with Playwright (MCP session → navigate) before planning. Pick an environment so the browser can load the application URL.
                       {exploreCodeOn ? ' Explore code searches the bound source repository before planning.' : ''}
-                      {' '}Running prepared cases against an environment later is a separate action on Executions.
+                      {' '}Running prepared cases later is still a separate action on Executions.
                     </Alert>
                   )}
-                  {(def.spec?.parameters ?? []).filter((p) => {
-                    if (p.pinned !== undefined && p.pinned !== null) return false;
-                    if (p.name === 'environment') return exploreUiOn;
-                    return p.required;
-                  }).map((p) => (
-                    p.name === 'environment' && exploreUiOn ? (
-                      <FormControl key={p.name} fullWidth required>
-                        <InputLabel id="run-environment-label">Environment</InputLabel>
+                  {generation && !exploreUiOn && (
+                    <Alert severity="info">
+                      Starting this run prepares cases
+                      {exploreCodeOn ? ' (Explore code searches the bound repository before planning)' : ''}.
+                      {' '}Running the work item against an environment is a separate action on Executions.
+                    </Alert>
+                  )}
+                  {runParams.map((p) => (
+                    p.name === 'environment' || p.type === 'environment-ref' ? (
+                      <FormControl key={p.name} fullWidth required={exploreUiOn} error={missingEnvironment}>
+                        <InputLabel id={`param-${p.name}-label`}>Environment</InputLabel>
                         <Select
-                          labelId="run-environment-label"
-                          id="param-environment"
+                          labelId={`param-${p.name}-label`}
+                          id={`param-${p.name}`}
                           label="Environment"
                           value={params.environment ?? ''}
                           onChange={(e) => setParams({ ...params, environment: String(e.target.value) })}
                         >
-                          {(environments.data?.items ?? []).filter((item) => item.enabled && item.selectable).map((item) => (
+                          <MenuItem value="">Select environment</MenuItem>
+                          {selectableEnvironments.map((item) => (
                             <MenuItem key={item.id} value={item.id}>{item.name} · {item.kind}</MenuItem>
                           ))}
                         </Select>
-                        {environments.isError && <Alert severity="error" sx={{ mt: 1 }}>Environments could not be loaded.</Alert>}
-                        {environments.data && environments.data.items.filter((item) => item.enabled && item.selectable).length === 0 && (
-                          <Alert severity="warning" sx={{ mt: 1 }}>Create and enable an environment with an application URL before Explore UI.</Alert>
+                        {selectableEnvironments.length === 0 && (
+                          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                            No selectable environment yet. Create and enable one under Environments, then return here.
+                          </Typography>
+                        )}
+                        {missingEnvironment && selectableEnvironments.length > 0 && (
+                          <Typography variant="caption" color="error" sx={{ mt: 0.5 }}>
+                            Environment is required so Explore UI can open the application.
+                          </Typography>
                         )}
                       </FormControl>
                     ) : (
@@ -339,18 +356,12 @@ export function WorkflowPage() {
                         value={params[p.name] ?? ''}
                         onChange={(e) => setParams({ ...params, [p.name]: e.target.value })}
                         fullWidth
-                        required={p.required || (p.name === 'environment' && exploreUiOn)}
+                        required={p.required}
                       />
                     )
                   ))}
                   <Box>
-                    <Button
-                      type="submit"
-                      variant="contained"
-                      disabled={start.isPending || (exploreUiOn && !params.environment)}
-                    >
-                      Start run
-                    </Button>
+                    <Button type="submit" variant="contained" disabled={!canStartRun}>Start run</Button>
                   </Box>
                   {start.isError && <ErrorNotice message={errorText(start.error, 'The run could not be started.')} />}
                 </Stack>
@@ -371,7 +382,7 @@ export function WorkflowPage() {
                   const summary = typeof event.payload.summary === 'string' ? event.payload.summary : '';
                   const message = typeof event.payload.message === 'string' ? event.payload.message : '';
                   const failed = event.kind === 'step.failed';
-                  const detail = summary || message;
+                  const output = summary || message;
                   return (
                     <Paper key={event.seq} variant="outlined" sx={{ p: 1.5 }}>
                       <Stack direction="row" spacing={1} useFlexGap sx={{ mb: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -381,7 +392,7 @@ export function WorkflowPage() {
                       </Stack>
                       <Typography variant="subtitle2" color="text.secondary">Output</Typography>
                       <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                        {detail || (failed ? 'This step failed without a summary.' : 'This step completed without a summary.')}
+                        {output || (failed ? 'This step failed without a summary.' : 'This step completed without a summary.')}
                       </Typography>
                     </Paper>
                   );

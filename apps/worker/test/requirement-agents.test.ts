@@ -3,24 +3,26 @@ import type { BrowserExplorerPort, CodeExplorerPort, TestGeneratorPort, TestHeal
 import { performRequirementStep } from '../src/requirement-agents';
 
 describe('performRequirementStep', () => {
-  it('requires a browser explorer for rv.explore-ui and records real findings', async () => {
+  it('requires a browser explorer for rv.explore-ui and resolves the environment URL', async () => {
     await expect(performRequirementStep(
       {
         id: 'explore_ui',
         type: 'rv.explore-ui',
         runId: 'run-1',
-        params: { applicationName: 'PayNSure', environment: 'qa-env' },
+        params: { applicationName: 'PayNSure', environment: 'env-qa' },
         prior: { read_story: { workItem: '7189', acceptanceCriteria: ['listed'] } },
       },
       {},
     )).rejects.toMatchObject({ errorClass: 'denied' });
 
+    let seenUrl: string | undefined;
     const explorer: BrowserExplorerPort = {
-      async explore() {
+      async explore(input) {
+        seenUrl = input.url;
         return {
-          summary: 'opened 1 page',
-          findings: '- Pay @ https://shop.example.com',
-          details: [{ scenarioName: 'Pay', url: 'https://shop.example.com', snapshotExcerpt: 'button Pay' }],
+          summary: `Visited ${input.url} (1 page snapshot) for ${input.application} before planning.`,
+          findings: `page @ ${input.url}`,
+          details: [{ scenarioName: 'home', url: input.url ?? '', snapshotExcerpt: 'button Pay' }],
           source: 'browser',
         };
       },
@@ -30,19 +32,21 @@ describe('performRequirementStep', () => {
         id: 'explore_ui',
         type: 'rv.explore-ui',
         runId: 'run-1',
-        params: { applicationName: 'PayNSure', environment: 'qa-env' },
+        params: { applicationName: 'PayNSure', environment: 'env-qa' },
         prior: { read_story: { workItem: '7189', acceptanceCriteria: ['listed'] } },
       },
       {
         explorer,
-        resolveEnvironmentUrl: async () => 'https://shop.example.com',
+        resolveEnvironmentUrl: async (id) => (id === 'env-qa' ? 'https://qa.shop.example/' : undefined),
       },
     );
+    expect(seenUrl).toBe('https://qa.shop.example/');
+    expect(out.summary).toMatch(/Visited/);
     expect(out.outputs.source).toBe('browser');
-    expect(out.summary).toMatch(/opened 1 page/);
+    expect(out.outputs.findings).toMatch(/qa\.shop\.example/);
   });
 
-  it('requires a code explorer for rv.explore-code', async () => {
+  it('requires a code explorer for rv.explore-code and records file findings', async () => {
     await expect(performRequirementStep(
       {
         id: 'explore_code',
@@ -55,11 +59,11 @@ describe('performRequirementStep', () => {
     )).rejects.toMatchObject({ errorClass: 'denied' });
 
     const codeExplorer: CodeExplorerPort = {
-      async explore() {
+      async explore(input) {
         return {
-          summary: 'source-repo read 1 file',
-          findings: '- src/Pay.tsx',
-          details: [{ path: 'src/Pay.tsx', query: 'pay', snippet: 'Pay', contentExcerpt: 'export function Pay' }],
+          summary: `Visited files: src/pay.ts for ${input.application} before planning.`,
+          findings: '- src/pay.ts\n  export function pay()',
+          details: [{ path: 'src/pay.ts', excerpt: 'export function pay()' }],
           source: 'repo',
           repo: 'shop',
         };
@@ -71,12 +75,13 @@ describe('performRequirementStep', () => {
         type: 'rv.explore-code',
         runId: 'run-1',
         params: { applicationName: 'PayNSure' },
-        prior: { read_story: { workItem: '7189', acceptanceCriteria: ['listed'] } },
+        prior: { read_story: { workItem: '7189', acceptanceCriteria: ['pay'] } },
       },
       { codeExplorer },
     );
+    expect(out.summary).toMatch(/Visited files: src\/pay\.ts/);
     expect(out.outputs.source).toBe('repo');
-    expect(out.summary).toMatch(/source-repo read/);
+    expect(out.outputs.findings).toMatch(/pay\.ts/);
   });
 
   it('uses the planner port for rv.generate-test-plan and persists MD outputs', async () => {

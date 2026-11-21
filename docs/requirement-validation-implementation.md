@@ -20,14 +20,14 @@ When no model is configured, the description-aware heuristic runs and the Done l
 ## 3. Walk the UI (before planning)
 **Partial.** Explore UI runs **before** the planner. When enabled, an environment URL resolves, and a Playwright browser connector is bound, the worker opens the address, takes accessibility snapshots and screenshots for acceptance-criteria cues, and passes findings into consolidate → plan. It may open only the addresses listed on the browser connector. It does not submit a payment, delete data, or type a one-time code. Without those bindings the stage records a skip note and the run continues.
 
-Done when the UI stage Done line names the pages it opened; screenshot bytes stay out of step outputs (execution stores screenshots later).
+Done when the UI stage Done line acknowledges the visited website URL; screenshot bytes stay out of step outputs (execution stores screenshots later).
 
 ## 4. Read the source
 The bound GitHub or Azure DevOps connector lists and reads the files that match the scenarios. The notes say which files were read and what they check. The connector stays read-only. Nothing is committed, pushed, or edited in that repository.
 
 This slice can be built beside slice 3. Both have to finish before slice 5.
 
-Done when the source stage Done line names the files it read. A repository token that can push is still refused.
+Done when the source stage Done line lists the files visited. A repository token that can push is still refused.
 
 ## 5. Use the findings when planning and generating
 The consolidate stage joins the story, the UI notes, and the source notes. The **planner** receives those findings and embeds them in the Markdown plan. The **generator** consumes that MD plan (plus findings) so each Playwright test can mention the page or control exploration found. The reference stays stable for that work item and scenario, so Squash is not given a duplicate.

@@ -1,8 +1,8 @@
 import {
   parsePlanMarkdown,
   type BrowserExplorerPort,
-  type CodeExplorerPort,
   type CodeExploreResult,
+  type CodeExplorerPort,
   type ExploreResult,
   type GenerateResult,
   type HealResult,
@@ -82,7 +82,7 @@ export interface RequirementAgentPorts {
 
 /**
  * Runs one requirement-validation stage through planner / generator / healer / browser
- * agents when wired, otherwise falls back to the sync heuristic flow in workflow-engine.
+ * / source-repo agents when wired, otherwise falls back to the sync heuristic flow in workflow-engine.
  *
  * Order: explore → consolidate → plan (MD) → generate (from MD) → heal → publish.
  * Explore UI / Explore code must succeed (real connector calls) before plan runs.
@@ -156,12 +156,7 @@ export async function performRequirementStep(
       summary: explored.summary,
       outputs: {
         findings: explored.findings,
-        details: explored.details.map(({ path, query, snippet, contentExcerpt }) => ({
-          path,
-          query,
-          snippet,
-          contentExcerpt,
-        })),
+        details: explored.details.map(({ path, excerpt, query }) => ({ path, excerpt, query })),
         source: explored.source,
         repo: explored.repo,
       },

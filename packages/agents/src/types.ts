@@ -130,6 +130,7 @@ export interface CodeExploreRequest {
   /** Bound repository name when known; otherwise the connector config supplies it. */
   repo?: string;
   criteria?: string[];
+  /** Cap files / excerpts for a single run. */
   maxFiles?: number;
   maxQueries?: number;
   executionId?: string;
@@ -138,9 +139,8 @@ export interface CodeExploreRequest {
 
 export interface CodeFinding {
   path: string;
-  query: string;
-  snippet: string;
-  contentExcerpt: string;
+  excerpt: string;
+  query?: string;
 }
 
 export interface CodeExploreResult {
@@ -184,8 +184,12 @@ export interface BrowserAutomationPort {
   closeSession(): Promise<void>;
 }
 
-/** Thin source-repo surface for Explore code (scm.code.search + scm.file.read). */
+/**
+ * Thin source-repo surface for Explore code.
+ * Callers may omit `repo` when the connector binds one; the manager injects config.repo.
+ */
 export interface SourceRepoPort {
-  search(input: { query: string; repo?: string; branch?: string }): Promise<{ path: string; snippet: string }[]>;
+  search(input: { query: string; repo?: string; branch?: string }): Promise<{ items: { path: string; snippet: string }[] }>;
+  listTree(input?: { path?: string; repo?: string; branch?: string }): Promise<{ entries: { path: string; type: 'file' | 'dir' }[] }>;
   readFile(input: { path: string; repo?: string; branch?: string }): Promise<{ path: string; content: string; truncated: boolean }>;
 }

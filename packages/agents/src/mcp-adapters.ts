@@ -274,12 +274,22 @@ export function explorerPortFromBrowserMcp(mcp: PlaywrightBrowserMcp): BrowserEx
             screenshotBase64: shot.data || undefined,
           });
         }
+      } catch (e) {
+        const reason = e instanceof Error ? e.message : 'unknown error';
+        return {
+          summary: `UI note for ${input.application}: could not explore ${input.url} (${reason}).`,
+          findings: `url ${input.url}; browser unavailable`,
+          details: [],
+          source: 'skipped',
+        };
       } finally {
         await mcp.close().catch(() => undefined);
       }
       const findings = details.map((d) => `${d.scenarioName} @ ${d.url}: ${d.snapshotExcerpt.slice(0, 240)}`).join('\n') || `opened ${input.url}`;
+      const visitedUrls = [...new Set(details.map((d) => d.url).filter(Boolean))];
+      const urlList = (visitedUrls.length > 0 ? visitedUrls : [input.url]).join(', ');
       return {
-        summary: `${PLAYWRIGHT_MCP_ROLES.browser} opened ${details.length} page${details.length === 1 ? '' : 's'} for ${input.application} (before planning).`,
+        summary: `Visited ${urlList} (${details.length} page snapshot${details.length === 1 ? '' : 's'}) for ${input.application} before planning.`,
         findings,
         details,
         source: 'mcp',

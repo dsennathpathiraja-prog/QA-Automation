@@ -42,6 +42,7 @@ describe('browser explorer', () => {
     });
     expect(out.source).toBe('browser');
     expect(out.details[0]?.snapshotExcerpt).toMatch(/Pay/);
+    expect(out.summary).toMatch(/Visited https:\/\/shop\.example\.com\/pay/);
     expect(calls).toEqual(['open', 'nav:https://shop.example.com/pay', 'close']);
   });
 
@@ -72,6 +73,18 @@ describe('browser explorer', () => {
     await expect(createBrowserExplorer(browser).explore({
       application: 'PayNSure',
       url: 'https://shop.example.com',
+      scenarios: [],
+    })).rejects.toMatchObject({ errorClass: 'denied' });
+  });
+
+  it('fails when navigate hits an allowlist error', async () => {
+    const browser = browserPortFromInvoker(async (capability) => {
+      if (capability === 'browser.session.open') return { sessionId: 'sess-1' };
+      throw new PlatformError('denied', 'The browser may not open https://shop.example.com. Add it to the application addresses for this connector.');
+    });
+    await expect(createBrowserExplorer(browser).explore({
+      application: 'PayNSure',
+      url: 'https://shop.example.com/checkout',
       scenarios: [],
     })).rejects.toMatchObject({ errorClass: 'denied' });
   });

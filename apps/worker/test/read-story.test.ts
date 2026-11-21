@@ -35,19 +35,43 @@ describe('read-story enrichment', () => {
       actor: { type: 'step', id: 'read_story', executionId: 'run-1', stepId: 'read_story' },
     });
     expect(invoke).toHaveBeenCalledWith(expect.objectContaining({ role: 'workItemSource', capability: 'workitem.read', input: { id: '7189' } }));
-    expect(out?.fetched).toBe(true);
-    expect(out?.workItem).toBe('7189');
-    expect(out?.story).toContain('Card is shown');
-    expect(out?.story).toContain('Extra pasted criterion');
+    expect(out.status).toBe('enriched');
+    if (out.status !== 'enriched') return;
+    expect(out.enrichment.fetched).toBe(true);
+    expect(out.enrichment.workItem).toBe('7189');
+    expect(out.enrichment.title).toBe('PayNSure checkout');
+    expect(out.enrichment.story).toContain('Card is shown');
+    expect(out.enrichment.story).toContain('Extra pasted criterion');
   });
 
-  it('leaves the pasted story alone when the connector is missing or denied', async () => {
-    expect(await enrichStoryFromConnector({ story: '7189', actor: { type: 'step', id: 'a', executionId: 'b', stepId: 'a' } })).toBeUndefined();
+  it('reports a miss when the connector is missing or denied', async () => {
+    const missing = await enrichStoryFromConnector({
+      story: '7189',
+      actor: { type: 'step', id: 'a', executionId: 'b', stepId: 'a' },
+    });
+    expect(missing.status).toBe('missed');
+    if (missing.status === 'missed') {
+      expect(missing.workItem).toBe('7189');
+      expect(missing.reason).toMatch(/title was not loaded/i);
+    }
+
     const invoke = vi.fn().mockRejectedValue(new PlatformError('denied', 'No work-item connector is bound'));
-    expect(await enrichStoryFromConnector({
+    const denied = await enrichStoryFromConnector({
       story: '7189',
       connectors: { invoke } as never,
       actor: { type: 'step', id: 'a', executionId: 'b', stepId: 'a' },
-    })).toBeUndefined();
+    });
+    expect(denied.status).toBe('missed');
+    if (denied.status === 'missed') {
+      expect(denied.workItem).toBe('7189');
+      expect(denied.reason).toMatch(/No work-item connector is bound/);
+    }
+  });
+
+  it('returns none when the story has no work item id', async () => {
+    expect(await enrichStoryFromConnector({
+      story: 'just a pasted story',
+      actor: { type: 'step', id: 'a', executionId: 'b', stepId: 'a' },
+    })).toEqual({ status: 'none' });
   });
 });

@@ -92,12 +92,12 @@ A checked-in template without secrets: [`deploy/cursor/mcp.json.example`](../dep
 ## Retest with a work item id (e.g. 7189 / PayNSure)
 
 1. Ensure Azure Boards (or Jira) is bound as **Work items**, tested, and switched on.
-2. Optional: bind Playwright browser + an environment whose URL is on the browser allowlist; set `OLLAMA_URL` for model-backed plans.
+2. Bind Playwright browser when Explore UI is on, plus a selectable environment whose URL is on the browser allowlist. Bind a source-repo connector when Explore code is on. Optional: set `OLLAMA_URL` for model-backed plans.
 3. Publish the requirement-validation workflow if needed.
-4. On **Run**, enter only `7189` in the story field and the application name (e.g. PayNSure). Do not paste AC unless you want extra lines.
+4. On **Run**, enter only `7189` in the story field and the application name (e.g. PayNSure). When Explore UI is on, select the environment (required in the Run form). Do not paste AC unless you want extra lines.
 5. Start the run.
-6. **Read** should report N acceptance criteria from Description / AC (N > 0).
-7. **Explore** (when enabled) runs **before** Plan and records UI/source notes.
+6. **Read** Done line should acknowledge the work item **title** and report N acceptance criteria from Description / AC (N > 0).
+7. **Explore** (when enabled) runs **before** Plan: UI Done line acknowledges the visited website **URL**; code Done line **lists the files visited** (not the offline skip notes).
 8. **Plan** Done line should name `playwright-test-planner`, a `.plan.md` artifact, and **many** Positive / Negative / Edge scenarios (more than 3×N when Description paths exist).
 9. **Generate** consumes that MD plan; **Heal** fixes broken stubs; Test Cases (and Squash when READ_WRITE) list those cases under work item `7189`.
 
