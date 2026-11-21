@@ -292,7 +292,7 @@ describe('source and work-item providers', () => {
     const m = await mock((hit) => {
       const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string; arguments?: { url?: string; fullPage?: boolean; type?: string } } };
       if (body.method === 'initialize') return { body: { result: { serverInfo: { name: 'playwright', version: '1.2.3' } } } };
-      if (body.method === 'tools/list') return { body: { result: { tools: ['browser_navigate', 'browser_snapshot', 'browser_wait_for', 'browser_click', 'browser_type', 'browser_select_option', 'browser_press_key', 'browser_take_screenshot', 'browser_network_requests', 'browser_close'].map((name) => ({ name })) } } };
+      if (body.method === 'tools/list') return { body: { result: { tools: ['browser_navigate', 'browser_snapshot', 'browser_wait_for', 'browser_evaluate', 'browser_click', 'browser_type', 'browser_select_option', 'browser_press_key', 'browser_take_screenshot', 'browser_network_requests', 'browser_close'].map((name) => ({ name })) } } };
       if (body.params?.name === 'browser_snapshot' || body.params?.name === 'browser_wait_for' || body.params?.name === 'browser_navigate') {
         return { body: { result: { content: [{ type: 'text', text: pageState }] } } };
       }
@@ -336,6 +336,33 @@ describe('source and work-item providers', () => {
       errorClass: 'transient',
       message: expect.stringMatching(/no content/i),
     });
+  });
+
+  it('waits and evaluates through Playwright MCP tools for SPA / DOM probe', async () => {
+    const pageState = `### Page state\n- Page URL: http://sdk.paynsure.internal/shop\n- Page Title: Metro Mobile Store\n- Page Snapshot:\n\`\`\`yaml\n- button "Add to cart" [ref=e1]\n\`\`\`\n`;
+    const evalBody = `### Result\n${JSON.stringify({ url: 'http://sdk.paynsure.internal/shop', title: 'Metro Mobile Store', buttons: ['Add to cart'] }, null, 2)}\n\n${pageState}`;
+    const m = await mock((hit) => {
+      const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string; arguments?: Record<string, unknown> } };
+      if (body.method === 'initialize') return { body: { result: { serverInfo: { name: 'playwright', version: '1.2.3' } } } };
+      if (body.params?.name === 'browser_wait_for') {
+        expect(body.params.arguments?.text === 'Add to cart' || typeof body.params.arguments?.time === 'number').toBe(true);
+        return { body: { result: { content: [{ type: 'text', text: pageState }] } } };
+      }
+      if (body.params?.name === 'browser_evaluate') {
+        expect(String(body.params.arguments?.function || '')).toMatch(/=>/);
+        return { body: { result: { content: [{ type: 'text', text: evalBody }] } } };
+      }
+      return { body: { result: { content: [] } } };
+    });
+    const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'http://sdk.paynsure.internal' }, undefined, { http: m.http });
+    const opened = await client.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
+    await expect(client.handle({ id: 'browser.wait' } as never, { sessionId: opened.sessionId, text: 'Add to cart' }, {} as never)).resolves.toMatchObject({
+      ok: true,
+      title: 'Metro Mobile Store',
+    });
+    const evaluated = await client.handle({ id: 'browser.evaluate' } as never, { sessionId: opened.sessionId, script: '() => ({ ok: true })' }, {} as never) as { resultText: string; title?: string };
+    expect(evaluated.resultText).toMatch(/Add to cart/);
+    expect(evaluated.title).toBe('Metro Mobile Store');
   });
 
   it('accepts a bare host in Playwright allowedOrigins (URL vs host)', async () => {

@@ -16,6 +16,8 @@ const ConfigSchema = z.object({
 const TOOLS: Record<string, string> = {
   'browser.navigate': 'browser_navigate',
   'browser.snapshot': 'browser_snapshot',
+  'browser.wait': 'browser_wait_for',
+  'browser.evaluate': 'browser_evaluate',
   'browser.screenshot': 'browser_take_screenshot',
   'browser.network.observe': 'browser_network_requests',
   'browser.session.close': 'browser_close',
@@ -30,7 +32,7 @@ export const playwrightMcpProvider: ConnectorProvider = {
     displayName: 'Playwright (managed)',
     description: 'Drives a browser through the Playwright server this platform runs. For an application that asks for a second factor, capture a browser session once and name it here. The platform reuses that session and does not see the code.',
     authMethods: [],
-    capabilities: ['browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.interact', 'browser.screenshot', 'browser.network.observe', 'browser.session.close'],
+    capabilities: ['browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.wait', 'browser.evaluate', 'browser.interact', 'browser.screenshot', 'browser.network.observe', 'browser.session.close'],
     requiredPermissions: ['None. The server runs inside the platform and reaches only the addresses you list.'],
     accessModePolicy: 'read_write',
     requiresInternet: false,
@@ -269,9 +271,9 @@ class PlaywrightClient implements ConnectorClient {
       const navArgs: Record<string, unknown> = { url };
       const navResult = await this.rpcCall('tools/call', { name: 'browser_navigate', arguments: navArgs });
       let text = toolText(navResult);
-      // Give SPAs a short settle window; browser_wait_for also re-attaches a snapshot.
+      // Give SPAs a settle window; browser_wait_for also re-attaches a snapshot.
       try {
-        const waited = await this.rpcCall('tools/call', { name: 'browser_wait_for', arguments: { time: 1.5 } });
+        const waited = await this.rpcCall('tools/call', { name: 'browser_wait_for', arguments: { time: 2.5 } });
         const waitedText = toolText(waited);
         if (waitedText.length >= text.length) text = waitedText;
       } catch {
@@ -298,6 +300,46 @@ class PlaywrightClient implements ConnectorClient {
       return {
         accessibilityTree: meta.accessibilityTree,
         url: meta.url || String((result as { url?: string })?.url ?? ''),
+        title: meta.title || undefined,
+      };
+    }
+    if (cap.id === 'browser.wait') {
+      required(i.sessionId, 'sessionId');
+      const timeRaw = (input as { timeSeconds?: number })?.timeSeconds;
+      const text = typeof i.text === 'string' && i.text.trim() ? i.text.trim() : undefined;
+      const time = typeof timeRaw === 'number' && Number.isFinite(timeRaw) ? Math.min(30, Math.max(0.1, timeRaw)) : undefined;
+      if (!text && time === undefined) {
+        throw new PlatformError('validation', 'browser.wait needs timeSeconds and/or text');
+      }
+      const args: Record<string, unknown> = {};
+      if (text) args.text = text;
+      if (time !== undefined) args.time = time;
+      const result = await this.rpcCall('tools/call', { name: 'browser_wait_for', arguments: args });
+      const body = toolText(result);
+      const meta = pageMetaFromToolText(body);
+      return {
+        ok: true,
+        accessibilityTree: meta.accessibilityTree || undefined,
+        url: meta.url || undefined,
+        title: meta.title || undefined,
+      };
+    }
+    if (cap.id === 'browser.evaluate') {
+      required(i.sessionId, 'sessionId');
+      const script = required(i.script, 'script');
+      const result = await this.rpcCall('tools/call', { name: 'browser_evaluate', arguments: { function: script } });
+      const body = toolText(result);
+      if (!body) {
+        throw new PlatformError('transient', 'Playwright browser_evaluate returned no content');
+      }
+      const meta = pageMetaFromToolText(body);
+      // Prefer the ### Result JSON block; fall back to the full tool text.
+      const resultMatch = /###\s*Result\s*\r?\n([\s\S]*?)(?=\r?\n###\s+|$)/i.exec(body);
+      const resultText = (resultMatch?.[1] ?? body).trim();
+      return {
+        resultText,
+        accessibilityTree: meta.accessibilityTree || undefined,
+        url: meta.url || undefined,
         title: meta.title || undefined,
       };
     }

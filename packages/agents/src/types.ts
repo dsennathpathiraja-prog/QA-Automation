@@ -188,7 +188,14 @@ export interface BrowserAutomationPort {
   openSession(): Promise<void>;
   navigate(url: string): Promise<{ finalUrl: string; accessibilityTree?: string; title?: string }>;
   /** Optional settle wait after navigate (Playwright MCP `browser_wait_for`). */
-  waitFor?(input?: { timeSeconds?: number; text?: string }): Promise<void>;
+  waitFor?(input?: { timeSeconds?: number; text?: string }): Promise<{ accessibilityTree?: string; url?: string; title?: string } | void>;
+  /**
+   * Optional JS evaluate (Playwright MCP `browser_evaluate`) for DOM/iframe probes
+   * when the accessibility snapshot is empty.
+   */
+  evaluate?(input: { script: string }): Promise<{ resultText: string; accessibilityTree?: string; url?: string; title?: string }>;
+  /** Optional click/type when Explore needs to open a shop modal (observe-safe targets only). */
+  interact?(input: { action: 'click' | 'type' | 'select' | 'press'; target: string; value?: string }): Promise<void>;
   snapshot(): Promise<{ accessibilityTree: string; url: string; title?: string }>;
   screenshot(): Promise<{ artifactBase64: string }>;
   closeSession(): Promise<void>;

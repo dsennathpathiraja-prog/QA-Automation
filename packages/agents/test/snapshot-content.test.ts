@@ -35,12 +35,20 @@ describe('snapshot-content', () => {
     expect(summarizeSnapshotForFindings(parsed)).toMatch(/Checkout/);
   });
 
-  it('rejects blank / about:blank / no-tabs snapshots as non-actionable', () => {
+  it('rejects blank / about:blank / no-tabs / title-only snapshots as non-actionable', () => {
     expect(snapshotIsActionable(parseMcpPageSnapshot(''))).toBe(false);
     expect(snapshotIsActionable(parseMcpPageSnapshot('### Open tabs\nNo open tabs. Use the "browser_navigate" tool'))).toBe(false);
     expect(snapshotIsActionable(parseMcpPageSnapshot(`
 - Page URL: about:blank
 - Page Title: 
+- Page Snapshot:
+\`\`\`yaml
+\`\`\`
+`))).toBe(false);
+    // Title alone is not enough for planning — need interactive cues or rich YAML.
+    expect(snapshotIsActionable(parseMcpPageSnapshot(`
+- Page URL: http://sdk.paynsure.internal/shop
+- Page Title: Metro Mobile Store
 - Page Snapshot:
 \`\`\`yaml
 \`\`\`
