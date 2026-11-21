@@ -185,17 +185,23 @@ describe('source and work-item providers', () => {
     });
     const client = azureBoardsProvider.create({ organization: 'contoso', project: 'Web', baseUrl: m.baseUrl }, lease, { http: m.http });
     expect((await client.testConnection()).ok).toBe(true);
-    expect(await client.handle({ id: 'workitem.read' } as never, { id: '12' }, {} as never)).toMatchObject({ title: 'Checkout', acceptanceCriteria: 'The saved card is listed', description: 'Pay' });
+    expect(await client.handle({ id: 'workitem.read' } as never, { id: '12' }, {} as never)).toMatchObject({
+      title: 'Checkout',
+      acceptanceCriteria: 'The saved card is listed',
+      description: '<p>Pay</p>',
+    });
     expect(await client.handle({ id: 'workitem.search' } as never, { query: 'Checkout' }, {} as never)).toMatchObject({ items: [{ id: '12', title: 'Checkout' }] });
     expect(m.hits.some((h) => h.method === 'POST' && h.path.includes('wiql'))).toBe(true);
     const readHit = m.hits.find((h) => h.method === 'GET' && pathOf(h) === '/_apis/wit/workitems/12');
-    expect(readHit?.path).toMatch(/(\$|%24)expand=All/);
+    // Literal $expand (not %24) — URLSearchParams encoding broke expand on some WIT gateways.
+    expect(readHit?.path).toMatch(/\$expand=All/);
+    expect(readHit?.path).not.toMatch(/%24expand/i);
     expect(readHit?.path).toMatch(/api-version=7\.1/);
     expect(readHit?.path).not.toMatch(/\/Web\//);
     expect(readHit?.auth?.startsWith('Basic ')).toBe(true);
   });
 
-  it('reads System.Title from nested fields.fields and value wrappers', async () => {
+  it('reads System.Title from nested fields.fields, value wrappers, and field arrays', async () => {
     const nested = {
       id: 3421,
       fields: {
@@ -210,6 +216,15 @@ describe('source and work-item providers', () => {
     const flat = azureWorkItemFields(nested);
     expect(azureFieldString(flat, 'System.Title')).toMatch(/Order transactions calculation flow/);
     expect(azureWorkItemTitle(nested)).toMatch(/Order transactions calculation flow/);
+    const asArray = {
+      id: 3421,
+      fields: [
+        { referenceName: 'System.Title', value: 'Order transactions calculation flow update to match new payment settlement and reasons' },
+        { referenceName: 'System.Description', value: '<p>Settle ledger rows with the new payment reasons.</p>' },
+      ],
+    };
+    expect(azureWorkItemTitle(asArray)).toMatch(/Order transactions calculation flow/);
+    expect(azureWorkItemFields(asArray)['System.Description']).toMatch(/Settle ledger rows/);
     const m = await mock((hit) => {
       const path = pathOf(hit);
       if (path === '/_apis/wit/workitems/3421') return { body: nested };
@@ -218,11 +233,12 @@ describe('source and work-item providers', () => {
     const client = azureBoardsProvider.create({ organization: 'contoso', project: 'PayNSure', baseUrl: m.baseUrl }, lease, { http: m.http });
     expect(await client.handle({ id: 'workitem.read' } as never, { id: '3421' }, {} as never)).toMatchObject({
       title: 'Order transactions calculation flow update to match new payment settlement and reasons',
-      description: 'Settle ledger rows with the new payment reasons.',
+      description: '<p>Settle ledger rows with the new payment reasons.</p>',
     });
   });
 
-  it('falls back to WIQL for System.Title when expand=All omits it (WI 2357-style)', async () => {
+  it('falls back to fields= then WIQL when expand=All omits System.Title (WI 2357-style)', async () => {
+    let expandReads = 0;
     const m = await mock((hit) => {
       const path = pathOf(hit);
       const raw = hit.path;
@@ -233,10 +249,25 @@ describe('source and work-item providers', () => {
       if (path.endsWith('/workitems') && /[?&]ids=2357\b/.test(raw)) {
         return { body: { value: [{ id: 2357, fields: { 'System.Title': 'Settlement reasons for payment ledger' } }] } };
       }
-      // expand=All primary read returns the item without System.Title.
       if (path === '/_apis/wit/workitems/2357') {
-        expect(raw).toMatch(/(\$|%24)expand=All/);
-        return { body: { id: 2357, fields: { 'System.State': 'Active', 'System.Description': '<p>Body</p>' } } };
+        if (/[?&]fields=/.test(raw)) {
+          // Explicit fields projection supplies title + description HTML.
+          return {
+            body: {
+              id: 2357,
+              fields: {
+                'System.Title': 'Settlement reasons for payment ledger',
+                'System.Description': '<p>Body</p>',
+                'System.State': 'Active',
+              },
+            },
+          };
+        }
+        expandReads += 1;
+        expect(raw).toMatch(/\$expand=All/);
+        expect(raw).not.toMatch(/%24expand/i);
+        // expand=All primary read returns the item without System.Title.
+        return { body: { id: 2357, fields: { 'System.State': 'Active' } } };
       }
       return { status: 404, body: {} };
     });
@@ -244,8 +275,9 @@ describe('source and work-item providers', () => {
     expect(await client.handle({ id: 'workitem.read' } as never, { id: '2357' }, {} as never)).toMatchObject({
       id: '2357',
       title: 'Settlement reasons for payment ledger',
-      description: 'Body',
+      description: '<p>Body</p>',
     });
+    expect(expandReads).toBe(1);
   });
 
   it('scores Azure Repos source paths above HTML/SDK noise', () => {
@@ -277,7 +309,7 @@ describe('source and work-item providers', () => {
     });
     const client = azureBoardsProvider.create({ organization: 'contoso', project: 'PayNSure', baseUrl: m.baseUrl }, lease, { http: m.http });
     const item = await client.handle({ id: 'workitem.read' } as never, { id: '7189' }, {} as never) as { description?: string; acceptanceCriteria?: string };
-    expect(item.description).toMatch(/Acceptance Criteria/);
+    expect(item.description).toMatch(/<b>Acceptance Criteria<\/b>/);
     expect(item.description).toMatch(/The saved card is listed/);
     expect(item.acceptanceCriteria).toMatch(/The saved card is listed/);
     expect(item.acceptanceCriteria).toMatch(/The total includes tax/);

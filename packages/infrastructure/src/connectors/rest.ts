@@ -9,7 +9,9 @@ export function required(value: string | undefined, what: string): string {
 export function joinUrl(base: string, path: string, query?: Record<string, string | undefined>): string {
   const u = new URL(`${base.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`);
   for (const [k, v] of Object.entries(query ?? {})) if (v !== undefined && v !== '') u.searchParams.set(k, v);
-  return u.toString();
+  // Azure DevOps OData params ($expand, $top, …) must keep a literal `$`.
+  // URLSearchParams encodes it as %24; some WIT gateways then ignore the expand.
+  return u.toString().replace(/%24/gi, '$');
 }
 
 export interface JsonResult {
@@ -31,6 +33,7 @@ export async function requestJson(http: HttpPort, req: HttpRequest, system: stri
   const text = res.text();
   let body: any;
   try {
+    // Playwright MCP may answer with text/event-stream (`data: {…}`); callers parse `text`.
     body = text ? JSON.parse(text) : undefined;
   } catch {
     body = undefined;

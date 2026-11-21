@@ -16,26 +16,79 @@ const ConfigSchema = z.object({
 const SecretSchema = z.object({ token: z.string().min(20).max(500) });
 const API = '7.1';
 
+/** Fields requested when expand=All still omits System.Title / Description. */
+const READ_FIELDS = [
+  'System.Id',
+  'System.Title',
+  'System.State',
+  'System.WorkItemType',
+  'System.Description',
+  'Microsoft.VSTS.TCM.ReproSteps',
+  'Microsoft.VSTS.Common.AcceptanceCriteria',
+].join(',');
+
+const FIELD_KEYS = ['System.Title', 'System.Description', 'System.State', 'System.WorkItemType'] as const;
+
+/** Turn a WIT fields array `[{ referenceName, value }]` into a map. */
+function fieldsFromArray(rows: unknown[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const row of rows) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    const item = row as { referenceName?: unknown; name?: unknown; value?: unknown };
+    const key = typeof item.referenceName === 'string' ? item.referenceName
+      : typeof item.name === 'string' ? item.name
+        : '';
+    if (key) out[key] = item.value;
+  }
+  return out;
+}
+
 /**
  * Azure WIT returns `{ fields: { 'System.Title': '…' } }` (including `$expand=All`).
- * Some gateways nest again as `{ fields: { fields: { 'System.Title': '…' } } }`.
+ * Some gateways nest again as `{ fields: { fields: { 'System.Title': '…' } } }`,
+ * wrap the item as `{ value: { fields } }`, or emit fields as a referenceName array.
  */
 export function azureWorkItemFields(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== 'object') return {};
   const root = body as Record<string, unknown>;
-  const outer = root.fields;
-  if (!outer || typeof outer !== 'object' || Array.isArray(outer)) return {};
-  const map = outer as Record<string, unknown>;
-  const nested = map.fields;
-  if (
-    nested
-    && typeof nested === 'object'
-    && !Array.isArray(nested)
-    && ('System.Title' in (nested as object) || 'System.Description' in (nested as object))
-  ) {
-    return nested as Record<string, unknown>;
+
+  const fromCandidate = (candidate: unknown): Record<string, unknown> => {
+    if (!candidate || typeof candidate !== 'object') return {};
+    if (Array.isArray(candidate)) return fieldsFromArray(candidate);
+    const map = candidate as Record<string, unknown>;
+    const nested = map.fields;
+    if (Array.isArray(nested)) {
+      const fromNested = fieldsFromArray(nested);
+      if (FIELD_KEYS.some((k) => k in fromNested)) return fromNested;
+    }
+    if (
+      nested
+      && typeof nested === 'object'
+      && !Array.isArray(nested)
+      && FIELD_KEYS.some((k) => k in (nested as object))
+    ) {
+      return nested as Record<string, unknown>;
+    }
+    if (FIELD_KEYS.some((k) => k in map)) return map;
+    return {};
+  };
+
+  const direct = fromCandidate(root.fields);
+  if (Object.keys(direct).length > 0) return direct;
+
+  // Batch / list wrappers: `{ value: { fields } }` or `{ value: [ { fields } ] }`.
+  const value = root.value;
+  if (Array.isArray(value) && value[0]) {
+    const fromRow = fromCandidate((value[0] as { fields?: unknown }).fields ?? value[0]);
+    if (Object.keys(fromRow).length > 0) return fromRow;
+  } else if (value && typeof value === 'object') {
+    const fromValue = fromCandidate((value as { fields?: unknown }).fields ?? value);
+    if (Object.keys(fromValue).length > 0) return fromValue;
   }
-  return map;
+
+  // Rare: title flattened next to id on the root.
+  if (FIELD_KEYS.some((k) => k in root)) return root;
+  return {};
 }
 
 /** Plain string from a WIT field value (string, number, or `{ value: string }`). */
@@ -44,9 +97,10 @@ export function azureFieldString(fields: Record<string, unknown>, key: string): 
   if (typeof raw === 'string') return raw.trim();
   if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-    const obj = raw as { value?: unknown; text?: unknown; name?: unknown };
+    const obj = raw as { value?: unknown; text?: unknown; name?: unknown; html?: unknown };
     if (typeof obj.value === 'string') return obj.value.trim();
     if (typeof obj.text === 'string') return obj.text.trim();
+    if (typeof obj.html === 'string') return htmlToText(obj.html).trim();
     if (typeof obj.name === 'string') return obj.name.trim();
   }
   return '';
@@ -57,18 +111,41 @@ export function azureWorkItemTitle(body: unknown): string {
   const fields = azureWorkItemFields(body);
   const fromFields = azureFieldString(fields, 'System.Title');
   if (fromFields) return fromFields;
-  // Rare: title only on the root (some proxies flatten System.Title next to id).
-  if (body && typeof body === 'object' && !Array.isArray(body)) {
-    const root = body as Record<string, unknown>;
-    const direct = azureFieldString(root, 'System.Title');
-    if (direct) return direct;
+  if (body && typeof body !== 'object') return '';
+  // Case-insensitive sweep when a gateway mangles the reference name.
+  for (const [k, v] of Object.entries(fields)) {
+    if (k.toLowerCase() === 'system.title') {
+      if (typeof v === 'string' && v.trim()) return v.trim();
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        const obj = v as { value?: unknown };
+        if (typeof obj.value === 'string' && obj.value.trim()) return obj.value.trim();
+      }
+    }
   }
   return '';
 }
 
-/** Azure Boards stores Description, Acceptance Criteria, and Repro Steps as HTML. */
+/** Raw HTML (or plain string) from Description / AC / Repro fields. */
+export function azureFieldHtml(fields: Record<string, unknown>, key: string): string {
+  const raw = fields[key];
+  if (typeof raw === 'string') return raw.trim();
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const obj = raw as { html?: unknown; value?: unknown; text?: unknown };
+    if (typeof obj.html === 'string') return obj.html.trim();
+    if (typeof obj.value === 'string') return obj.value.trim();
+    if (typeof obj.text === 'string') return obj.text.trim();
+  }
+  return textOf(raw).trim();
+}
+
+/** Plain text for AC extraction when the field stores HTML. */
 function fieldText(value: unknown): string {
   if (typeof value === 'string') return htmlToText(value);
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const obj = value as { html?: unknown; value?: unknown };
+    if (typeof obj.html === 'string') return htmlToText(obj.html);
+    if (typeof obj.value === 'string') return htmlToText(obj.value);
+  }
   return htmlToText(textOf(value));
 }
 
@@ -146,6 +223,7 @@ class AzureBoardsClient implements ConnectorClient {
     try {
       await this.call('POST', `/${encodeURIComponent(this.cfg.project)}/_apis/wit/wiql`, undefined, { query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${this.cfg.project.replace(/'/g, "''")}'` });
     } catch (e) {
+      // Search is optional for Read story — workitem.read stays supported when WIQL is denied.
       search = { capability: 'workitem.search', support: 'unsupported', reason: e instanceof PlatformError ? e.message : 'probe failed' };
     }
     return [
@@ -174,28 +252,52 @@ class AzureBoardsClient implements ConnectorClient {
     if (cap.id === 'workitem.read') {
       const acField = this.cfg.acceptanceCriteriaField;
       const id = required(i.id, 'Work item id');
-      // Org-scoped expand=All matches Dasun's verified curl — no project path required.
+      const fieldList = READ_FIELDS.includes(acField) ? READ_FIELDS : `${READ_FIELDS},${acField}`;
+      // Org-scoped expand=All matches Dasun's verified curl — literal $expand (not %24).
       // GET https://dev.azure.com/{org}/_apis/wit/workitems/{id}?$expand=All&api-version=7.1
-      const r = await this.call('GET', `/_apis/wit/workitems/${encodeURIComponent(id)}`, { $expand: 'All' });
-      const f = azureWorkItemFields(r.body);
+      let r = await this.call('GET', `/_apis/wit/workitems/${encodeURIComponent(id)}`, { $expand: 'All' });
+      if (!r.body || typeof r.body !== 'object') {
+        throw new PlatformError('transient', 'Azure Boards returned an empty work item payload');
+      }
+      let f = azureWorkItemFields(r.body);
       let title = azureWorkItemTitle(r.body);
+      // When expand=All succeeds but fields are missing/unparsed, request an explicit field list.
+      if (!title || !azureFieldHtml(f, 'System.Description')) {
+        const listed = await this.call('GET', `/_apis/wit/workitems/${encodeURIComponent(id)}`, { fields: fieldList });
+        if (listed.body && typeof listed.body === 'object') {
+          const listedFields = azureWorkItemFields(listed.body);
+          if (!title) title = azureWorkItemTitle(listed.body);
+          if (Object.keys(listedFields).length > 0) {
+            f = { ...f, ...listedFields };
+            r = listed;
+          }
+        }
+      }
       if (!title) {
         title = await this.titleFromWiql(id);
       }
-      const description = fieldText(f['System.Description']);
-      const reproSteps = fieldText(f['Microsoft.VSTS.TCM.ReproSteps']);
+      const descriptionHtml = azureFieldHtml(f, 'System.Description');
+      const reproHtml = azureFieldHtml(f, 'Microsoft.VSTS.TCM.ReproSteps');
+      const descriptionText = fieldText(f['System.Description']);
+      const reproText = fieldText(f['Microsoft.VSTS.TCM.ReproSteps']);
       const fromField = fieldText(f[acField]);
-      const fromDescription = acceptanceCriteriaFromDescription(description) ?? (scenarioCuesFromDescription(description).join('\n') || undefined);
-      const acceptanceCriteria = fromField || fromDescription || (reproSteps ? scenarioCuesFromDescription(reproSteps).join('\n') || reproSteps : undefined);
-      const descriptionParts = [description, reproSteps ? `Repro steps\n${reproSteps}` : ''].filter(Boolean);
+      const fromDescription = acceptanceCriteriaFromDescription(descriptionText) ?? (scenarioCuesFromDescription(descriptionText).join('\n') || undefined);
+      const acceptanceCriteria = fromField || fromDescription || (reproText ? scenarioCuesFromDescription(reproText).join('\n') || reproText : undefined);
+      // Keep Description HTML in the story blob (planner still gets AC as plain text).
+      const descriptionParts = [
+        descriptionHtml,
+        reproHtml ? `Repro steps\n${reproHtml}` : '',
+      ].filter(Boolean);
       return {
-        id: String(r.body?.id ?? i.id),
+        id: String((r.body as { id?: unknown })?.id ?? i.id),
         title,
         type: azureFieldString(f, 'System.WorkItemType') || undefined,
         state: azureFieldString(f, 'System.State') || undefined,
         description: descriptionParts.join('\n\n') || undefined,
         acceptanceCriteria: acceptanceCriteria || undefined,
-        url: typeof r.body?._links?.html?.href === 'string' ? r.body._links.html.href : undefined,
+        url: typeof (r.body as { _links?: { html?: { href?: unknown } } })?._links?.html?.href === 'string'
+          ? (r.body as { _links: { html: { href: string } } })._links.html.href
+          : undefined,
       };
     }
     if (cap.id === 'workitem.attachment.read') {
@@ -203,7 +305,7 @@ class AzureBoardsClient implements ConnectorClient {
       const attachmentId = required(i.attachmentId, 'Attachment');
       const item = await this.call('GET', `/${encodeURIComponent(this.cfg.project)}/_apis/wit/workitems/${encodeURIComponent(id)}`, { $expand: 'relations' });
       const relations = (item.body?.relations ?? []) as { rel?: string; url?: string; attributes?: { name?: string } }[];
-      const file = relations.find((r) => r.rel === 'AttachedFile' && (r.url?.includes(attachmentId) || r.attributes?.name === attachmentId));
+      const file = relations.find((rel) => rel.rel === 'AttachedFile' && (rel.url?.includes(attachmentId) || rel.attributes?.name === attachmentId));
       if (!file?.url) throw new PlatformError('not-found', 'Azure Boards could not find that item');
       const downloaded = await downloadBytes(this.deps.http, file.url, this.auth, 'Azure Boards', new URL(this.cfg.baseUrl));
       return { name: file.attributes?.name ?? attachmentId, mimeType: downloaded.mimeType, contentBase64: Buffer.from(downloaded.body).toString('base64') };
@@ -211,7 +313,7 @@ class AzureBoardsClient implements ConnectorClient {
     throw new PlatformError('unsupported', `Azure Boards does not implement ${cap.id}`);
   }
 
-  /** WIQL fallback when expand=All still omits System.Title. */
+  /** WIQL fallback when expand=All / fields still omit System.Title. */
   private async titleFromWiql(id: string): Promise<string> {
     const numeric = Number(id);
     if (!Number.isInteger(numeric) || numeric <= 0) return '';

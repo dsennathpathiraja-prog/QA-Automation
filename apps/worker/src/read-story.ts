@@ -11,11 +11,10 @@ export interface WorkItemDetails {
 export interface StoryEnrichment {
   story: string;
   workItem: string;
-  title?: string;
+  /** System.Title from the work-item connector (required when fetched). */
+  title: string;
   /** Short plain-text description for the Read Done line (optional). */
   descriptionExcerpt?: string;
-  /** Set when the connector returned the item but System.Title was empty. */
-  missingTitleReason?: string;
   fetched: boolean;
 }
 
@@ -40,7 +39,8 @@ export function workItemRefFromStory(raw: string): string | undefined {
 /** One-line excerpt of the work item description for the Read Done acknowledgement. */
 export function descriptionExcerpt(raw: string | undefined, max = 140): string {
   if (!raw) return '';
-  const flat = raw.replace(/\s+/g, ' ').trim();
+  // Description may still be Azure HTML — strip tags for the Done line only.
+  const flat = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   if (!flat) return '';
   if (flat.length <= max) return flat;
   const cut = flat.slice(0, max - 1);
@@ -96,6 +96,17 @@ export async function enrichStoryFromConnector(input: {
     const title = typeof item.title === 'string' ? item.title.trim() : '';
     const description = typeof item.description === 'string' ? item.description : undefined;
     const excerpt = descriptionExcerpt(description);
+    // Succeeded invoke with an empty title still leaves the story blob as the bare id —
+    // treat that as a miss so Read fails clearly instead of writing Title _(not loaded)_.
+    if (!title) {
+      return {
+        status: 'missed',
+        workItem: String(item.id),
+        reason: description
+          ? 'The work-item connector returned no System.Title for this id (description was present). Rebuild the worker after the expand=All field-mapping fix, then run Test connection on Azure Boards.'
+          : 'The work-item connector returned no System.Title or description for this id. Confirm workitem.read is granted, rebuild the worker, and re-run Test connection on Azure Boards.',
+      };
+    }
     return {
       status: 'enriched',
       enrichment: {
@@ -109,12 +120,9 @@ export async function enrichStoryFromConnector(input: {
           pasted,
         ),
         workItem: String(item.id),
-        title: title || undefined,
+        title,
         descriptionExcerpt: excerpt || undefined,
         fetched: true,
-        ...(title
-          ? {}
-          : { missingTitleReason: 'The work-item connector returned no System.Title for this id, so the title was not loaded.' }),
       },
     };
   } catch (e) {
