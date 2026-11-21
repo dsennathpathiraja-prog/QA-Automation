@@ -95,6 +95,60 @@ describe('ConnectorExecutionManager', () => {
     await expect(bad.manager.invoke({ role: 'workItemSource', capability: 'workitem.read', input: { id: '1' }, actor: step })).rejects.toThrow(/invalid output/);
   });
 
+  it('fills scm.code.search repo from the bound source-repo connector config', async () => {
+    const seen: { repo?: string; query?: string } = {};
+    const provider: ConnectorProvider = {
+      manifest: {
+        providerKey: 'stub-repo',
+        category: 'source-repo',
+        displayName: 'Stub repo',
+        description: 'test',
+        authMethods: [],
+        capabilities: ['scm.code.search', 'scm.file.read', 'scm.tree.list', 'scm.branch.list'],
+        requiredPermissions: [],
+        accessModePolicy: 'read_only_enforced',
+        requiresInternet: false,
+        verification: 'live-capable',
+        wizard: [],
+      },
+      configSchema: z.object({ repo: z.string().optional() }),
+      secretSchema: z.object({}),
+      create: () => ({
+        testConnection: async () => ({ ok: true, message: '' }),
+        probeCapabilities: async () => [],
+        inspectPermissions: async () => ({ granted: [], writePermissionsDetected: [] }),
+        handle: async (cap, input) => {
+          const body = (input ?? {}) as { repo?: string; query?: string; path?: string };
+          if (cap.id === 'scm.code.search') {
+            seen.repo = body.repo;
+            seen.query = body.query;
+            return { items: [{ path: 'src/a.ts', snippet: 'login' }] };
+          }
+          return { path: body.path ?? '', content: '', truncated: false };
+        },
+        dispose: async () => undefined,
+      }),
+    };
+    const h = createHarness({
+      providers: [provider],
+      instances: [makeInstance({
+        id: 'repo1',
+        providerKey: 'stub-repo',
+        category: 'source-repo',
+        config: { repo: 'shop' },
+        accessMode: 'read_only',
+      }, ['scm.code.search', 'scm.file.read', 'scm.tree.list', 'scm.branch.list'])],
+      policies: { ex1: execPolicy({ boundRoles: { sourceRepo: 'repo1' } }) },
+    });
+    await h.manager.invoke({
+      role: 'sourceRepo',
+      capability: 'scm.code.search',
+      input: { query: 'login' },
+      actor: step,
+    });
+    expect(seen).toEqual({ repo: 'shop', query: 'login' });
+  });
+
   it('rate limits per instance and opens the circuit after repeated transient failures', async () => {
     const rl = setup({ defaults: { burst: 2, ratePerSec: 0.0001 } });
     await rl.secrets.put('connectors/wi1/token', { token: 'tok-12345678' });

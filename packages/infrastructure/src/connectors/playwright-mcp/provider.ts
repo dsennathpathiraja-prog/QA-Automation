@@ -181,8 +181,15 @@ class PlaywrightClient implements ConnectorClient {
 
   async handle(cap: CapabilityDescriptor, input: unknown): Promise<unknown> {
     const i = (input ?? {}) as Record<string, string>;
-    if (cap.id === 'browser.session.open') return { sessionId: 'managed' };
+    if (cap.id === 'browser.session.open') {
+      // Establish the MCP session (initialize + session header) before navigate.
+      await this.open();
+      const id = this.sessionId?.trim() || 'managed';
+      this.sessionId = id;
+      return { sessionId: id };
+    }
     if (cap.id === 'browser.navigate') {
+      required(i.sessionId, 'sessionId');
       const url = required(i.url, 'Address');
       const origin = new URL(url).origin;
       const allowed = this.origins();
@@ -191,28 +198,35 @@ class PlaywrightClient implements ConnectorClient {
       return { finalUrl: url };
     }
     if (cap.id === 'browser.snapshot') {
+      required(i.sessionId, 'sessionId');
       const result = await this.rpcCall('tools/call', { name: 'browser_snapshot', arguments: {} });
       const text = ((result?.content ?? []) as { text?: string }[]).map((c) => c.text ?? '').join('\n');
       return { accessibilityTree: text, url: String(result?.url ?? '') };
     }
     if (cap.id === 'browser.interact') {
+      required(i.sessionId, 'sessionId');
       const tool = INTERACT[required(i.action, 'Browser action')];
       if (!tool) throw new PlatformError('validation', 'That browser action is not supported');
       await this.rpcCall('tools/call', { name: tool, arguments: { target: i.target, element: i.target, text: i.value, key: i.value, value: i.value } });
       return { ok: true };
     }
     if (cap.id === 'browser.screenshot') {
+      required(i.sessionId, 'sessionId');
       const result = await this.rpcCall('tools/call', { name: 'browser_take_screenshot', arguments: { fullPage: true } });
       const image = ((result?.content ?? []) as { data?: string }[]).find((c) => c.data)?.data ?? '';
       return { artifactBase64: image };
     }
     if (cap.id === 'browser.network.observe') {
+      required(i.sessionId, 'sessionId');
       const result = await this.rpcCall('tools/call', { name: 'browser_network_requests', arguments: {} });
       const requests = (result?.requests ?? []) as { url: string; status?: number }[];
       return { requests };
     }
     if (cap.id === 'browser.session.close') {
+      required(i.sessionId, 'sessionId');
       await this.rpcCall('tools/call', { name: 'browser_close', arguments: {} });
+      this.sessionId = undefined;
+      this.opening = undefined;
       return { ok: true };
     }
     throw new PlatformError('unsupported', `Playwright does not implement ${cap.id}`);

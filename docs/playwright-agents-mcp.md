@@ -107,7 +107,13 @@ A checked-in template without secrets: [`deploy/cursor/mcp.json.example`](../dep
 Run story id
   → worker enrichStoryFromConnector (Azure Boards / Jira)
   → rv.read-user-story (criteria from Description)
-  → rv.explore-ui / rv.explore-code (optional) → BrowserExplorerPort / source notes
+  → rv.explore-ui (when on):
+       environment → applicationUrl
+       → browser.session.open → sessionId
+       → browser.navigate({ sessionId, url }) → snapshot / screenshot
+  → rv.explore-code (when on):
+       bound source-repo config.repo
+       → scm.code.search({ query, repo }) → scm.file.read
   → rv.consolidate-findings
   → rv.generate-test-plan → TestPlannerPort → planMarkdown + planArtifact
   → rv.generate-tests → TestGeneratorPort (MD plan + findings)
@@ -115,4 +121,4 @@ Run story id
   → rv.publish-testcases → Test Cases + Squash upsert
 ```
 
-`packages/workflow-engine` keeps a sync heuristic `runFlowStep` for tests and offline fallback. `packages/agents` owns the ports, MCP adapter contracts, MD plan helpers, and LLM prompts. `apps/worker` is the composition root that builds the gateway and connector invokers.
+Enabled explore steps must succeed before plan. Fake Done stubs are only for offline unit tests (`runFlowStep`); the worker always wires `createBrowserExplorer` / `createCodeExplorer`. `packages/agents` owns the ports, MCP adapter contracts, MD plan helpers, and LLM prompts. `apps/worker` is the composition root that builds the gateway and connector invokers.

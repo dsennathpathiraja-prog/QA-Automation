@@ -106,7 +106,10 @@ export class ConnectorExecutionManager implements CapabilityInvoker {
       const decision = evaluateMachinePolicy({ req, instance, descriptor, policy, actor: req.actor });
       if (!decision.allow) throw new PlatformError('denied', decision.reason);
 
-      const parsed = descriptor.input.safeParse(req.input);
+      // Bound source-repo connectors carry `config.repo`. Fill it into scm.*
+      // inputs before schema validation so callers (Explore code) need not repeat it.
+      const rawInput = this.withBoundRepo(descriptor, instance, req.input);
+      const parsed = descriptor.input.safeParse(rawInput);
       if (!parsed.success) throw new PlatformError('validation', `invalid input for ${descriptor.id}: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
       const input = parsed.data as Record<string, unknown>;
 
@@ -172,6 +175,19 @@ export class ConnectorExecutionManager implements CapabilityInvoker {
     const inst = await this.d.instances.getById(id);
     if (!inst) throw new PlatformError('not-found', 'connector instance not found');
     return inst;
+  }
+
+  /** When a source-repo connector binds one repository, scm.* calls inherit that name. */
+  private withBoundRepo(descriptor: CapabilityDescriptor, instance: ResolvedInstance, input: unknown): unknown {
+    if (descriptor.category !== 'source-repo') return input;
+    const bound = typeof instance.config.repo === 'string' ? instance.config.repo.trim() : '';
+    if (!bound) return input;
+    const base = input && typeof input === 'object' && !Array.isArray(input)
+      ? { ...(input as Record<string, unknown>) }
+      : {};
+    const existing = base.repo;
+    if (typeof existing === 'string' && existing.trim()) return base;
+    return { ...base, repo: bound };
   }
 
   private checkRate(instanceId: string): void {

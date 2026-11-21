@@ -12,6 +12,7 @@ import {
   type TestHealerPort,
   type TestPlannerPort,
 } from '@qa/agents';
+import { PlatformError } from '@qa/domain';
 import { runFlowStep, type FlowResult } from '@qa/workflow-engine';
 
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
@@ -84,6 +85,7 @@ export interface RequirementAgentPorts {
  * / source-repo agents when wired, otherwise falls back to the sync heuristic flow in workflow-engine.
  *
  * Order: explore → consolidate → plan (MD) → generate (from MD) → heal → publish.
+ * Explore UI / Explore code must succeed (real connector calls) before plan runs.
  */
 export async function performRequirementStep(
   step: { id: string; type: string; runId: string; params: Record<string, unknown>; prior: Record<string, Record<string, unknown>> },
@@ -103,7 +105,10 @@ export async function performRequirementStep(
   const planMarkdown = text(step.prior.plan?.planMarkdown);
   const planArtifact = text(step.prior.plan?.planArtifact);
 
-  if (step.type === 'rv.explore-ui' && ports.explorer) {
+  if (step.type === 'rv.explore-ui') {
+    if (!ports.explorer) {
+      throw new PlatformError('denied', 'Explore UI requires a Playwright browser explorer on the worker before planning.');
+    }
     const url = ports.resolveEnvironmentUrl && environment
       ? await ports.resolveEnvironmentUrl(environment)
       : undefined;
@@ -117,6 +122,9 @@ export async function performRequirementStep(
       executionId: step.runId,
       stepId: step.id,
     });
+    if (explored.source === 'skipped') {
+      throw new PlatformError('validation', explored.summary || 'Explore UI did not open the application.');
+    }
     return {
       summary: explored.summary,
       outputs: {
@@ -131,11 +139,16 @@ export async function performRequirementStep(
     };
   }
 
-  if (step.type === 'rv.explore-code' && ports.codeExplorer) {
+  if (step.type === 'rv.explore-code') {
+    if (!ports.codeExplorer) {
+      throw new PlatformError('denied', 'Explore code requires a source-repo explorer on the worker before planning.');
+    }
     const explored: CodeExploreResult = await ports.codeExplorer.explore({
       application,
+      workItem,
       criteria,
       maxFiles: 12,
+      maxQueries: 6,
       executionId: step.runId,
       stepId: step.id,
     });
@@ -145,6 +158,7 @@ export async function performRequirementStep(
         findings: explored.findings,
         details: explored.details.map(({ path, excerpt, query }) => ({ path, excerpt, query })),
         source: explored.source,
+        repo: explored.repo,
       },
     };
   }

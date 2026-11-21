@@ -3,13 +3,24 @@ import type { BrowserExplorerPort, CodeExplorerPort, TestGeneratorPort, TestHeal
 import { performRequirementStep } from '../src/requirement-agents';
 
 describe('performRequirementStep', () => {
-  it('resolves the environment URL and drives explore_ui before planning', async () => {
+  it('requires a browser explorer for rv.explore-ui and resolves the environment URL', async () => {
+    await expect(performRequirementStep(
+      {
+        id: 'explore_ui',
+        type: 'rv.explore-ui',
+        runId: 'run-1',
+        params: { applicationName: 'PayNSure', environment: 'env-qa' },
+        prior: { read_story: { workItem: '7189', acceptanceCriteria: ['listed'] } },
+      },
+      {},
+    )).rejects.toMatchObject({ errorClass: 'denied' });
+
     let seenUrl: string | undefined;
     const explorer: BrowserExplorerPort = {
       async explore(input) {
         seenUrl = input.url;
         return {
-          summary: `opened ${input.url}`,
+          summary: `Visited ${input.url} (1 page snapshot) for ${input.application} before planning.`,
           findings: `page @ ${input.url}`,
           details: [{ scenarioName: 'home', url: input.url ?? '', snapshotExcerpt: 'button Pay' }],
           source: 'browser',
@@ -30,12 +41,23 @@ describe('performRequirementStep', () => {
       },
     );
     expect(seenUrl).toBe('https://qa.shop.example/');
-    expect(out.summary).toMatch(/opened|Visited/);
+    expect(out.summary).toMatch(/Visited/);
     expect(out.outputs.source).toBe('browser');
     expect(out.outputs.findings).toMatch(/qa\.shop\.example/);
   });
 
-  it('drives explore_code through the source-repo explorer before planning', async () => {
+  it('requires a code explorer for rv.explore-code and records file findings', async () => {
+    await expect(performRequirementStep(
+      {
+        id: 'explore_code',
+        type: 'rv.explore-code',
+        runId: 'run-1',
+        params: { applicationName: 'PayNSure' },
+        prior: { read_story: { workItem: '7189', acceptanceCriteria: ['listed'] } },
+      },
+      {},
+    )).rejects.toMatchObject({ errorClass: 'denied' });
+
     const codeExplorer: CodeExplorerPort = {
       async explore(input) {
         return {
@@ -43,6 +65,7 @@ describe('performRequirementStep', () => {
           findings: '- src/pay.ts\n  export function pay()',
           details: [{ path: 'src/pay.ts', excerpt: 'export function pay()' }],
           source: 'repo',
+          repo: 'shop',
         };
       },
     };

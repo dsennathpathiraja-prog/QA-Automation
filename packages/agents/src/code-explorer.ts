@@ -1,4 +1,4 @@
-import { isPlatformError } from '@qa/domain';
+import { PlatformError } from '@qa/domain';
 import type { CodeExploreRequest, CodeExploreResult, CodeExplorerPort, CodeFinding, SourceRepoPort } from './types';
 
 const SEARCH_STOP = new Set([
@@ -22,78 +22,69 @@ export function searchQueriesFor(application: string, criteria: string[]): strin
 }
 
 /**
- * In-repo explorer that drives the bound source-repo connector (GitHub / Azure DevOps)
- * before the planner. Skips cleanly when no connector is available so RV runs stay usable.
+ * Read-only source explorer. Searches the bound GitHub / Azure DevOps repo and
+ * reads matching files BEFORE the planner so findings feed the Markdown plan.
+ * Failures throw — Explore code must succeed with a real connector call.
+ * `repo` may be omitted when the connector binds one (manager injects config.repo).
  */
 export function createCodeExplorer(source: SourceRepoPort | undefined): CodeExplorerPort {
   return {
     async explore(input: CodeExploreRequest): Promise<CodeExploreResult> {
       if (!source) {
-        return {
-          summary: `Source note for ${input.application}: no source repository connector is bound, so the repository was not read.`,
-          findings: 'repository not read',
-          details: [],
-          source: 'skipped',
-        };
+        throw new PlatformError(
+          'denied',
+          'Explore code needs a bound source-repo connector (GitHub or Azure DevOps) before planning.',
+        );
       }
 
-      const queries = searchQueriesFor(input.application, input.criteria ?? []);
+      const queries = searchQueriesFor(input.application, input.criteria ?? []).slice(0, input.maxQueries ?? 6);
+      if (queries.length === 0) queries.push(input.application || 'test');
       const maxFiles = Math.min(Math.max(1, input.maxFiles ?? 12), 40);
       const byPath = new Map<string, CodeFinding>();
+      const repoOpts = input.repo ? { repo: input.repo } : {};
 
-      try {
-        for (const query of queries) {
+      for (const query of queries) {
+        if (byPath.size >= maxFiles) break;
+        const found = await source.search({ query, ...repoOpts });
+        for (const hit of found.items) {
+          if (!hit.path || byPath.has(hit.path)) continue;
+          byPath.set(hit.path, {
+            path: hit.path,
+            excerpt: (hit.snippet || '').slice(0, 800),
+            query,
+          });
           if (byPath.size >= maxFiles) break;
-          const found = await source.search(query);
-          for (const hit of found.items) {
-            if (!hit.path || byPath.has(hit.path)) continue;
-            byPath.set(hit.path, {
-              path: hit.path,
-              excerpt: (hit.snippet || '').slice(0, 800),
-              query,
-            });
-            if (byPath.size >= maxFiles) break;
-          }
         }
+      }
 
-        // When search returns nothing (or is partial), list the tree and read a few files.
-        if (byPath.size === 0) {
-          const tree = await source.listTree();
-          const files = tree.entries.filter((e) => e.type === 'file').slice(0, maxFiles);
-          for (const entry of files) {
-            const file = await source.readFile(entry.path);
-            byPath.set(entry.path, {
-              path: entry.path,
-              excerpt: (file.content || '').slice(0, 800),
-            });
-          }
-        } else {
-          // Enrich search hits with a short file read when the snippet is empty.
-          for (const finding of [...byPath.values()].slice(0, maxFiles)) {
-            if (finding.excerpt.trim()) continue;
-            const file = await source.readFile(finding.path);
-            finding.excerpt = (file.content || '').slice(0, 800);
-          }
+      // When search returns nothing (or is partial), list the tree and read a few files.
+      if (byPath.size === 0) {
+        const tree = await source.listTree(repoOpts);
+        const files = tree.entries.filter((e) => e.type === 'file').slice(0, maxFiles);
+        for (const entry of files) {
+          const file = await source.readFile({ path: entry.path, ...repoOpts });
+          byPath.set(entry.path, {
+            path: entry.path,
+            excerpt: (file.content || '').slice(0, 800),
+          });
         }
-      } catch (e) {
-        if (isPlatformError(e) && (e.errorClass === 'denied' || e.errorClass === 'not-found' || e.errorClass === 'unsupported' || e.errorClass === 'auth' || e.errorClass === 'validation')) {
-          return {
-            summary: `Source note for ${input.application}: the source repository could not be read (${e.message}).`,
-            findings: 'repository not read',
-            details: [],
-            source: 'skipped',
-          };
+      } else {
+        for (const finding of [...byPath.values()].slice(0, maxFiles)) {
+          if (finding.excerpt.trim()) continue;
+          const file = await source.readFile({ path: finding.path, ...repoOpts });
+          finding.excerpt = (file.content || '').slice(0, 800);
         }
-        throw e;
       }
 
       const details = [...byPath.values()].slice(0, maxFiles);
+      const repoLabel = input.repo?.trim() || 'bound repository';
       if (details.length === 0) {
         return {
-          summary: `Source note for ${input.application}: the bound repository returned no matching files for the story cues.`,
-          findings: 'no matching source files',
+          summary: `source-repo searched ${repoLabel} for ${input.application} before planning (${queries.length} quer${queries.length === 1 ? 'y' : 'ies'}, no file hits).`,
+          findings: `searched ${repoLabel} for: ${queries.join(', ')} (no file hits)`,
           details: [],
           source: 'repo',
+          repo: input.repo,
         };
       }
 
@@ -106,6 +97,7 @@ export function createCodeExplorer(source: SourceRepoPort | undefined): CodeExpl
         findings,
         details,
         source: 'repo',
+        repo: input.repo,
       };
     },
   };
@@ -116,20 +108,25 @@ export function sourceRepoPortFromInvoker(
   invoke: (capability: string, input?: Record<string, unknown>) => Promise<unknown>,
 ): SourceRepoPort {
   return {
-    async search(query: string) {
-      const out = await invoke('scm.code.search', { query }) as { items?: { path?: string; snippet?: string }[] };
+    async search(input) {
+      const body: Record<string, unknown> = { query: input.query };
+      if (input.repo) body.repo = input.repo;
+      if (input.branch) body.branch = input.branch;
+      const out = await invoke('scm.code.search', body) as { items?: { path?: string; snippet?: string }[] };
       return {
         items: (out?.items ?? []).flatMap((item) => {
-          const path = typeof item.path === 'string' ? item.path : '';
+          const path = typeof item?.path === 'string' ? item.path : '';
           if (!path) return [];
           return [{ path, snippet: typeof item.snippet === 'string' ? item.snippet : '' }];
         }),
       };
     },
-    async listTree(path?: string) {
-      const out = await invoke('scm.tree.list', path ? { path } : {}) as {
-        entries?: { path?: string; type?: string }[];
-      };
+    async listTree(input) {
+      const body: Record<string, unknown> = {};
+      if (input?.path) body.path = input.path;
+      if (input?.repo) body.repo = input.repo;
+      if (input?.branch) body.branch = input.branch;
+      const out = await invoke('scm.tree.list', body) as { entries?: { path?: string; type?: string }[] };
       return {
         entries: (out?.entries ?? []).flatMap((e) => {
           const p = typeof e.path === 'string' ? e.path : '';
@@ -138,10 +135,13 @@ export function sourceRepoPortFromInvoker(
         }),
       };
     },
-    async readFile(path: string) {
-      const out = await invoke('scm.file.read', { path }) as { path?: string; content?: string; truncated?: boolean };
+    async readFile(input) {
+      const body: Record<string, unknown> = { path: input.path };
+      if (input.repo) body.repo = input.repo;
+      if (input.branch) body.branch = input.branch;
+      const out = await invoke('scm.file.read', body) as { path?: string; content?: string; truncated?: boolean };
       return {
-        path: typeof out?.path === 'string' ? out.path : path,
+        path: typeof out?.path === 'string' ? out.path : input.path,
         content: typeof out?.content === 'string' ? out.content : '',
         truncated: Boolean(out?.truncated),
       };

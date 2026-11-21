@@ -4,13 +4,19 @@ import { browserPortFromInvoker, createBrowserExplorer } from '../src/browser-ex
 import type { BrowserAutomationPort } from '../src/types';
 
 describe('browser explorer', () => {
-  it('skips when no environment URL is given', async () => {
-    const out = await createBrowserExplorer(undefined).explore({
+  it('fails when no environment URL is given', async () => {
+    await expect(createBrowserExplorer(undefined).explore({
       application: 'PayNSure',
       scenarios: [],
-    });
-    expect(out.source).toBe('skipped');
-    expect(out.summary).toMatch(/no environment/);
+    })).rejects.toMatchObject({ errorClass: 'validation' });
+  });
+
+  it('fails when no browser connector is bound', async () => {
+    await expect(createBrowserExplorer(undefined).explore({
+      application: 'PayNSure',
+      url: 'https://shop.example.com/pay',
+      scenarios: [],
+    })).rejects.toMatchObject({ errorClass: 'denied' });
   });
 
   it('navigates and records snapshot excerpts', async () => {
@@ -40,49 +46,46 @@ describe('browser explorer', () => {
     expect(calls).toEqual(['open', 'nav:https://shop.example.com/pay', 'close']);
   });
 
-  it('skips when the connector denies the browser role', async () => {
+  it('passes sessionId from open through navigate and close', async () => {
+    const payloads: { capability: string; input: Record<string, unknown> }[] = [];
+    const browser = browserPortFromInvoker(async (capability, input) => {
+      payloads.push({ capability, input: input ?? {} });
+      if (capability === 'browser.session.open') return { sessionId: 'sess-1' };
+      if (capability === 'browser.navigate') return { finalUrl: String(input?.url ?? '') };
+      if (capability === 'browser.snapshot') return { accessibilityTree: 'ok', url: 'https://shop.example.com' };
+      if (capability === 'browser.screenshot') return { artifactBase64: '' };
+      return { ok: true };
+    });
+    await browser.openSession();
+    await browser.navigate('https://shop.example.com');
+    await browser.snapshot();
+    await browser.screenshot();
+    await browser.closeSession();
+    expect(payloads.find((p) => p.capability === 'browser.navigate')?.input).toMatchObject({ sessionId: 'sess-1', url: 'https://shop.example.com' });
+    expect(payloads.find((p) => p.capability === 'browser.snapshot')?.input).toMatchObject({ sessionId: 'sess-1' });
+    expect(payloads.find((p) => p.capability === 'browser.session.close')?.input).toMatchObject({ sessionId: 'sess-1' });
+  });
+
+  it('fails when the connector denies the browser role', async () => {
     const browser = browserPortFromInvoker(async () => {
       throw new PlatformError('denied', 'No browser connector is bound');
     });
-    const out = await createBrowserExplorer(browser).explore({
+    await expect(createBrowserExplorer(browser).explore({
       application: 'PayNSure',
       url: 'https://shop.example.com',
       scenarios: [],
-    });
-    expect(out.source).toBe('skipped');
-    expect(out.summary).toMatch(/could not explore https:\/\/shop\.example\.com/);
-    expect(out.summary).toMatch(/No browser connector is bound/);
+    })).rejects.toMatchObject({ errorClass: 'denied' });
   });
 
-  it('skips with the URL when navigate hits a validation / allowlist error', async () => {
-    const browser = browserPortFromInvoker(async () => {
+  it('fails when navigate hits an allowlist error', async () => {
+    const browser = browserPortFromInvoker(async (capability) => {
+      if (capability === 'browser.session.open') return { sessionId: 'sess-1' };
       throw new PlatformError('denied', 'The browser may not open https://shop.example.com. Add it to the application addresses for this connector.');
     });
-    const out = await createBrowserExplorer(browser).explore({
+    await expect(createBrowserExplorer(browser).explore({
       application: 'PayNSure',
       url: 'https://shop.example.com/checkout',
       scenarios: [],
-    });
-    expect(out.source).toBe('skipped');
-    expect(out.summary).toMatch(/Visited|could not explore https:\/\/shop\.example\.com\/checkout/);
-    expect(out.summary).toMatch(/application addresses|could not explore/);
-  });
-
-  it('skips when the Playwright server is unreachable (transient)', async () => {
-    const browser: BrowserAutomationPort = {
-      async openSession() { throw new PlatformError('transient', 'could not resolve playwright-mcp'); },
-      async navigate() { return { finalUrl: '' }; },
-      async snapshot() { return { accessibilityTree: '', url: '' }; },
-      async screenshot() { return { artifactBase64: '' }; },
-      async closeSession() {},
-    };
-    const out = await createBrowserExplorer(browser).explore({
-      application: 'PayNSure',
-      url: 'https://qa.shop.example/',
-      scenarios: [],
-    });
-    expect(out.source).toBe('skipped');
-    expect(out.summary).toMatch(/could not explore https:\/\/qa\.shop\.example\//);
-    expect(out.summary).toMatch(/playwright-mcp/);
+    })).rejects.toMatchObject({ errorClass: 'denied' });
   });
 });

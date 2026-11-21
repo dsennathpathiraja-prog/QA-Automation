@@ -11,7 +11,7 @@ describe('requirement validation stages', () => {
     expect(read.outputs.acceptanceCriteria).toEqual(['The saved card is listed', 'The total includes tax']);
 
     const explore = runFlowStep({ id: 'explore_ui', type: 'rv.explore-ui', params, prior: { read_story: read.outputs } });
-    expect(explore.summary).toMatch(/offline fallback|environment|browser/i);
+    expect(explore.summary).toMatch(/offline|stub/i);
 
     const consolidate = runFlowStep({
       id: 'consolidate',

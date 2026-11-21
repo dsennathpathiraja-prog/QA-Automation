@@ -126,9 +126,13 @@ export interface ExploreResult {
 
 export interface CodeExploreRequest {
   application: string;
+  workItem?: string;
+  /** Bound repository name when known; otherwise the connector config supplies it. */
+  repo?: string;
   criteria?: string[];
   /** Cap files / excerpts for a single run. */
   maxFiles?: number;
+  maxQueries?: number;
   executionId?: string;
   stepId?: string;
 }
@@ -143,7 +147,8 @@ export interface CodeExploreResult {
   summary: string;
   findings: string;
   details: CodeFinding[];
-  source: 'repo' | 'skipped';
+  source: 'repo';
+  repo?: string;
 }
 
 /**
@@ -179,9 +184,12 @@ export interface BrowserAutomationPort {
   closeSession(): Promise<void>;
 }
 
-/** Thin source-repo connector surface used by the in-repo code explorer. */
+/**
+ * Thin source-repo surface for Explore code.
+ * Callers may omit `repo` when the connector binds one; the manager injects config.repo.
+ */
 export interface SourceRepoPort {
-  search(query: string): Promise<{ items: { path: string; snippet: string }[] }>;
-  listTree(path?: string): Promise<{ entries: { path: string; type: 'file' | 'dir' }[] }>;
-  readFile(path: string): Promise<{ path: string; content: string; truncated: boolean }>;
+  search(input: { query: string; repo?: string; branch?: string }): Promise<{ items: { path: string; snippet: string }[] }>;
+  listTree(input?: { path?: string; repo?: string; branch?: string }): Promise<{ entries: { path: string; type: 'file' | 'dir' }[] }>;
+  readFile(input: { path: string; repo?: string; branch?: string }): Promise<{ path: string; content: string; truncated: boolean }>;
 }

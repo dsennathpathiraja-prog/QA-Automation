@@ -12,19 +12,18 @@ describe('searchQueriesFor', () => {
 });
 
 describe('code explorer', () => {
-  it('skips when no source-repo connector is bound', async () => {
-    const out = await createCodeExplorer(undefined).explore({
+  it('fails when no source-repo port is bound', async () => {
+    await expect(createCodeExplorer(undefined).explore({
       application: 'PayNSure',
+      workItem: '7189',
       criteria: ['saved card'],
-    });
-    expect(out.source).toBe('skipped');
-    expect(out.summary).toMatch(/no source repository connector/i);
+    })).rejects.toMatchObject({ errorClass: 'denied' });
   });
 
-  it('searches and records file excerpts before planning', async () => {
+  it('searches the bound repo and records file excerpts', async () => {
     const calls: string[] = [];
     const source: SourceRepoPort = {
-      async search(query) {
+      async search({ query }) {
         calls.push(`search:${query}`);
         return { items: [{ path: 'src/pay/CardList.tsx', snippet: 'export function CardList() { return <ul />; }' }] };
       },
@@ -32,14 +31,16 @@ describe('code explorer', () => {
         calls.push('tree');
         return { entries: [] };
       },
-      async readFile(path) {
+      async readFile({ path }) {
         calls.push(`read:${path}`);
         return { path, content: 'full file', truncated: false };
       },
     };
     const out = await createCodeExplorer(source).explore({
       application: 'PayNSure',
+      workItem: '7189',
       criteria: ['The saved card is listed'],
+      repo: 'shop',
       maxFiles: 4,
     });
     expect(out.source).toBe('repo');
@@ -55,7 +56,7 @@ describe('code explorer', () => {
       async listTree() {
         return { entries: [{ path: 'README.md', type: 'file' }, { path: 'src', type: 'dir' }] };
       },
-      async readFile(path) {
+      async readFile({ path }) {
         return { path, content: '# Shop checkout', truncated: false };
       },
     };
@@ -68,15 +69,27 @@ describe('code explorer', () => {
     expect(out.summary).toMatch(/Visited files: README\.md/);
   });
 
-  it('skips when the connector denies the source-repo role', async () => {
-    const source = sourceRepoPortFromInvoker(async () => {
-      throw new PlatformError('denied', 'No source-repo connector is bound');
+  it('omits repo from invoke when relying on connector-bound config', async () => {
+    const payloads: { capability: string; input: Record<string, unknown> }[] = [];
+    const port = sourceRepoPortFromInvoker(async (capability, input) => {
+      payloads.push({ capability, input: input ?? {} });
+      if (capability === 'scm.code.search') return { items: [{ path: 'a.ts', snippet: 'login' }] };
+      if (capability === 'scm.tree.list') return { entries: [] };
+      return { path: 'a.ts', content: 'login()', truncated: false };
     });
-    const out = await createCodeExplorer(source).explore({
+    await port.search({ query: 'login' });
+    await port.readFile({ path: 'a.ts' });
+    expect(payloads[0]).toEqual({ capability: 'scm.code.search', input: { query: 'login' } });
+    expect(payloads[1]).toEqual({ capability: 'scm.file.read', input: { path: 'a.ts' } });
+  });
+
+  it('surfaces connector validation errors', async () => {
+    const port = sourceRepoPortFromInvoker(async () => {
+      throw new PlatformError('validation', 'invalid input for scm.code.search: repo: Required');
+    });
+    await expect(createCodeExplorer(port).explore({
       application: 'PayNSure',
-      criteria: ['card'],
-    });
-    expect(out.source).toBe('skipped');
-    expect(out.summary).toMatch(/could not be read/);
+      criteria: ['login'],
+    })).rejects.toMatchObject({ errorClass: 'validation' });
   });
 });

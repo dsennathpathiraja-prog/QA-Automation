@@ -235,9 +235,11 @@ describe('source and work-item providers', () => {
     expect(m.hits[0]?.accept).toContain('text/event-stream');
     const probes = await client.probeCapabilities();
     expect(probes.find((p) => p.capability === 'browser.navigate')).toMatchObject({ support: 'supported' });
-    expect(await client.handle({ id: 'browser.navigate' } as never, { url: 'https://shop.example.com/cart' }, {} as never)).toMatchObject({ finalUrl: 'https://shop.example.com/cart' });
-    await expect(client.handle({ id: 'browser.navigate' } as never, { url: 'https://evil.example/phish' }, {} as never)).rejects.toMatchObject({ errorClass: 'denied' });
-    expect(await client.handle({ id: 'browser.snapshot' } as never, {}, {} as never)).toMatchObject({ accessibilityTree: 'button Checkout' });
+    const opened = await client.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
+    expect(opened.sessionId).toBeTruthy();
+    expect(await client.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'https://shop.example.com/cart' }, {} as never)).toMatchObject({ finalUrl: 'https://shop.example.com/cart' });
+    await expect(client.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'https://evil.example/phish' }, {} as never)).rejects.toMatchObject({ errorClass: 'denied' });
+    expect(await client.handle({ id: 'browser.snapshot' } as never, { sessionId: opened.sessionId }, {} as never)).toMatchObject({ accessibilityTree: 'button Checkout' });
   });
 
   it('explains a Playwright 403 as a host-name refusal', async () => {

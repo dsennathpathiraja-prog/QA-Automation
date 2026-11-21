@@ -134,6 +134,7 @@ export function WorkflowPage() {
   const steps = (def?.spec?.steps ?? []).filter((s) => !(generation && ['rv.execute-tests', 'rv.sync-results', 'rv.qa-report'].includes(s.type)));
   const enabled = steps.filter((s) => s.enabled !== false);
   const exploreUiOn = enabled.some((s) => s.type === 'rv.explore-ui' || s.id === 'explore_ui');
+  const exploreCodeOn = enabled.some((s) => s.type === 'rv.explore-code' || s.id === 'explore_code');
   const selectableEnvironments = (environments.data?.items ?? []).filter((item) => item.enabled && item.selectable);
   const stepEvents = (events.data?.items ?? []).filter((event) => event.kind === 'step.completed' || event.kind === 'step.failed');
   const runParams = (def?.spec?.parameters ?? []).filter((p) => {
@@ -305,13 +306,16 @@ export function WorkflowPage() {
                 <Stack component="form" spacing={2} sx={{ mb: 2 }} onSubmit={(e) => { e.preventDefault(); if (!canStartRun) return; start.mutate(); }}>
                   {generation && exploreUiOn && (
                     <Alert severity="info">
-                      Explore UI opens the selected environment before planning. Pick an environment here so the browser can load the application URL.
-                      Running prepared cases later is still a separate action on Executions.
+                      Explore UI opens the selected environment with Playwright (MCP session → navigate) before planning. Pick an environment so the browser can load the application URL.
+                      {exploreCodeOn ? ' Explore code searches the bound source repository before planning.' : ''}
+                      {' '}Running prepared cases later is still a separate action on Executions.
                     </Alert>
                   )}
                   {generation && !exploreUiOn && (
                     <Alert severity="info">
-                      Starting this run creates the test cases. Running the work item against an environment is a separate action on Executions.
+                      Starting this run prepares cases
+                      {exploreCodeOn ? ' (Explore code searches the bound repository before planning)' : ''}.
+                      {' '}Running the work item against an environment is a separate action on Executions.
                     </Alert>
                   )}
                   {runParams.map((p) => (
