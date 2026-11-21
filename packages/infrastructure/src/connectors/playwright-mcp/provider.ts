@@ -294,6 +294,12 @@ class PlaywrightClient implements ConnectorClient {
         'If the image already has --isolated, restart playwright-mcp to clear a stuck session.'
       );
     }
+    if (/No usable sandbox|chromiumSandbox|Invalid URL:\s*undefined|--no-sandbox/i.test(msg)) {
+      return (
+        'Playwright Chromium aborted in the container (sandbox / CDP URL undefined). ' +
+        'Rebuild playwright-mcp with --no-sandbox and PLAYWRIGHT_MCP_SANDBOX=0 (QA-44), then recreate the browser service.'
+      );
+    }
     return msg;
   }
 

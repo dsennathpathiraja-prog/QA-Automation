@@ -15,7 +15,7 @@ docker compose --profile llm up -d ollama    # local LLM host (add -f docker-com
 docker compose --profile browser up --build -d playwright-mcp   # managed Playwright MCP (DNS: playwright-mcp → :8931)
 ```
 
-Playwright **Test connection** / Explore UI need the browser profile running on the **same Compose project** as the worker. Connector URL from the worker: `http://playwright-mcp:8931` (`PLAYWRIGHT_MCP_URL`; approve host `playwright-mcp` for plain http). Image tag `qa-playwright-mcp:local` is not a DNS name. The service builds `deploy/images/playwright-mcp.Dockerfile` (Chromium + pinned `@playwright/mcp@0.0.35` with `--isolated`; ENTRYPOINT must not pass flags that version rejects, e.g. `--allowed-hosts`). Rebuild after Dockerfile changes. Details: `local/README.md` and `docs/playwright-agents-mcp.md`.
+Playwright **Test connection** / Explore UI need the browser profile running on the **same Compose project** as the worker. Connector URL from the worker: `http://playwright-mcp:8931` (`PLAYWRIGHT_MCP_URL`; approve host `playwright-mcp` for plain http). Image tag `qa-playwright-mcp:local` is not a DNS name. The service builds `deploy/images/playwright-mcp.Dockerfile` (Chromium + pinned `@playwright/mcp@0.0.35` with `--isolated` and `--no-sandbox`; ENTRYPOINT must not pass flags that version rejects, e.g. `--allowed-hosts`). Rebuild after Dockerfile changes. Details: `local/README.md` and `docs/playwright-agents-mcp.md`.
 
 
 Identity (decision Q2a, default accepted): a new Keycloak is deployed with the stack and imported with realm

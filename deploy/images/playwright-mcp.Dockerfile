@@ -23,9 +23,14 @@ RUN npm init -y \
  && node -e "const fs=require('fs'); const p='node_modules/@playwright/mcp/lib/mcp/http.js'; let s=fs.readFileSync(p,'utf8'); const from='await mcpServer.connect(serverBackendFactory, transport, true);'; const to='await mcpServer.connect(serverBackendFactory, transport, false);'; if(!s.includes(from)) { console.error('QA-42 heartbeat patch: expected connect(..., true) not found in', p); process.exit(1); } fs.writeFileSync(p, s.replace(from, to)); console.log('QA-42: disabled Streamable HTTP MCP heartbeat');" \
  && rm -rf /root/.npm /tmp/*
 
+# QA-44: Docker/container Chromium cannot use the zygote sandbox (SIGABRT "No usable
+# sandbox" → CDP ws connecting undefined). @playwright/mcp@0.0.35 maps
+# PLAYWRIGHT_MCP_SANDBOX=0 / --no-sandbox to launchOptions.chromiumSandbox=false
+# (Playwright then passes --no-sandbox / --disable-setuid-sandbox).
 ENV PLAYWRIGHT_MCP_BROWSER=chromium \
     HOME=/tmp \
-    NODE_ENV=production
+    NODE_ENV=production \
+    PLAYWRIGHT_MCP_SANDBOX=0
 
 USER pwuser
 EXPOSE 8931
@@ -33,9 +38,11 @@ EXPOSE 8931
 # QA-43: --isolated keeps each MCP session's Chromium profile in memory so concurrent /
 # leftover Explore sessions do not collide on /ms-playwright/mcp-chromium ("Browser is
 # already in use"). Persistent MFA still uses savedSessionName / storage-state when set.
+# QA-44: --no-sandbox required for headless Chromium in this container (see ENV above).
 ENTRYPOINT ["node", "/opt/playwright-mcp/node_modules/@playwright/mcp/cli.js", \
   "--browser", "chromium", \
   "--headless", \
   "--isolated", \
+  "--no-sandbox", \
   "--port", "8931", \
   "--host", "0.0.0.0"]

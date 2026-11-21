@@ -39,7 +39,7 @@ The trial realm accepts any `http://localhost:<port>` as a sign-in return addres
 
 The managed Playwright MCP server is **not** part of the default stack. Without it, Connectors → Playwright → **Test connection** fails with “Could not reach Playwright”.
 
-1. Start (or rebuild) the browser profile (worker must already be up on the same Compose project). The image bakes Chromium and a pinned `@playwright/mcp` — rebuild whenever `deploy/images/playwright-mcp.Dockerfile` changes (includes `--isolated` so Explore does not hit “Browser is already in use for mcp-chromium”):
+1. Start (or rebuild) the browser profile (worker must already be up on the same Compose project). The image bakes Chromium and a pinned `@playwright/mcp` — rebuild whenever `deploy/images/playwright-mcp.Dockerfile` changes (includes `--isolated` and `--no-sandbox` for Docker Chromium):
 
 ```
 docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d playwright-mcp
