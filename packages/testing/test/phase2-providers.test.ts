@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
-import { EgressPolicy, HardenedHttpClient, acceptanceCriteriaFromDescription, adfToText, azureBoardsProvider, azureDevOpsProvider, azureFieldString, azureReposSourceScore, azureWorkItemFields, azureWorkItemTitle, githubProvider, githubWriteScopes, azureDevOpsWriteScopes, jiraProvider, playwrightMcpProvider, scenarioCuesFromDescription, splitAcceptanceCriteria } from '@qa/infrastructure';
-import { assertProviderContract } from '../src';
+import { EgressPolicy, HardenedHttpClient, acceptanceCriteriaFromDescription, adfToText, azureBoardsProvider, azureDevOpsProvider, azureFieldString, azureReposSourceScore, azureWorkItemFields, azureWorkItemTitle, githubProvider, githubWriteScopes, azureDevOpsWriteScopes, jiraProvider, PLAYWRIGHT_MCP_SESSION_MODE, playwrightMcpProvider, resetPlaywrightMcpSessionPoolForTests, scenarioCuesFromDescription, splitAcceptanceCriteria } from '@qa/infrastructure';
+import { assertProviderContract, createHarness, execPolicy, makeInstance } from '../src';
 
 const TOKEN = 'readonly-token-value-0001';
 const lease = { value: { token: TOKEN }, expiresAt: new Date(Date.now() + 60_000), release() {} };
@@ -12,6 +12,7 @@ let closeServer: (() => Promise<void>) | undefined;
 afterEach(async () => {
   await closeServer?.();
   closeServer = undefined;
+  resetPlaywrightMcpSessionPoolForTests();
 });
 
 /** Playwright MCP initialize must return mcp-session-id so Explore can reattach across invokes. */
@@ -333,6 +334,7 @@ describe('source and work-item providers', () => {
     const pageState = `### Page state\n- Page URL: http://sdk.paynsure.internal/shop\n- Page Title: Shop\n- Page Snapshot:\n\`\`\`yaml\n- button "Add to cart" [ref=e1]\n\`\`\`\n`;
     const evalOk = `### Result\n${JSON.stringify({ url: 'http://sdk.paynsure.internal/shop', title: 'Shop', buttons: ['Add to cart'], headings: [], links: [], fields: [], bodyText: 'Add to cart', readyState: 'complete', iframes: [], frameDocs: [] }, null, 2)}\n`;
     let initializes = 0;
+    let creates = 0;
     const m = await mock((hit) => {
       const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string } };
       if (body.method === 'initialize') {
@@ -351,19 +353,102 @@ describe('source and work-item providers', () => {
       }
       return { body: { result: { content: [] } } };
     });
-    const openClient = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'http://sdk.paynsure.internal' }, undefined, { http: m.http });
-    const opened = await openClient.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
+    const wrapCreate = () => {
+      creates += 1;
+      return playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'http://sdk.paynsure.internal' }, undefined, { http: m.http });
+    };
+    const openClient = wrapCreate();
+    const opened = await openClient.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string; sessionMode?: string };
     expect(opened.sessionId).toBe('sess-cross');
+    expect(opened.sessionMode).toBe(PLAYWRIGHT_MCP_SESSION_MODE);
     await openClient.dispose();
 
-    const navClient = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'http://sdk.paynsure.internal' }, undefined, { http: m.http });
+    const navClient = wrapCreate();
     await navClient.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'http://sdk.paynsure.internal/shop' }, {} as never);
     await navClient.dispose();
 
-    const evalClient = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'http://sdk.paynsure.internal' }, undefined, { http: m.http });
+    const evalClient = wrapCreate();
     const evaluated = await evalClient.handle({ id: 'browser.evaluate' } as never, { sessionId: opened.sessionId, script: '() => ({ ok: true })' }, {} as never) as { resultText: string };
     expect(evaluated.resultText).toMatch(/Add to cart/);
     expect(initializes).toBe(1);
+    expect(creates).toBe(3);
+  });
+
+  it('Manager invoke open → navigate → evaluate uses one MCP initialize across three clients', async () => {
+    const pageState = `### Page state\n- Page URL: http://sdk.paynsure.internal/shop\n- Page Title: Shop\n- Page Snapshot:\n\`\`\`yaml\n- button "Add to cart" [ref=e1]\n\`\`\`\n`;
+    const evalOk = `### Result\n${JSON.stringify({ url: 'http://sdk.paynsure.internal/shop', title: 'Shop', buttons: ['Add to cart'], headings: [], links: [], fields: [], bodyText: 'Add to cart', readyState: 'complete', iframes: [], frameDocs: [] }, null, 2)}\n`;
+    let initializes = 0;
+    let providerCreates = 0;
+    const m = await mock((hit) => {
+      const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string } };
+      if (body.method === 'initialize') {
+        initializes += 1;
+        return mcpInit('sess-mgr');
+      }
+      if (body.params?.name === 'browser_navigate' || body.params?.name === 'browser_wait_for') {
+        expect(hit.session).toBe('sess-mgr');
+        return { body: { result: { content: [{ type: 'text', text: pageState }] } } };
+      }
+      if (body.params?.name === 'browser_evaluate') {
+        expect(hit.session).toBe('sess-mgr');
+        expect(initializes).toBe(1);
+        return { body: { result: { content: [{ type: 'text', text: evalOk }] } } };
+      }
+      if (body.params?.name === 'browser_close') return { body: { result: { content: [] } } };
+      return { body: { result: { content: [] } } };
+    });
+    const countingProvider = {
+      ...playwrightMcpProvider,
+      create(config: unknown, secrets: unknown, deps: unknown) {
+        providerCreates += 1;
+        return playwrightMcpProvider.create(config as never, secrets as never, deps as never);
+      },
+    };
+    const caps = ['browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.wait', 'browser.evaluate', 'browser.screenshot', 'browser.session.close'];
+    const h = createHarness({
+      providers: [countingProvider],
+      instances: [makeInstance({
+        id: 'br1',
+        providerKey: 'playwright-mcp',
+        category: 'browser-automation',
+        config: { baseUrl: m.baseUrl, allowedOrigins: 'http://sdk.paynsure.internal' },
+      }, caps)],
+      policies: { ex1: execPolicy({
+        boundRoles: { browserAutomation: 'br1' },
+        allowedOrigins: ['http://sdk.paynsure.internal', 'sdk.paynsure.internal'],
+      }) },
+      adapterDeps: { http: m.http } as never,
+    });
+    const actor = { type: 'step' as const, id: 'explore', executionId: 'ex1', stepId: 's1' };
+    const opened = await h.manager.invoke<{ sessionId: string; sessionMode?: string }>({
+      role: 'browserAutomation',
+      capability: 'browser.session.open',
+      input: {},
+      actor,
+    });
+    expect(opened.sessionId).toBe('sess-mgr');
+    expect(opened.sessionMode).toBe(PLAYWRIGHT_MCP_SESSION_MODE);
+    await h.manager.invoke({
+      role: 'browserAutomation',
+      capability: 'browser.navigate',
+      input: { sessionId: opened.sessionId, url: 'http://sdk.paynsure.internal/shop' },
+      actor,
+    });
+    const evaluated = await h.manager.invoke<{ resultText: string }>({
+      role: 'browserAutomation',
+      capability: 'browser.evaluate',
+      input: { sessionId: opened.sessionId, script: '() => ({ ok: true })' },
+      actor,
+    });
+    expect(evaluated.resultText).toMatch(/Add to cart/);
+    await h.manager.invoke({
+      role: 'browserAutomation',
+      capability: 'browser.session.close',
+      input: { sessionId: opened.sessionId },
+      actor,
+    });
+    expect(initializes).toBe(1);
+    expect(providerCreates).toBeGreaterThanOrEqual(3);
   });
 
   it('returns an empty accessibility tree when MCP snapshot content is empty (no circuit-trip throw)', async () => {

@@ -303,10 +303,10 @@ export function describeEmptyCapture(input: {
         'Re-run Playwright → Test connection (Success closes the circuit), confirm browser.evaluate is granted, Switch the connector on, then retry Explore UI'
       );
     }
-    if (/No open pages?|No open tabs|mcp-session-id|lost the tab/i.test(input.probeError)) {
+    if (/No open pages?|No open tabs|mcp-session-id|lost the tab|durable-pool|session was not found/i.test(input.probeError)) {
       return (
         `DOM probe found no open browser page after navigate (${input.probeError.replace(/\s+/g, ' ').slice(0, 180)}). ` +
-        'Explore UI must reuse one Playwright mcp-session-id for open → navigate → evaluate — restart the worker after upgrading, Test connection, then retry'
+        'Rebuild worker + playwright-mcp with --build from foundation (must include durable-pool-qa42), restart both, Test connection, then retry Explore UI'
       );
     }
     return (
