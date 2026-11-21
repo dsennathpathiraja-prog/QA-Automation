@@ -16,7 +16,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { ConnectorListResponse, ExecutionEventList, ExecutionListResponse, ExecutionSchema, ValidationReportSchema, WorkflowDefinitionResponse, WorkflowSchema } from '@qa/contracts';
+import { ConnectorListResponse, EnvironmentListResponse, ExecutionEventList, ExecutionListResponse, ExecutionSchema, ValidationReportSchema, WorkflowDefinitionResponse, WorkflowSchema } from '@qa/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
@@ -81,6 +81,11 @@ export function WorkflowPage() {
   const [runId, setRunId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<'ask' | 'force' | undefined>();
   const savedConnectors = useQuery({ queryKey: ['connectors'], queryFn: () => api.get('/api/v1/connectors', ConnectorListResponse), enabled: session.can('connector.view_status') });
+  const environments = useQuery({
+    queryKey: ['environments'],
+    queryFn: () => api.get('/api/v1/environments', EnvironmentListResponse),
+    enabled: session.can('environment.view'),
+  });
   const def = edited ?? (definition.data?.definition as Def | undefined);
   const draft = workflow.data?.status === 'draft';
   const canEdit = draft && session.can('workflow.edit');
@@ -128,7 +133,16 @@ export function WorkflowPage() {
   const generation = workflow.data?.type === 'requirement-validation';
   const steps = (def?.spec?.steps ?? []).filter((s) => !(generation && ['rv.execute-tests', 'rv.sync-results', 'rv.qa-report'].includes(s.type)));
   const enabled = steps.filter((s) => s.enabled !== false);
+  const exploreUiOn = enabled.some((s) => s.type === 'rv.explore-ui' || s.id === 'explore_ui');
+  const selectableEnvironments = (environments.data?.items ?? []).filter((item) => item.enabled && item.selectable);
   const stepEvents = (events.data?.items ?? []).filter((event) => event.kind === 'step.completed' || event.kind === 'step.failed');
+  const runParams = (def?.spec?.parameters ?? []).filter((p) => {
+    if (p.pinned !== undefined && p.pinned !== null) return false;
+    if (p.name === 'environment') return exploreUiOn;
+    return p.required;
+  });
+  const missingEnvironment = exploreUiOn && !params.environment;
+  const canStartRun = !start.isPending && !(exploreUiOn && !params.environment);
 
   return (
     <>
@@ -288,25 +302,62 @@ export function WorkflowPage() {
                 <Alert severity="info">Publish this workflow before starting a run. The worker runs the steps; this page only starts it and shows each step&apos;s output.</Alert>
               )}
               {workflow.data?.status === 'published' && session.can('execution.start') && (
-                <Stack component="form" spacing={2} sx={{ mb: 2 }} onSubmit={(e) => { e.preventDefault(); start.mutate(); }}>
-                  {generation && (
-                    <Alert severity="info">Starting this run creates the test cases. Choose the environment on Executions when you run the work item.</Alert>
+                <Stack component="form" spacing={2} sx={{ mb: 2 }} onSubmit={(e) => { e.preventDefault(); if (!canStartRun) return; start.mutate(); }}>
+                  {generation && exploreUiOn && (
+                    <Alert severity="info">
+                      Explore UI opens the selected environment before planning. Pick an environment here so the browser can load the application URL.
+                      Running prepared cases later is still a separate action on Executions.
+                    </Alert>
                   )}
-                  {(def.spec?.parameters ?? []).filter((p) => p.required && (p.pinned === undefined || p.pinned === null) && !(generation && p.name === 'environment')).map((p) => (
-                    <TextField
-                      key={p.name}
-                      id={`param-${p.name}`}
-                      label={`${p.name} (${p.type})`}
-                      helperText={p.type === 'work-item-ref' ? 'Enter the work item id (for example 7189). Bound Azure Boards / Jira load title, description, and acceptance criteria.' : undefined}
-                      multiline={p.type === 'work-item-ref'}
-                      minRows={p.type === 'work-item-ref' ? 3 : undefined}
-                      value={params[p.name] ?? ''}
-                      onChange={(e) => setParams({ ...params, [p.name]: e.target.value })}
-                      fullWidth
-                    />
+                  {generation && !exploreUiOn && (
+                    <Alert severity="info">
+                      Starting this run creates the test cases. Running the work item against an environment is a separate action on Executions.
+                    </Alert>
+                  )}
+                  {runParams.map((p) => (
+                    p.name === 'environment' || p.type === 'environment-ref' ? (
+                      <FormControl key={p.name} fullWidth required={exploreUiOn} error={missingEnvironment}>
+                        <InputLabel id={`param-${p.name}-label`}>Environment</InputLabel>
+                        <Select
+                          labelId={`param-${p.name}-label`}
+                          id={`param-${p.name}`}
+                          label="Environment"
+                          value={params.environment ?? ''}
+                          onChange={(e) => setParams({ ...params, environment: String(e.target.value) })}
+                        >
+                          <MenuItem value="">Select environment</MenuItem>
+                          {selectableEnvironments.map((item) => (
+                            <MenuItem key={item.id} value={item.id}>{item.name} · {item.kind}</MenuItem>
+                          ))}
+                        </Select>
+                        {selectableEnvironments.length === 0 && (
+                          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                            No selectable environment yet. Create and enable one under Environments, then return here.
+                          </Typography>
+                        )}
+                        {missingEnvironment && selectableEnvironments.length > 0 && (
+                          <Typography variant="caption" color="error" sx={{ mt: 0.5 }}>
+                            Environment is required so Explore UI can open the application.
+                          </Typography>
+                        )}
+                      </FormControl>
+                    ) : (
+                      <TextField
+                        key={p.name}
+                        id={`param-${p.name}`}
+                        label={`${p.name} (${p.type})`}
+                        helperText={p.type === 'work-item-ref' ? 'Enter the work item id (for example 7189). Bound Azure Boards / Jira load title, description, and acceptance criteria.' : undefined}
+                        multiline={p.type === 'work-item-ref'}
+                        minRows={p.type === 'work-item-ref' ? 3 : undefined}
+                        value={params[p.name] ?? ''}
+                        onChange={(e) => setParams({ ...params, [p.name]: e.target.value })}
+                        fullWidth
+                        required={p.required}
+                      />
+                    )
                   ))}
                   <Box>
-                    <Button type="submit" variant="contained" disabled={start.isPending}>Start run</Button>
+                    <Button type="submit" variant="contained" disabled={!canStartRun}>Start run</Button>
                   </Box>
                   {start.isError && <ErrorNotice message={errorText(start.error, 'The run could not be started.')} />}
                 </Stack>

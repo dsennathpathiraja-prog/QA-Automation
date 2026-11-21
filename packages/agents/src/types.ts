@@ -124,6 +124,28 @@ export interface ExploreResult {
   source: 'browser' | 'skipped' | 'mcp';
 }
 
+export interface CodeExploreRequest {
+  application: string;
+  criteria?: string[];
+  /** Cap files / excerpts for a single run. */
+  maxFiles?: number;
+  executionId?: string;
+  stepId?: string;
+}
+
+export interface CodeFinding {
+  path: string;
+  excerpt: string;
+  query?: string;
+}
+
+export interface CodeExploreResult {
+  summary: string;
+  findings: string;
+  details: CodeFinding[];
+  source: 'repo' | 'skipped';
+}
+
 /**
  * Capability ports the worker binds. In-repo defaults use the LLM gateway and
  * Playwright MCP connector; Cursor MCP packages can implement the same ports.
@@ -144,6 +166,10 @@ export interface BrowserExplorerPort {
   explore(input: ExploreRequest): Promise<ExploreResult>;
 }
 
+export interface CodeExplorerPort {
+  explore(input: CodeExploreRequest): Promise<CodeExploreResult>;
+}
+
 /** Thin browser connector surface used by the in-repo explorer (maps to playwright-mcp capabilities). */
 export interface BrowserAutomationPort {
   openSession(): Promise<void>;
@@ -151,4 +177,11 @@ export interface BrowserAutomationPort {
   snapshot(): Promise<{ accessibilityTree: string; url: string }>;
   screenshot(): Promise<{ artifactBase64: string }>;
   closeSession(): Promise<void>;
+}
+
+/** Thin source-repo connector surface used by the in-repo code explorer. */
+export interface SourceRepoPort {
+  search(query: string): Promise<{ items: { path: string; snippet: string }[] }>;
+  listTree(path?: string): Promise<{ entries: { path: string; type: 'file' | 'dir' }[] }>;
+  readFile(path: string): Promise<{ path: string; content: string; truncated: boolean }>;
 }

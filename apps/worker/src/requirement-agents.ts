@@ -1,6 +1,8 @@
 import {
   parsePlanMarkdown,
   type BrowserExplorerPort,
+  type CodeExploreResult,
+  type CodeExplorerPort,
   type ExploreResult,
   type GenerateResult,
   type HealResult,
@@ -72,13 +74,14 @@ export interface RequirementAgentPorts {
   generator?: TestGeneratorPort;
   healer?: TestHealerPort;
   explorer?: BrowserExplorerPort;
+  codeExplorer?: CodeExplorerPort;
   /** Resolve an environment id (or name) to an application URL for UI exploration. */
   resolveEnvironmentUrl?: (environment: string) => Promise<string | undefined>;
 }
 
 /**
  * Runs one requirement-validation stage through planner / generator / healer / browser
- * agents when wired, otherwise falls back to the sync heuristic flow in workflow-engine.
+ * / source-repo agents when wired, otherwise falls back to the sync heuristic flow in workflow-engine.
  *
  * Order: explore → consolidate → plan (MD) → generate (from MD) → heal → publish.
  */
@@ -123,6 +126,24 @@ export async function performRequirementStep(
           url: pageUrl,
           snapshotExcerpt,
         })),
+        source: explored.source,
+      },
+    };
+  }
+
+  if (step.type === 'rv.explore-code' && ports.codeExplorer) {
+    const explored: CodeExploreResult = await ports.codeExplorer.explore({
+      application,
+      criteria,
+      maxFiles: 12,
+      executionId: step.runId,
+      stepId: step.id,
+    });
+    return {
+      summary: explored.summary,
+      outputs: {
+        findings: explored.findings,
+        details: explored.details.map(({ path, excerpt, query }) => ({ path, excerpt, query })),
         source: explored.source,
       },
     };
