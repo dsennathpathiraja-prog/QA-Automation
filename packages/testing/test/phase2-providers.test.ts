@@ -177,7 +177,8 @@ describe('source and work-item providers', () => {
     const m = await mock((hit) => {
       const path = pathOf(hit);
       if (hit.method === 'POST' && path.endsWith('/_apis/wit/wiql')) return { body: { workItems: [{ id: 12 }] } };
-      if (path.endsWith('/workitems/12')) return { body: { id: 12, fields: { 'System.Title': 'Checkout', 'System.State': 'New', 'System.WorkItemType': 'User Story', 'System.Description': '<p>Pay</p>', 'Microsoft.VSTS.Common.AcceptanceCriteria': 'The saved card is listed' } } };
+      // Org-scoped expand=All (no project segment), matching Dasun's verified curl.
+      if (path === '/_apis/wit/workitems/12') return { body: { id: 12, fields: { 'System.Title': 'Checkout', 'System.State': 'New', 'System.WorkItemType': 'User Story', 'System.Description': '<p>Pay</p>', 'Microsoft.VSTS.Common.AcceptanceCriteria': 'The saved card is listed' } } };
       if (path.endsWith('/workitems')) return { body: { value: [{ id: 12, fields: { 'System.Title': 'Checkout', 'System.State': 'New', 'System.WorkItemType': 'User Story' } }] } };
       if (path.endsWith('/projects')) return { body: { count: 1, value: [{ id: 'p', name: 'Web' }] } };
       return { status: 404, body: {} };
@@ -187,8 +188,11 @@ describe('source and work-item providers', () => {
     expect(await client.handle({ id: 'workitem.read' } as never, { id: '12' }, {} as never)).toMatchObject({ title: 'Checkout', acceptanceCriteria: 'The saved card is listed', description: 'Pay' });
     expect(await client.handle({ id: 'workitem.search' } as never, { query: 'Checkout' }, {} as never)).toMatchObject({ items: [{ id: '12', title: 'Checkout' }] });
     expect(m.hits.some((h) => h.method === 'POST' && h.path.includes('wiql'))).toBe(true);
-    const readHit = m.hits.find((h) => h.method === 'GET' && pathOf(h).endsWith('/workitems/12'));
-    expect(readHit?.path).toMatch(/fields=.*System\.Title/);
+    const readHit = m.hits.find((h) => h.method === 'GET' && pathOf(h) === '/_apis/wit/workitems/12');
+    expect(readHit?.path).toMatch(/(\$|%24)expand=All/);
+    expect(readHit?.path).toMatch(/api-version=7\.1/);
+    expect(readHit?.path).not.toMatch(/\/Web\//);
+    expect(readHit?.auth?.startsWith('Basic ')).toBe(true);
   });
 
   it('reads System.Title from nested fields.fields and value wrappers', async () => {
@@ -208,7 +212,7 @@ describe('source and work-item providers', () => {
     expect(azureWorkItemTitle(nested)).toMatch(/Order transactions calculation flow/);
     const m = await mock((hit) => {
       const path = pathOf(hit);
-      if (path.endsWith('/workitems/3421')) return { body: nested };
+      if (path === '/_apis/wit/workitems/3421') return { body: nested };
       return { status: 404, body: {} };
     });
     const client = azureBoardsProvider.create({ organization: 'contoso', project: 'PayNSure', baseUrl: m.baseUrl }, lease, { http: m.http });
@@ -218,8 +222,7 @@ describe('source and work-item providers', () => {
     });
   });
 
-  it('retries workitem.read without fields and via WIQL when System.Title is missing (WI 2357-style)', async () => {
-    let reads = 0;
+  it('falls back to WIQL for System.Title when expand=All omits it (WI 2357-style)', async () => {
     const m = await mock((hit) => {
       const path = pathOf(hit);
       const raw = hit.path;
@@ -230,12 +233,10 @@ describe('source and work-item providers', () => {
       if (path.endsWith('/workitems') && /[?&]ids=2357\b/.test(raw)) {
         return { body: { value: [{ id: 2357, fields: { 'System.Title': 'Settlement reasons for payment ledger' } }] } };
       }
-      if (path.endsWith('/workitems/2357')) {
-        reads += 1;
-        // First (fields=…) projection omits title; full GET still empty; WIQL batch supplies it.
-        if (reads === 1) return { body: { id: 2357, fields: { 'System.State': 'Active' } } };
-        if (reads === 2) return { body: { id: 2357, fields: { 'System.Description': '<p>Body</p>' } } };
-        return { status: 404, body: {} };
+      // expand=All primary read returns the item without System.Title.
+      if (path === '/_apis/wit/workitems/2357') {
+        expect(raw).toMatch(/(\$|%24)expand=All/);
+        return { body: { id: 2357, fields: { 'System.State': 'Active', 'System.Description': '<p>Body</p>' } } };
       }
       return { status: 404, body: {} };
     });
@@ -243,6 +244,7 @@ describe('source and work-item providers', () => {
     expect(await client.handle({ id: 'workitem.read' } as never, { id: '2357' }, {} as never)).toMatchObject({
       id: '2357',
       title: 'Settlement reasons for payment ledger',
+      description: 'Body',
     });
   });
 
@@ -257,7 +259,8 @@ describe('source and work-item providers', () => {
   it('reads Azure Boards acceptance criteria from Description HTML when the field is empty', async () => {
     const m = await mock((hit) => {
       const path = pathOf(hit);
-      if (path.endsWith('/workitems/7189')) {
+      if (path === '/_apis/wit/workitems/7189') {
+        expect(hit.path).toMatch(/(\$|%24)expand=All/);
         return {
           body: {
             id: 7189,
