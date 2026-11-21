@@ -39,13 +39,14 @@ The trial realm accepts any `http://localhost:<port>` as a sign-in return addres
 
 The managed Playwright MCP server is **not** part of the default stack. Without it, Connectors → Playwright → **Test connection** fails with “Could not reach Playwright”.
 
-1. Start the browser profile (worker must already be up):
+1. Start (or rebuild) the browser profile (worker must already be up). The image bakes Chromium and a pinned `@playwright/mcp` — rebuild whenever `deploy/images/playwright-mcp.Dockerfile` changes:
 
 ```
-docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d
+docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d playwright-mcp
 ```
 
 2. Confirm the service is running: `docker compose -f deploy/compose/local/docker-compose.local.yml ps` should list `playwright-mcp`.
+
 3. In the UI, add **Playwright (managed)** with:
    - **Server address:** `http://playwright-mcp:8931` (Docker DNS name the **worker** uses — not `localhost`, and do not append `/mcp`; the connector adds that path).
    - **Application addresses:** comma-separated origins the browser may open (for example `https://shop.example.com`).
