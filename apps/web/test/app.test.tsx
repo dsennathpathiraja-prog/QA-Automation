@@ -103,8 +103,9 @@ describe('route guard', () => {
     expect(screen.getByText(/soft-deleted cases are excluded/i)).toBeTruthy();
     await user.click(screen.getByRole('tab', { name: 'History' }));
     expect(await screen.findByText(/These runs create and publish test cases/)).toBeTruthy();
+    expect(screen.getByText('Succeeded')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open workflow' })).toBeTruthy();
     const checkout = await screen.findByRole('button', { name: /Checkout/ });
-    expect(checkout.textContent).toMatch(/Succeeded/);
     await user.click(checkout);
     expect((await screen.findByRole('region', { name: 'Selected run' })).textContent).toMatch(/Read work item QA-1/);
   });
