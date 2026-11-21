@@ -249,7 +249,8 @@ describe('source and work-item providers', () => {
       return { body: { result: { content: [] } } };
     });
     const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'sdk.paynsure.internal' }, undefined, { http: m.http });
-    await expect(client.handle({ id: 'browser.navigate' } as never, { url: 'https://sdk.paynsure.internal/app' }, {} as never)).resolves.toMatchObject({
+    const opened = await client.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
+    await expect(client.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'https://sdk.paynsure.internal/app' }, {} as never)).resolves.toMatchObject({
       finalUrl: 'https://sdk.paynsure.internal/app',
     });
   });
