@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { tick, type EngineStore } from '../src';
-import { acceptanceLines, runFlowStep } from '../src/requirement-flow';
+import { acceptanceLines, runFlowStep, workItemTitleFromStory } from '../src/requirement-flow';
 
 const story = 'QA-1\n\nAcceptance criteria\nThe saved card is listed\nThe total includes tax';
 
@@ -88,8 +88,11 @@ describe('requirement validation stages', () => {
       'The total includes tax',
       'Given a saved card When the shopper pays Then the receipt shows the card',
     ]);
+    expect(workItemTitleFromStory(azureStyle)).toBe('PayNSure checkout');
     const read = runFlowStep({ id: 'read_story', type: 'rv.read-user-story', params: { story: azureStyle, applicationName: 'PayNSure' }, prior: {} });
+    expect(read.summary).toMatch(/7189 — PayNSure checkout/);
     expect(read.summary).toMatch(/3 acceptance criteria/);
+    expect(read.outputs.title).toBe('PayNSure checkout');
     const plan = runFlowStep({
       id: 'plan',
       type: 'rv.generate-test-plan',
@@ -104,6 +107,18 @@ describe('requirement validation stages', () => {
     const read = runFlowStep({ id: 'read_story', type: 'rv.read-user-story', params: { story: '7189', applicationName: 'PayNSure' }, prior: {} });
     expect(read.outputs.acceptanceCriteria).toEqual([]);
     expect(read.summary).toMatch(/no separate acceptance criteria/);
+    expect(read.outputs.title).toBeUndefined();
+  });
+
+  it('acknowledges an explicit workItemTitle param on the Read Done line', () => {
+    const read = runFlowStep({
+      id: 'read_story',
+      type: 'rv.read-user-story',
+      params: { story: '7189', applicationName: 'PayNSure', workItemTitle: 'Guest checkout' },
+      prior: {},
+    });
+    expect(read.summary).toMatch(/7189 — Guest checkout/);
+    expect(read.outputs.title).toBe('Guest checkout');
   });
 });
 

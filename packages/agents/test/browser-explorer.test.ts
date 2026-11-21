@@ -36,6 +36,7 @@ describe('browser explorer', () => {
     });
     expect(out.source).toBe('browser');
     expect(out.details[0]?.snapshotExcerpt).toMatch(/Pay/);
+    expect(out.summary).toMatch(/Visited https:\/\/shop\.example\.com\/pay/);
     expect(calls).toEqual(['open', 'nav:https://shop.example.com/pay', 'close']);
   });
 

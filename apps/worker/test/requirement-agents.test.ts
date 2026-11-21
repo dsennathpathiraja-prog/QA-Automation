@@ -30,7 +30,7 @@ describe('performRequirementStep', () => {
       },
     );
     expect(seenUrl).toBe('https://qa.shop.example/');
-    expect(out.summary).toMatch(/opened/);
+    expect(out.summary).toMatch(/opened|Visited/);
     expect(out.outputs.source).toBe('browser');
     expect(out.outputs.findings).toMatch(/qa\.shop\.example/);
   });
@@ -39,7 +39,7 @@ describe('performRequirementStep', () => {
     const codeExplorer: CodeExplorerPort = {
       async explore(input) {
         return {
-          summary: `read files for ${input.application}`,
+          summary: `Visited files: src/pay.ts for ${input.application} before planning.`,
           findings: '- src/pay.ts\n  export function pay()',
           details: [{ path: 'src/pay.ts', excerpt: 'export function pay()' }],
           source: 'repo',
@@ -56,7 +56,7 @@ describe('performRequirementStep', () => {
       },
       { codeExplorer },
     );
-    expect(out.summary).toMatch(/read files/);
+    expect(out.summary).toMatch(/Visited files: src\/pay\.ts/);
     expect(out.outputs.source).toBe('repo');
     expect(out.outputs.findings).toMatch(/pay\.ts/);
   });

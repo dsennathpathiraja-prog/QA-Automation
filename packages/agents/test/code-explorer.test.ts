@@ -45,6 +45,7 @@ describe('code explorer', () => {
     expect(out.source).toBe('repo');
     expect(out.details[0]?.path).toBe('src/pay/CardList.tsx');
     expect(out.findings).toMatch(/CardList/);
+    expect(out.summary).toMatch(/Visited files: src\/pay\/CardList\.tsx/);
     expect(calls.some((c) => c.startsWith('search:'))).toBe(true);
   });
 
@@ -64,6 +65,7 @@ describe('code explorer', () => {
     });
     expect(out.source).toBe('repo');
     expect(out.details).toEqual([{ path: 'README.md', excerpt: '# Shop checkout' }]);
+    expect(out.summary).toMatch(/Visited files: README\.md/);
   });
 
   it('skips when the connector denies the source-repo role', async () => {
