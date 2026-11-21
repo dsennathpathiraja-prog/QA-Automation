@@ -11,6 +11,7 @@
     "start": "tsx src/main.ts"
   },
   "dependencies": {
+    "@qa/agents": "workspace:*",
     "@qa/domain": "workspace:*",
     "@qa/infrastructure": "workspace:*",
     "@qa/persistence": "workspace:*",
@@ -21,7 +22,8 @@
     "@qa/workflow-engine": "workspace:*",
     "@qa/bootstrap": "workspace:*",
     "@qa/connector-sdk": "workspace:*",
-    "@qa/security": "workspace:*"
+    "@qa/security": "workspace:*",
+    "@qa/llm": "workspace:*"
   },
   "devDependencies": {
     "@qa/testing": "workspace:*"

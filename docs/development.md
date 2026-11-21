@@ -19,7 +19,8 @@ pnpm check        # type-check every package, then run all tests
 | `apps/worker` | Background worker (loop, health endpoints) |
 | `apps/runner-launcher` | Service that starts hardened test-runner containers |
 | `apps/web` | Web app (React, Vite) |
-| `packages/domain`, `contracts`, `security`, `connector-sdk`, `llm`, `telemetry` | Framework-free core: rules, ports, connector manager, model gateway |
+| `packages/domain`, `contracts`, `security`, `connector-sdk`, `llm`, `telemetry`, `agents` | Framework-free core: rules, ports, connector manager, model gateway, planner/generator/browser agent ports |
+| `docs/playwright-agents-mcp.md` | Enable Ollama / Playwright browser / local Cursor MCP for requirement-validation case prep |
 | `packages/infrastructure`, `persistence` | The adapters: OpenBao, OIDC, HTTP client, Squash, Ollama, Docker, Postgres |
 | `packages/testing` | Fakes, mocks and contract-test kits |
 | `tools/architecture-tests` | Layer rules and the credential scan; they run with every test run |

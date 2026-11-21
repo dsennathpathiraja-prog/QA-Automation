@@ -205,14 +205,19 @@ export function runFlowStep(step: FlowStep): FlowResult {
         summary: 'Source note: the scenarios stay in the plan. This run does not read the repository.',
         outputs: { findings: 'repository not read' },
       };
-    case 'rv.consolidate-findings':
+    case 'rv.consolidate-findings': {
+      const ui = text(step.prior.explore_ui?.findings);
+      const code = text(step.prior.explore_code?.findings);
+      const combined = [ui && `UI: ${ui}`, code && `Source: ${code}`].filter(Boolean).join('\n') || 'no exploration findings';
       return {
         summary: `Combined the story, the UI note, and the source note. ${scenarios.length || criteria.length || 1} scenario${(scenarios.length || criteria.length) === 1 ? '' : 's'} go forward.`,
-        outputs: { scenarios: scenarios.length > 0 ? scenarios : criteria, workItem },
+        outputs: { scenarios: scenarios.length > 0 ? scenarios : criteria, workItem, findings: combined, combined },
       };
+    }
     case 'rv.generate-tests': {
       const source = scenarios.length > 0 ? scenarios : planWithPlaywrightPlanner({ workItem, application, criteria }).scenarios;
-      const generated = generateWithPlaywrightGenerator({ workItem, application, scenarios: source });
+      const findings = text(step.prior.consolidate?.findings) || text(step.prior.consolidate?.combined) || text(step.prior.explore_ui?.findings);
+      const generated = generateWithPlaywrightGenerator({ workItem, application, scenarios: source, findings });
       return {
         summary: generated.summary,
         outputs: { cases: generated.cases, workItem, agent: 'playwright-test-generator' },
