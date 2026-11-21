@@ -34,10 +34,23 @@ VLLM_MODEL=your-model
 
 ## Enable Playwright browser exploration
 
-1. Start the managed browser (`deploy/compose` profile that includes `playwright-mcp`, address typically `http://playwright-mcp:8931`).
-2. In the UI, add a **Playwright (managed)** connector: server URL + comma-separated application origins the browser may open. Optional saved session name for MFA.
-3. Bind that connector as **Browser automation** on the requirement-validation workflow. Enable the Explore UI step (UI / both templates).
-4. On Run, supply an **environment** whose application URL matches an allowed origin (environments are optional for plan/generate; required for a real explore).
+1. Start the managed browser Compose profile (service name `playwright-mcp`, listens on **8931** inside the stack):
+
+```bash
+# Local trial
+docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d
+# Host / production compose
+docker compose --profile browser up -d playwright-mcp
+```
+
+2. In the UI, add a **Playwright (managed)** connector:
+   - **Server address:** `http://playwright-mcp:8931` (from the worker container — not `localhost`; do not append `/mcp`).
+   - **Application addresses:** comma-separated origins the browser may open.
+   - Optional saved session name for MFA.
+3. Approve host `playwright-mcp` for plain http when Test Connection / Approved hosts asks (Administrator).
+4. Run **Test connection** — it should say the managed Playwright server is connected. If it says it could not reach Playwright, the browser profile is not up or the URL/host approval is wrong (see `deploy/compose/local/README.md`).
+5. Bind that connector as **Browser automation** on the requirement-validation workflow. Enable the Explore UI step (UI / both templates).
+6. On Run, supply an **environment** whose application URL matches an allowed origin (environments are optional for plan/generate; required for a real explore).
 
 Without a browser or environment, explore records a skip note; plan and generate still complete using the story text.
 

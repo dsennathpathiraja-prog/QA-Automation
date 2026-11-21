@@ -36,7 +36,7 @@ export const playwrightMcpProvider: ConnectorProvider = {
     requiresInternet: false,
     verification: 'live-capable',
     wizard: [
-      { key: 'connection', title: 'Browser server', fields: [{ name: 'baseUrl', label: 'Playwright server address (http://playwright-mcp:8931)', type: 'url', required: true }, { name: 'allowedOrigins', label: 'Application addresses the browser may open, separated by commas', type: 'text', required: true }, { name: 'savedSessionName', label: 'Saved browser session (optional, used for MFA)', type: 'text', required: false }] },
+      { key: 'connection', title: 'Browser server', fields: [{ name: 'baseUrl', label: 'Playwright server address (from the worker: http://playwright-mcp:8931 — start Compose profile browser first)', type: 'url', required: true }, { name: 'allowedOrigins', label: 'Application addresses the browser may open, separated by commas', type: 'text', required: true }, { name: 'savedSessionName', label: 'Saved browser session (optional, used for MFA)', type: 'text', required: false }] },
       { key: 'test', title: 'Test connection', action: 'test-connection' },
       { key: 'probe', title: 'Check what this server can do', action: 'probe-capabilities' },
       { key: 'review', title: 'Review', action: 'review' },
@@ -129,9 +129,25 @@ class PlaywrightClient implements ConnectorClient {
         discovered: { server: result?.serverInfo?.name, version: result?.serverInfo?.version, savedSession: this.cfg.savedSessionName, origins: this.origins() },
       };
     } catch (e) {
-      const refused = e instanceof PlatformError && e.errorClass === 'denied';
-      return { ok: false, message: refused ? 'The Playwright server refused the call because it was not addressed as localhost. Restart the browser service so it allows the name playwright-mcp.' : e instanceof PlatformError ? e.message : 'Could not reach the Playwright server', latencyMs: Date.now() - started };
+      return { ok: false, message: this.connectionFailureMessage(e), latencyMs: Date.now() - started };
     }
+  }
+
+  /** Turn reachability / policy failures into an actionable message for Test Connection. */
+  private connectionFailureMessage(e: unknown): string {
+    const msg = e instanceof PlatformError ? e.message : 'Could not reach Playwright';
+    if (/could not resolve|network error|Could not reach|timed out|aborted/i.test(msg)) {
+      return (
+        `Could not reach Playwright at ${this.cfg.baseUrl}. ` +
+        'Start the managed browser service (Compose profile "browser"; address http://playwright-mcp:8931 from the worker), ' +
+        'approve that host for plain http if the UI asks, then test again.'
+      );
+    }
+    if (e instanceof PlatformError && e.errorClass === 'denied') {
+      if (/approved-host|plain http|loopback|HTTP method/i.test(msg)) return msg;
+      return 'The Playwright server refused the call because the Host header was not allowed. Restart the browser service so it allows the name playwright-mcp (Compose already passes --allowed-hosts *).';
+    }
+    return msg;
   }
 
   async inspectPermissions(): Promise<PermissionReport> {

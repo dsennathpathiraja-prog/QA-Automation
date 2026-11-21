@@ -133,6 +133,20 @@ describe('HardenedHttpClient', () => {
     await expect(new HardenedHttpClient({ egress: policy(), resolve: async () => ['140.82.112.5'], fetchImpl: f }).request({ method: 'POST', url: 'https://api.github.com/x' })).rejects.toThrow(/redirects/);
   });
 
+  it('wraps DNS failures as a PlatformError instead of a raw lookup error', async () => {
+    const c = new HardenedHttpClient({
+      egress: policy(),
+      resolve: async () => {
+        throw Object.assign(new Error('getaddrinfo ENOTFOUND missing.service'), { code: 'ENOTFOUND' });
+      },
+      fetchImpl: okFetch([]),
+    });
+    await expect(c.request({ method: 'GET', url: 'https://api.github.com/' })).rejects.toMatchObject({
+      errorClass: 'transient',
+      message: expect.stringMatching(/could not resolve api\.github\.com/),
+    });
+  });
+
   it('really connects to the pinned address (integration against a local server)', async () => {
     const { createServer } = await import('node:http');
     const srv = createServer((_, res) => res.end('pong'));
