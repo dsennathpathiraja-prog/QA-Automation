@@ -35,7 +35,8 @@ services:
       SECRET_MASTER_KEY: bG9jYWwtdHJpYWwtbWFzdGVyLWtleS0zMi1ieXRlcyE=
       # To see models from an Ollama running on your own machine, uncomment:
       # OLLAMA_URL: http://host.docker.internal:11434
-    extra_hosts: ["host.docker.internal:host-gateway"]
+    extra_hosts:
+      host.docker.internal: host-gateway
     depends_on:
       postgres: { condition: service_healthy }
       keycloak: { condition: service_started }
@@ -87,13 +88,12 @@ services:
     expose: ["8931"]
     # Loopback publish for host curl/debug only. The worker must use http://playwright-mcp:8931, not this port mapping.
     ports: ["127.0.0.1:${PLAYWRIGHT_MCP_HOST_PORT:-8931}:8931"]
-    # Host /etc/hosts is NOT inherited. Default PayNSure shop host → Docker host gateway so one rebuild
-    # works when the shop is reachable on the host (or set PLAYWRIGHT_MCP_SHOP_IP to the LAN IP).
-    # Optional second host: PLAYWRIGHT_MCP_EXTRA_HOST="other.internal:host-gateway" (or other.internal:10.0.0.5).
+    # Host /etc/hosts is NOT inherited. Mapping form required (Docker Compose on Windows rejects list/"host:ip" strings).
+    # Default PayNSure shop → Docker host gateway; set PLAYWRIGHT_MCP_SHOP_IP to a LAN IP when needed.
+    # Add more hosts as extra mapping keys (not "host:ip" list items).
     extra_hosts:
-      - "host.docker.internal:host-gateway"
-      - "sdk.paynsure.internal:${PLAYWRIGHT_MCP_SHOP_IP:-host-gateway}"
-      - "${PLAYWRIGHT_MCP_EXTRA_HOST:-host.docker.internal:host-gateway}"
+      host.docker.internal: host-gateway
+      sdk.paynsure.internal: ${PLAYWRIGHT_MCP_SHOP_IP:-host-gateway}
     healthcheck:
       test: ["CMD", "node", "-e", "require('net').connect(8931,'127.0.0.1',()=>process.exit(0)).on('error',()=>process.exit(1))"]
       interval: 15s

@@ -50,4 +50,14 @@ describe('playwright-mcp image uses baked Chromium (not missing Google Chrome)',
     expect(host).toMatch(/networks:\s*\[app, data, llm\]/);
     expect(host).toMatch(/app:\s*\n\s*aliases:\s*\[playwright-mcp\]/);
   });
+
+  it('playwright-mcp extra_hosts uses mapping form (Windows Compose rejects list/"host:ip")', () => {
+    for (const file of ['deploy/compose/docker-compose.yml', 'deploy/compose/local/docker-compose.local.yml']) {
+      const compose = read(file);
+      expect(compose, file).toMatch(/extra_hosts:\s*\n\s+host\.docker\.internal:\s*host-gateway/);
+      expect(compose, file).toMatch(/sdk\.paynsure\.internal:\s*\$\{PLAYWRIGHT_MCP_SHOP_IP:-host-gateway\}/);
+      // List form (`- "host:ip"`) fails validation on Windows Docker Compose.
+      expect(compose, file).not.toMatch(/extra_hosts:\s*\n\s+-\s+"host\.docker\.internal:/);
+    }
+  });
 });
