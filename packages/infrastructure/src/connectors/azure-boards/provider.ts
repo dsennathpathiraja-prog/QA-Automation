@@ -253,8 +253,10 @@ class AzureBoardsClient implements ConnectorClient {
       const acField = this.cfg.acceptanceCriteriaField;
       const id = required(i.id, 'Work item id');
       const fieldList = READ_FIELDS.includes(acField) ? READ_FIELDS : `${READ_FIELDS},${acField}`;
-      // Org-scoped expand=All matches Dasun's verified curl — literal $expand (not %24).
-      // GET https://dev.azure.com/{org}/_apis/wit/workitems/{id}?$expand=All&api-version=7.1
+      // Org-scoped path (no project segment). Matches Dasun’s trafforge curl:
+      // GET https://dev.azure.com/{org}/_apis/wit/workitems/{id}?%24expand=All&api-version=7.1
+      // Auth stays Basic `:PAT` (browser Cookie from curl paste is not used).
+      // `$expand` / `%24expand` are both accepted by ADO; joinUrl emits a literal `$`.
       let r = await this.call('GET', `/_apis/wit/workitems/${encodeURIComponent(id)}`, { $expand: 'All' });
       if (!r.body || typeof r.body !== 'object') {
         throw new PlatformError('transient', 'Azure Boards returned an empty work item payload');

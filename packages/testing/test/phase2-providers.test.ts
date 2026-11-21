@@ -193,11 +193,47 @@ describe('source and work-item providers', () => {
     expect(await client.handle({ id: 'workitem.search' } as never, { query: 'Checkout' }, {} as never)).toMatchObject({ items: [{ id: '12', title: 'Checkout' }] });
     expect(m.hits.some((h) => h.method === 'POST' && h.path.includes('wiql'))).toBe(true);
     const readHit = m.hits.find((h) => h.method === 'GET' && pathOf(h) === '/_apis/wit/workitems/12');
-    // Literal $expand (not %24) — URLSearchParams encoding broke expand on some WIT gateways.
-    expect(readHit?.path).toMatch(/\$expand=All/);
-    expect(readHit?.path).not.toMatch(/%24expand/i);
+    // Org-only path + expand=All + Basic `:PAT` (Dasun’s trafforge curl; %24expand also OK).
+    expect(readHit?.path).toMatch(/(\$|%24)expand=All/);
     expect(readHit?.path).toMatch(/api-version=7\.1/);
     expect(readHit?.path).not.toMatch(/\/Web\//);
+    expect(readHit?.auth?.startsWith('Basic ')).toBe(true);
+    // Decode of Basic `:token` — never Cookie.
+    expect(Buffer.from(readHit!.auth!.slice('Basic '.length), 'base64').toString()).toBe(`:${TOKEN}`);
+  });
+
+  it('builds org-scoped workitem.read URL for organization trafforge (no project segment)', async () => {
+    const m = await mock((hit) => {
+      if (pathOf(hit) === '/_apis/wit/workitems/2357') {
+        return {
+          body: {
+            id: 2357,
+            fields: {
+              'System.Title': 'Settlement reasons for payment ledger',
+              'System.Description': '<p>Body</p>',
+              'System.State': 'Active',
+              'System.WorkItemType': 'User Story',
+            },
+          },
+        };
+      }
+      return { status: 404, body: {} };
+    });
+    // Same shape as production when Organisation = trafforge (baseUrl derived from org).
+    const client = azureBoardsProvider.create(
+      { organization: 'trafforge', project: 'PayNSure', baseUrl: `${m.baseUrl}` },
+      lease,
+      { http: m.http },
+    );
+    const item = await client.handle({ id: 'workitem.read' } as never, { id: '2357' }, {} as never);
+    expect(item).toMatchObject({
+      id: '2357',
+      title: 'Settlement reasons for payment ledger',
+      description: '<p>Body</p>',
+    });
+    const readHit = m.hits.find((h) => h.method === 'GET' && pathOf(h) === '/_apis/wit/workitems/2357');
+    expect(readHit?.path).toMatch(/(\$|%24)expand=All/);
+    expect(readHit?.path).not.toMatch(/\/PayNSure\//);
     expect(readHit?.auth?.startsWith('Basic ')).toBe(true);
   });
 
@@ -264,8 +300,7 @@ describe('source and work-item providers', () => {
           };
         }
         expandReads += 1;
-        expect(raw).toMatch(/\$expand=All/);
-        expect(raw).not.toMatch(/%24expand/i);
+        expect(raw).toMatch(/(\$|%24)expand=All/);
         // expand=All primary read returns the item without System.Title.
         return { body: { id: 2357, fields: { 'System.State': 'Active' } } };
       }
