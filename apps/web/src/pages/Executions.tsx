@@ -222,20 +222,27 @@ export function Executions() {
                 {board.data.items.map((item) => (
                   <ListItem
                     key={item.id}
-                    secondaryAction={
-                      item.status === 'prepared' || item.status === 'failed' ? (
-                        <Button size="small" variant="contained" disabled={run.isPending} onClick={() => run.mutate(item.id)}>Run</Button>
-                      ) : undefined
-                    }
                     disablePadding
+                    sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5 }}
                   >
-                    <ListItemButton selected={openRun === item.id} onClick={() => setOpenRun(item.id)}>
+                    <ListItemButton
+                      selected={openRun === item.id}
+                      onClick={() => setOpenRun(item.id)}
+                      sx={{ flex: '1 1 auto', minWidth: 0, py: 0.75 }}
+                    >
                       <ListItemText
                         primary={`${item.workItem} · ${item.environmentName}`}
-                        secondary={`${item.caseCount} ${item.caseCount === 1 ? 'case' : 'cases'} · ${WI_STATUS[item.status] ?? item.status}`}
+                        secondary={`${item.caseCount} ${item.caseCount === 1 ? 'case' : 'cases'}`}
+                        slotProps={{ primary: { noWrap: true }, secondary: { noWrap: true } }}
+                        sx={{ minWidth: 0 }}
                       />
-                      <Chip size="small" label={WI_STATUS[item.status] ?? item.status} sx={{ ml: 1 }} />
                     </ListItemButton>
+                    <Chip size="small" label={WI_STATUS[item.status] ?? item.status} sx={{ flexShrink: 0 }} />
+                    {(item.status === 'prepared' || item.status === 'failed') && (
+                      <Button size="small" variant="contained" disabled={run.isPending} onClick={() => run.mutate(item.id)} sx={{ flexShrink: 0 }}>
+                        Run
+                      </Button>
+                    )}
                   </ListItem>
                 ))}
               </List>
@@ -285,16 +292,29 @@ export function Executions() {
             {items.length > 0 && (
               <List dense>
                 {items.map((item) => (
-                  <ListItem key={item.id} disablePadding secondaryAction={
-                    <Link to="/workflows/$id" params={{ id: item.workflowId }}><Button size="small">Open workflow</Button></Link>
-                  }>
-                    <ListItemButton selected={selected === item.id} onClick={() => setSelected(item.id)}>
+                  <ListItem
+                    key={item.id}
+                    disablePadding
+                    sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5 }}
+                  >
+                    <ListItemButton
+                      selected={selected === item.id}
+                      onClick={() => setSelected(item.id)}
+                      sx={{ flex: '1 1 auto', minWidth: 0, py: 0.75 }}
+                    >
                       <ListItemText
                         primary={item.workflowName}
-                        secondary={`${STATUS[item.status] ?? item.status} · step ${item.stepIndex} · ${item.id.slice(0, 8)}`}
+                        secondary={`step ${item.stepIndex} · ${item.id.slice(0, 8)}`}
+                        slotProps={{ primary: { noWrap: true }, secondary: { noWrap: true } }}
+                        sx={{ minWidth: 0 }}
                       />
-                      <Chip size="small" label={STATUS[item.status] ?? item.status} sx={{ ml: 1 }} />
                     </ListItemButton>
+                    <Chip size="small" label={STATUS[item.status] ?? item.status} sx={{ flexShrink: 0 }} />
+                    <Box sx={{ flexShrink: 0 }}>
+                      <Link to="/workflows/$id" params={{ id: item.workflowId }}>
+                        <Button size="small">Open workflow</Button>
+                      </Link>
+                    </Box>
                   </ListItem>
                 ))}
               </List>
