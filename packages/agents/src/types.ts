@@ -113,7 +113,15 @@ export interface ExploreRequest {
 export interface ExploreFinding {
   scenarioName: string;
   url: string;
+  /** Page title from the MCP snapshot, when present. */
+  title?: string;
+  /**
+   * Accessibility tree (prefer YAML) for the MD artifact / planner.
+   * Must be non-empty for Explore UI to succeed.
+   */
   snapshotExcerpt: string;
+  /** Compact cues (links / buttons / fields / headings) for findings. */
+  cuesSummary?: string;
   screenshotBase64?: string;
 }
 
@@ -178,8 +186,10 @@ export interface CodeExplorerPort {
 /** Thin browser connector surface used by the in-repo explorer (maps to playwright-mcp capabilities). */
 export interface BrowserAutomationPort {
   openSession(): Promise<void>;
-  navigate(url: string): Promise<{ finalUrl: string }>;
-  snapshot(): Promise<{ accessibilityTree: string; url: string }>;
+  navigate(url: string): Promise<{ finalUrl: string; accessibilityTree?: string; title?: string }>;
+  /** Optional settle wait after navigate (Playwright MCP `browser_wait_for`). */
+  waitFor?(input?: { timeSeconds?: number; text?: string }): Promise<void>;
+  snapshot(): Promise<{ accessibilityTree: string; url: string; title?: string }>;
   screenshot(): Promise<{ artifactBase64: string }>;
   closeSession(): Promise<void>;
 }

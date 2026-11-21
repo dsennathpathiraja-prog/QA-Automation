@@ -276,11 +276,12 @@ export function explorerPortFromBrowserMcp(mcp: PlaywrightBrowserMcp): BrowserEx
         await mcp.navigate(input.url);
         for (let i = 0; i < limit; i += 1) {
           const snap = await mcp.snapshot();
-          const shot = await mcp.takeScreenshot({ fullPage: true });
+          const shot = await mcp.takeScreenshot({ fullPage: false });
+          const text = (snap.text ?? '').trim();
           details.push({
             scenarioName: labels[i] ?? `page-${i + 1}`,
             url: snap.url ?? input.url,
-            snapshotExcerpt: (snap.text ?? '').slice(0, 1_500),
+            snapshotExcerpt: text.slice(0, 4_000),
             screenshotBase64: shot.data || undefined,
           });
         }
@@ -295,13 +296,22 @@ export function explorerPortFromBrowserMcp(mcp: PlaywrightBrowserMcp): BrowserEx
       } finally {
         await mcp.close().catch(() => undefined);
       }
-      const findings = details.map((d) => `${d.scenarioName} @ ${d.url}: ${d.snapshotExcerpt.slice(0, 240)}`).join('\n') || `opened ${input.url}`;
-      const visitedUrls = [...new Set(details.map((d) => d.url).filter(Boolean))];
+      const usable = details.filter((d) => (d.snapshotExcerpt || '').trim().length > 0);
+      if (usable.length === 0) {
+        return {
+          summary: `Explore UI reached ${input.url} but snapshot content is empty — not useful for test planning.`,
+          findings: `url ${input.url}; empty snapshot`,
+          details: [],
+          source: 'skipped',
+        };
+      }
+      const findings = usable.map((d) => `${d.scenarioName} @ ${d.url}: ${d.snapshotExcerpt.slice(0, 240)}`).join('\n') || `opened ${input.url}`;
+      const visitedUrls = [...new Set(usable.map((d) => d.url).filter(Boolean))];
       const urlList = (visitedUrls.length > 0 ? visitedUrls : [input.url]).join(', ');
       return {
-        summary: `Visited ${urlList} (${details.length} page snapshot${details.length === 1 ? '' : 's'}) for ${input.application} before planning.`,
+        summary: `Visited ${urlList} (${usable.length} page snapshot${usable.length === 1 ? '' : 's'}) for ${input.application} before planning.`,
         findings,
-        details,
+        details: usable,
         source: 'mcp',
       };
     },

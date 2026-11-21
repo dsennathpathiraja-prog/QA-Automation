@@ -3,6 +3,17 @@ import { PlatformError } from '@qa/domain';
 import { browserPortFromInvoker, createBrowserExplorer } from '../src/browser-explorer';
 import type { BrowserAutomationPort } from '../src/types';
 
+const RICH_TREE = `
+### Page state
+- Page URL: https://shop.example.com/pay
+- Page Title: Pay
+- Page Snapshot:
+\`\`\`yaml
+- button "Pay" [ref=e1]
+- link "Help" [ref=e2]
+\`\`\`
+`;
+
 describe('browser explorer', () => {
   it('fails when no environment URL is given', async () => {
     await expect(createBrowserExplorer(undefined).explore({
@@ -23,8 +34,8 @@ describe('browser explorer', () => {
     const calls: string[] = [];
     const browser: BrowserAutomationPort = {
       async openSession() { calls.push('open'); },
-      async navigate(url) { calls.push(`nav:${url}`); return { finalUrl: url }; },
-      async snapshot() { return { accessibilityTree: 'button "Pay"', url: 'https://shop.example.com/pay' }; },
+      async navigate(url) { calls.push(`nav:${url}`); return { finalUrl: url, accessibilityTree: RICH_TREE, title: 'Pay' }; },
+      async snapshot() { return { accessibilityTree: RICH_TREE, url: 'https://shop.example.com/pay', title: 'Pay' }; },
       async screenshot() { return { artifactBase64: 'abc' }; },
       async closeSession() { calls.push('close'); },
     };
@@ -42,8 +53,28 @@ describe('browser explorer', () => {
     });
     expect(out.source).toBe('browser');
     expect(out.details[0]?.snapshotExcerpt).toMatch(/Pay/);
+    expect(out.details[0]?.title).toBe('Pay');
     expect(out.summary).toMatch(/Visited https:\/\/shop\.example\.com\/pay/);
     expect(calls).toEqual(['open', 'nav:https://shop.example.com/pay', 'close']);
+  });
+
+  it('fails when snapshots stay empty after retries (not Done with empty MD)', async () => {
+    const browser: BrowserAutomationPort = {
+      async openSession() {},
+      async navigate(url) { return { finalUrl: url }; },
+      async waitFor() {},
+      async snapshot() { return { accessibilityTree: '', url: 'http://sdk.paynsure.internal/shop' }; },
+      async screenshot() { return { artifactBase64: '' }; },
+      async closeSession() {},
+    };
+    await expect(createBrowserExplorer(browser).explore({
+      application: 'PayNSure',
+      url: 'http://sdk.paynsure.internal/shop',
+      scenarios: [],
+    })).rejects.toMatchObject({
+      errorClass: 'transient',
+      message: expect.stringMatching(/snapshot content is empty|not useful for test planning/i),
+    });
   });
 
   it('passes sessionId from open through navigate and close', async () => {
@@ -51,8 +82,8 @@ describe('browser explorer', () => {
     const browser = browserPortFromInvoker(async (capability, input) => {
       payloads.push({ capability, input: input ?? {} });
       if (capability === 'browser.session.open') return { sessionId: 'sess-1' };
-      if (capability === 'browser.navigate') return { finalUrl: String(input?.url ?? '') };
-      if (capability === 'browser.snapshot') return { accessibilityTree: 'ok', url: 'https://shop.example.com' };
+      if (capability === 'browser.navigate') return { finalUrl: String(input?.url ?? ''), accessibilityTree: RICH_TREE, title: 'Shop' };
+      if (capability === 'browser.snapshot') return { accessibilityTree: RICH_TREE, url: 'https://shop.example.com', title: 'Shop' };
       if (capability === 'browser.screenshot') return { artifactBase64: '' };
       return { ok: true };
     });

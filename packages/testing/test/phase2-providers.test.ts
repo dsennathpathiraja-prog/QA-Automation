@@ -288,13 +288,19 @@ describe('source and work-item providers', () => {
   });
 
   it('talks to the managed Playwright server and refuses an unlisted origin', async () => {
+    const pageState = `### Page state\n- Page URL: https://shop.example.com/cart\n- Page Title: Cart\n- Page Snapshot:\n\`\`\`yaml\n- button "Checkout" [ref=e1]\n\`\`\`\n`;
     const m = await mock((hit) => {
-      const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string; arguments?: { url?: string } } };
+      const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string; arguments?: { url?: string; fullPage?: boolean; type?: string } } };
       if (body.method === 'initialize') return { body: { result: { serverInfo: { name: 'playwright', version: '1.2.3' } } } };
-      if (body.method === 'tools/list') return { body: { result: { tools: ['browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_select_option', 'browser_press_key', 'browser_take_screenshot', 'browser_network_requests', 'browser_close'].map((name) => ({ name })) } } };
-      if (body.params?.name === 'browser_snapshot') return { body: { result: { content: [{ text: 'button Checkout' }], url: 'https://shop.example.com/cart' } } };
-      if (body.params?.name === 'browser_navigate') return { body: { result: { content: [] } } };
-      return { body: { result: { content: [{ data: 'aW1n' }], requests: [] } } };
+      if (body.method === 'tools/list') return { body: { result: { tools: ['browser_navigate', 'browser_snapshot', 'browser_wait_for', 'browser_click', 'browser_type', 'browser_select_option', 'browser_press_key', 'browser_take_screenshot', 'browser_network_requests', 'browser_close'].map((name) => ({ name })) } } };
+      if (body.params?.name === 'browser_snapshot' || body.params?.name === 'browser_wait_for' || body.params?.name === 'browser_navigate') {
+        return { body: { result: { content: [{ type: 'text', text: pageState }] } } };
+      }
+      if (body.params?.name === 'browser_take_screenshot') {
+        expect(body.params.arguments?.fullPage).toBeUndefined();
+        return { body: { result: { content: [{ type: 'image', data: 'aW1n', mimeType: 'image/png' }] } } };
+      }
+      return { body: { result: { content: [], requests: [] } } };
     });
     const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'https://shop.example.com', savedSessionName: 'ada-signed-in' }, undefined, { http: m.http });
     const conn = await client.testConnection();
@@ -305,9 +311,31 @@ describe('source and work-item providers', () => {
     expect(probes.find((p) => p.capability === 'browser.navigate')).toMatchObject({ support: 'supported' });
     const opened = await client.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
     expect(opened.sessionId).toBeTruthy();
-    expect(await client.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'https://shop.example.com/cart' }, {} as never)).toMatchObject({ finalUrl: 'https://shop.example.com/cart' });
+    const nav = await client.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'https://shop.example.com/cart' }, {} as never) as { finalUrl: string; title?: string; accessibilityTree?: string };
+    expect(nav).toMatchObject({ finalUrl: 'https://shop.example.com/cart', title: 'Cart' });
+    expect(nav.accessibilityTree).toMatch(/Checkout/);
     await expect(client.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'https://evil.example/phish' }, {} as never)).rejects.toMatchObject({ errorClass: 'denied' });
-    expect(await client.handle({ id: 'browser.snapshot' } as never, { sessionId: opened.sessionId }, {} as never)).toMatchObject({ accessibilityTree: 'button Checkout' });
+    expect(await client.handle({ id: 'browser.snapshot' } as never, { sessionId: opened.sessionId }, {} as never)).toMatchObject({
+      accessibilityTree: expect.stringMatching(/Checkout/),
+      url: 'https://shop.example.com/cart',
+      title: 'Cart',
+    });
+    expect(await client.handle({ id: 'browser.screenshot' } as never, { sessionId: opened.sessionId }, {} as never)).toMatchObject({ artifactBase64: 'aW1n' });
+  });
+
+  it('fails browser.snapshot when MCP returns empty content', async () => {
+    const m = await mock((hit) => {
+      const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string } };
+      if (body.method === 'initialize') return { body: { result: { serverInfo: { name: 'playwright', version: '1.2.3' } } } };
+      if (body.params?.name === 'browser_snapshot') return { body: { result: { content: [] } } };
+      return { body: { result: { content: [] } } };
+    });
+    const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'https://shop.example.com' }, undefined, { http: m.http });
+    const opened = await client.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
+    await expect(client.handle({ id: 'browser.snapshot' } as never, { sessionId: opened.sessionId }, {} as never)).rejects.toMatchObject({
+      errorClass: 'transient',
+      message: expect.stringMatching(/no content/i),
+    });
   });
 
   it('accepts a bare host in Playwright allowedOrigins (URL vs host)', async () => {

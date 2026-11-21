@@ -1,11 +1,66 @@
 import { PlatformError } from '@qa/domain';
+import {
+  parseMcpPageSnapshot,
+  snapshotArtifactBody,
+  snapshotIsActionable,
+  summarizeSnapshotForFindings,
+} from './snapshot-content';
 import type { BrowserAutomationPort, BrowserExplorerPort, ExploreFinding, ExploreRequest, ExploreResult } from './types';
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * Capture a snapshot that is useful for planning: wait for SPA settle, retry
+ * when the tree is empty, and prefer YAML aria content over raw MCP chrome.
+ */
+async function captureActionableSnapshot(
+  browser: BrowserAutomationPort,
+  fallbackUrl: string,
+): Promise<{ parsed: ReturnType<typeof parseMcpPageSnapshot>; accessibilityTree: string }> {
+  const attempts = 3;
+  let lastRaw = '';
+  let lastUrl = fallbackUrl;
+  let lastTitle = '';
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt === 0 && browser.waitFor) {
+      await browser.waitFor({ timeSeconds: 1.5 }).catch(() => undefined);
+    } else if (attempt > 0) {
+      if (browser.waitFor) {
+        await browser.waitFor({ timeSeconds: 1 }).catch(() => undefined);
+      } else {
+        await sleep(800);
+      }
+    }
+
+    try {
+      const snap = await browser.snapshot();
+      lastRaw = snap.accessibilityTree ?? '';
+      lastUrl = snap.url || fallbackUrl;
+      lastTitle = snap.title ?? '';
+    } catch {
+      // Provider may throw on a truly empty MCP payload; retry after wait.
+      continue;
+    }
+    const parsed = parseMcpPageSnapshot(lastRaw);
+    if (!parsed.url && lastUrl) parsed.url = lastUrl;
+    if (!parsed.title && lastTitle) parsed.title = lastTitle;
+    if (snapshotIsActionable(parsed)) {
+      return { parsed, accessibilityTree: snapshotArtifactBody(parsed) || lastRaw };
+    }
+  }
+
+  const parsed = parseMcpPageSnapshot(lastRaw);
+  if (!parsed.url && lastUrl) parsed.url = lastUrl;
+  if (!parsed.title && lastTitle) parsed.title = lastTitle;
+  return { parsed, accessibilityTree: snapshotArtifactBody(parsed) || lastRaw };
+}
 
 /**
  * In-repo explorer that drives the managed Playwright MCP connector
  * (same role as Cursor's playwright-browser MCP). Runs BEFORE the planner so
  * findings can feed the Markdown test plan. Failures throw — Explore UI must
- * succeed with a real session + navigate before planning.
+ * succeed with a real session + navigate + non-empty snapshot before planning.
  */
 export function createBrowserExplorer(browser: BrowserAutomationPort | undefined): BrowserExplorerPort {
   return {
@@ -32,15 +87,35 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
       const limit = Math.min(input.maxPages ?? 5, Math.max(1, labels.length), 8);
       try {
         await browser.openSession();
-        await browser.navigate(input.url);
-        for (let i = 0; i < limit; i += 1) {
+        const nav = await browser.navigate(input.url);
+        // Prefer a snapshot already attached to navigate when the tree is rich enough.
+        if (nav.accessibilityTree) {
+          const fromNav = parseMcpPageSnapshot(nav.accessibilityTree);
+          if (!fromNav.url) fromNav.url = nav.finalUrl || input.url;
+          if (!fromNav.title && nav.title) fromNav.title = nav.title;
+          if (snapshotIsActionable(fromNav) && labels.length === 1) {
+            const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
+            details.push({
+              scenarioName: labels[0]!,
+              url: fromNav.url || nav.finalUrl || input.url,
+              title: fromNav.title || undefined,
+              snapshotExcerpt: snapshotArtifactBody(fromNav),
+              cuesSummary: summarizeSnapshotForFindings(fromNav),
+              screenshotBase64: shot.artifactBase64 || undefined,
+            });
+          }
+        }
+
+        for (let i = details.length; i < limit; i += 1) {
           const label = labels[i] ?? `page-${i + 1}`;
-          const snap = await browser.snapshot();
-          const shot = await browser.screenshot();
+          const { parsed, accessibilityTree } = await captureActionableSnapshot(browser, nav.finalUrl || input.url);
+          const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
           details.push({
             scenarioName: label,
-            url: snap.url || input.url,
-            snapshotExcerpt: (snap.accessibilityTree ?? '').slice(0, 1_500),
+            url: parsed.url || nav.finalUrl || input.url,
+            title: parsed.title || undefined,
+            snapshotExcerpt: accessibilityTree,
+            cuesSummary: summarizeSnapshotForFindings(parsed),
             screenshotBase64: shot.artifactBase64 || undefined,
           });
         }
@@ -52,15 +127,37 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         throw new PlatformError('transient', `Explore UI opened ${input.url} but recorded no page snapshots.`);
       }
 
-      const findings = details
-        .map((d) => `- ${d.scenarioName} @ ${d.url}\n  ${d.snapshotExcerpt.slice(0, 280).replace(/\s+/g, ' ')}`)
+      const actionable = details.filter((d) => {
+        const parsed = parseMcpPageSnapshot(d.snapshotExcerpt);
+        if (!parsed.url) parsed.url = d.url;
+        if (!parsed.title && d.title) parsed.title = d.title;
+        return snapshotIsActionable(parsed);
+      });
+
+      if (actionable.length === 0) {
+        const sample = details[0];
+        const reason = sample?.title
+          ? `page title "${sample.title}" but no accessibility tree / interactive cues`
+          : 'empty accessibility snapshot (page blank, still loading, iframe-only, or MCP returned no content)';
+        throw new PlatformError(
+          'transient',
+          `Explore UI reached ${input.url} but snapshot content is empty — not useful for test planning (${reason}). ` +
+            'Wait for the app to finish loading, confirm the shop URL renders outside an opaque iframe, then retry Explore UI.',
+        );
+      }
+
+      const findings = actionable
+        .map((d) => {
+          const cue = d.cuesSummary || d.snapshotExcerpt.replace(/\s+/g, ' ').slice(0, 280);
+          return `- ${d.scenarioName} @ ${d.url}${d.title ? ` (${d.title})` : ''}\n  ${cue}`;
+        })
         .join('\n');
-      const visitedUrls = [...new Set(details.map((d) => d.url).filter(Boolean))];
+      const visitedUrls = [...new Set(actionable.map((d) => d.url).filter(Boolean))];
       const urlList = (visitedUrls.length > 0 ? visitedUrls : [input.url]).join(', ');
       return {
-        summary: `Visited ${urlList} (${details.length} page snapshot${details.length === 1 ? '' : 's'}) for ${input.application} before planning.`,
+        summary: `Visited ${urlList} (${actionable.length} page snapshot${actionable.length === 1 ? '' : 's'}) for ${input.application} before planning.`,
         findings,
-        details,
+        details: actionable,
         source: 'browser',
       };
     },
@@ -89,12 +186,33 @@ export function browserPortFromInvoker(
       }
     },
     async navigate(url: string) {
-      const out = await invoke('browser.navigate', withSession({ url })) as { finalUrl?: string };
-      return { finalUrl: out?.finalUrl ?? url };
+      const out = await invoke('browser.navigate', withSession({ url })) as {
+        finalUrl?: string;
+        accessibilityTree?: string;
+        title?: string;
+      };
+      return {
+        finalUrl: out?.finalUrl ?? url,
+        accessibilityTree: out?.accessibilityTree,
+        title: out?.title,
+      };
+    },
+    async waitFor(input) {
+      // Local settle only — MCP wait is performed inside browser.navigate on the connector.
+      const ms = Math.min(30_000, Math.max(0, (input?.timeSeconds ?? 1.5) * 1000));
+      await sleep(ms);
     },
     async snapshot() {
-      const out = await invoke('browser.snapshot', withSession()) as { accessibilityTree?: string; url?: string };
-      return { accessibilityTree: out?.accessibilityTree ?? '', url: out?.url ?? '' };
+      const out = await invoke('browser.snapshot', withSession()) as {
+        accessibilityTree?: string;
+        url?: string;
+        title?: string;
+      };
+      return {
+        accessibilityTree: out?.accessibilityTree ?? '',
+        url: out?.url ?? '',
+        title: out?.title,
+      };
     },
     async screenshot() {
       const out = await invoke('browser.screenshot', withSession()) as { artifactBase64?: string };

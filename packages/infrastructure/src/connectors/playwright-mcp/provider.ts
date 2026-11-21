@@ -59,11 +59,34 @@ function rpcMessage(body: unknown, text: string): { result?: any; error?: unknow
     const payload = trimmed.slice(5).trim();
     if (!payload || payload === '[DONE]') continue;
     try {
-      const msg = JSON.parse(payload) as { result?: unknown; error?: unknown };
-      if (msg && typeof msg === 'object') found = msg;
+      const msg = JSON.parse(payload) as { result?: unknown; error?: unknown; method?: string };
+      // Ignore progress/notification events; keep the last JSON-RPC response.
+      if (msg && typeof msg === 'object' && ('result' in msg || 'error' in msg)) found = msg;
     } catch { /* a non-JSON event is ignored */ }
   }
   return found;
+}
+
+/** Flatten MCP tools/call `content[]` text parts (and surface tool errors). */
+function toolText(result: unknown): string {
+  if (!result || typeof result !== 'object') return '';
+  const r = result as { isError?: boolean; content?: { type?: string; text?: string }[] };
+  const text = (r.content ?? [])
+    .filter((c) => c && (c.type === 'text' || typeof c.text === 'string'))
+    .map((c) => c.text ?? '')
+    .join('\n')
+    .trim();
+  if (r.isError) {
+    throw new PlatformError('transient', text || 'Playwright tool returned an error');
+  }
+  return text;
+}
+
+/** Pull Page URL / Title from Playwright MCP page-state markdown. */
+function pageMetaFromToolText(text: string): { url: string; title: string; accessibilityTree: string } {
+  const url = /(?:^|\n)-\s*Page URL:\s*(.+)/i.exec(text)?.[1]?.trim() ?? '';
+  const title = /(?:^|\n)-\s*Page Title:\s*(.*)/i.exec(text)?.[1]?.trim() ?? '';
+  return { url, title, accessibilityTree: text };
 }
 
 class PlaywrightClient implements ConnectorClient {
@@ -242,14 +265,41 @@ class PlaywrightClient implements ConnectorClient {
       if (allowed.length === 0 || !urlAllowedByAllowlist(url, allowed)) {
         throw new PlatformError('denied', `The browser may not open ${origin}. Add it to the application addresses for this connector.`);
       }
-      await this.rpcCall('tools/call', { name: 'browser_navigate', arguments: { url, session: this.cfg.savedSessionName } });
-      return { finalUrl: url };
+      // Do not pass unknown args (e.g. savedSessionName as `session`) — 0.0.35 navigate only accepts `url`.
+      const navArgs: Record<string, unknown> = { url };
+      const navResult = await this.rpcCall('tools/call', { name: 'browser_navigate', arguments: navArgs });
+      let text = toolText(navResult);
+      // Give SPAs a short settle window; browser_wait_for also re-attaches a snapshot.
+      try {
+        const waited = await this.rpcCall('tools/call', { name: 'browser_wait_for', arguments: { time: 1.5 } });
+        const waitedText = toolText(waited);
+        if (waitedText.length >= text.length) text = waitedText;
+      } catch {
+        /* wait_for is best-effort; navigate snapshot may already be enough */
+      }
+      const meta = pageMetaFromToolText(text);
+      return {
+        finalUrl: meta.url || url,
+        accessibilityTree: meta.accessibilityTree || undefined,
+        title: meta.title || undefined,
+      };
     }
     if (cap.id === 'browser.snapshot') {
       required(i.sessionId, 'sessionId');
       const result = await this.rpcCall('tools/call', { name: 'browser_snapshot', arguments: {} });
-      const text = ((result?.content ?? []) as { text?: string }[]).map((c) => c.text ?? '').join('\n');
-      return { accessibilityTree: text, url: String(result?.url ?? '') };
+      const text = toolText(result);
+      if (!text) {
+        throw new PlatformError(
+          'transient',
+          'Playwright browser_snapshot returned no content (empty MCP tool result). The page may still be loading or the MCP session lost the tab.',
+        );
+      }
+      const meta = pageMetaFromToolText(text);
+      return {
+        accessibilityTree: meta.accessibilityTree,
+        url: meta.url || String((result as { url?: string })?.url ?? ''),
+        title: meta.title || undefined,
+      };
     }
     if (cap.id === 'browser.interact') {
       required(i.sessionId, 'sessionId');
@@ -260,8 +310,11 @@ class PlaywrightClient implements ConnectorClient {
     }
     if (cap.id === 'browser.screenshot') {
       required(i.sessionId, 'sessionId');
-      const result = await this.rpcCall('tools/call', { name: 'browser_take_screenshot', arguments: { fullPage: true } });
-      const image = ((result?.content ?? []) as { data?: string }[]).find((c) => c.data)?.data ?? '';
+      // @playwright/mcp@0.0.35 omits image bytes when fullPage=true (saves to disk only).
+      // Request a viewport screenshot so Explore UI can attach evidence.
+      const result = await this.rpcCall('tools/call', { name: 'browser_take_screenshot', arguments: { type: 'png' } });
+      const image = ((result?.content ?? []) as { type?: string; data?: string }[])
+        .find((c) => c.data && (c.type === 'image' || !c.type))?.data ?? '';
       return { artifactBase64: image };
     }
     if (cap.id === 'browser.network.observe') {

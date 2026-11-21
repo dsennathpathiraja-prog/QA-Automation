@@ -1,3 +1,4 @@
+import { parseMcpPageSnapshot, snapshotArtifactBody } from './snapshot-content';
 import type { CodeFinding, ExploreFinding } from './types';
 
 const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'item';
@@ -48,7 +49,12 @@ export function renderStoryMarkdown(input: {
   return `${lines.join('\n').trim()}\n`;
 }
 
-/** Markdown for Explore UI findings (URLs + snapshot excerpts). */
+function cueList(label: string, values: string[]): string[] {
+  if (values.length === 0) return [];
+  return [`- **${label}:** ${values.slice(0, 12).map((v) => `\`${v}\``).join(', ')}`];
+}
+
+/** Markdown for Explore UI findings (URLs + structured a11y / YAML snapshots). */
 export function renderExploreUiMarkdown(input: {
   workItem: string;
   application: string;
@@ -66,11 +72,35 @@ export function renderExploreUiMarkdown(input: {
   if (input.details && input.details.length > 0) {
     lines.push('## Pages', '');
     for (const d of input.details) {
+      const parsed = parseMcpPageSnapshot(d.snapshotExcerpt || '');
+      if (!parsed.url) parsed.url = d.url;
+      if (!parsed.title && d.title) parsed.title = d.title;
+      const body = snapshotArtifactBody(parsed) || (d.snapshotExcerpt || '').trim();
       lines.push(`### ${d.scenarioName}`);
       lines.push('');
-      lines.push(`- **URL:** ${d.url}`);
-      lines.push(`- **Snapshot:** ${(d.snapshotExcerpt || '').replace(/\s+/g, ' ').slice(0, 500) || '_(empty)_'}`);
+      lines.push(`- **URL:** ${parsed.url || d.url}`);
+      if (parsed.title) lines.push(`- **Title:** ${parsed.title}`);
+      if (d.screenshotBase64) lines.push('- **Screenshot:** captured');
+      lines.push(...cueList('Headings', parsed.cues.headings));
+      lines.push(...cueList('Buttons', parsed.cues.buttons));
+      lines.push(...cueList('Links', parsed.cues.links));
+      lines.push(...cueList('Fields', parsed.cues.fields));
+      if (d.cuesSummary && !parsed.cues.buttons.length && !parsed.cues.links.length) {
+        lines.push(`- **Cues:** ${d.cuesSummary}`);
+      }
       lines.push('');
+      if (body) {
+        lines.push('#### Accessibility snapshot');
+        lines.push('');
+        lines.push('```yaml');
+        lines.push(body.slice(0, 4_000));
+        lines.push('```');
+        lines.push('');
+      } else {
+        // Should not appear on successful Explore UI — empty snapshots fail the step.
+        lines.push('- **Snapshot:** _(empty — Explore UI should have failed)_');
+        lines.push('');
+      }
     }
   }
   return `${lines.join('\n').trim()}\n`;
