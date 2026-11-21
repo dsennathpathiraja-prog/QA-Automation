@@ -149,6 +149,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@qa/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
       '@qa/application':
         specifier: workspace:*
         version: link:../../packages/application
@@ -164,6 +167,9 @@ importers:
       '@qa/infrastructure':
         specifier: workspace:*
         version: link:../../packages/infrastructure
+      '@qa/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
       '@qa/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence
@@ -186,6 +192,24 @@ importers:
       '@qa/testing':
         specifier: workspace:*
         version: link:../../packages/testing
+
+  packages/agents:
+    dependencies:
+      '@qa/connector-sdk':
+        specifier: workspace:*
+        version: link:../connector-sdk
+      '@qa/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@qa/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@qa/llm':
+        specifier: workspace:*
+        version: link:../llm
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
 
   packages/application:
     dependencies:

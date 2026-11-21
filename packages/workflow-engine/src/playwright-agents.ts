@@ -44,15 +44,45 @@ const caseTitle = (kind: ScenarioKind, criterion: string): string => {
   return clip(`Positive: ${line}`, 120);
 };
 
+const focusOf = (criterion: string): string => {
+  const cleaned = criterion
+    .replace(/^(given|when|then|and)\b/gi, '')
+    .replace(/\b(the|a|an|user|shopper|system|should|must|can|will)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clip(cleaned || criterion, 80);
+};
+
+const negativeHint = (criterion: string): string => {
+  const c = criterion.toLowerCase();
+  if (/login|sign.?in|password|auth/i.test(c)) return 'wrong password, locked account, or missing credentials';
+  if (/pay|card|checkout|payment/i.test(c)) return 'declined card, missing CVV, or unsupported currency';
+  if (/upload|file|attach/i.test(c)) return 'unsupported file type or oversize payload';
+  if (/search|filter|list/i.test(c)) return 'empty query, unknown filter, or no matching rows';
+  if (/email|notify|message/i.test(c)) return 'malformed address or suppressed notification preference';
+  return `invalid or unauthorized input for "${focusOf(criterion)}"`;
+};
+
+const edgeHint = (criterion: string): string => {
+  const c = criterion.toLowerCase();
+  if (/total|tax|amount|price|count/i.test(c)) return 'zero amount, maximum amount, and rounding at currency boundaries';
+  if (/pay|card|checkout|payment/i.test(c)) return 'single saved card, many cards, and an expired card on file';
+  if (/\blists?\b|\bpages?\b|scroll|\btables?\b/i.test(c)) return 'empty list, single row, and last-page pagination';
+  if (/date|time|schedule/i.test(c)) return 'same-day, timezone edge, and expired window';
+  if (/name|text|title|description/i.test(c)) return 'empty string, maximum length, and unicode characters';
+  return `boundary and alternate path around "${focusOf(criterion)}"`;
+};
+
 /**
- * playwright-test-planner. One positive, one negative and one edge scenario per acceptance criterion.
- * The story text is the only input. This function does not call a model or a browser.
+ * playwright-test-planner (heuristic). One positive, one negative and one edge scenario per
+ * acceptance criterion, with steps derived from the criterion wording — not sparse templates alone.
+ * The worker prefers the LLM / MCP planner when configured.
  */
 export function planWithPlaywrightPlanner(input: { workItem: string; application: string; criteria: string[] }): { summary: string; scenarios: PlannerScenario[] } {
   const criteria = input.criteria.length > 0 ? input.criteria : [`Verify ${input.application} for ${input.workItem}`];
   const scenarios: PlannerScenario[] = [];
   for (const criterion of criteria) {
-    const line = clip(criterion, 100);
+    const line = clip(criterion, 160);
     for (const kind of ['positive', 'negative', 'edge'] as const) {
       scenarios.push({
         name: caseTitle(kind, line),
@@ -60,41 +90,53 @@ export function planWithPlaywrightPlanner(input: { workItem: string; application
         priority: priorityFor(kind),
         criterion: line,
         steps: kind === 'negative'
-          ? `Open ${input.application} and attempt an invalid or unauthorized path for: ${line}`
+          ? `Open ${input.application}. Attempt ${negativeHint(line)}. Do not complete the happy path for: ${focusOf(line)}. Observe the blocked or error state without forcing a bypass.`
           : kind === 'edge'
-            ? `Open ${input.application} and exercise a boundary or alternate path for: ${line}`
-            : `Open ${input.application} and complete the happy path for: ${line}`,
+            ? `Open ${input.application}. Exercise ${edgeHint(line)}. Keep the acceptance criterion in view: ${clip(line, 120)}.`
+            : `Open ${input.application}. Locate the UI for: ${focusOf(line)}. Complete the happy path described by the acceptance criterion. Confirm the outcome matches: ${clip(line, 160)}.`,
         expected: kind === 'negative'
-          ? `${line} is refused and the user sees a clear error or blocked state`
+          ? `The invalid path is refused with a clear error or blocked state; "${focusOf(line)}" does not succeed.`
           : kind === 'edge'
-            ? `${line} still holds at the boundary`
-            : `${line} succeeds with the expected result`,
+            ? `The criterion still holds at the boundary (${edgeHint(line)}).`
+            : `${clip(line, 140)} succeeds with the expected result visible to the user.`,
       });
       if (scenarios.length >= 40) break;
     }
     if (scenarios.length >= 40) break;
   }
   return {
-    summary: `${PLAYWRIGHT_TEST_PLANNER} wrote ${scenarios.length} scenario${scenarios.length === 1 ? '' : 's'} for ${input.workItem}.`,
+    summary: `${PLAYWRIGHT_TEST_PLANNER} wrote ${scenarios.length} scenario${scenarios.length === 1 ? '' : 's'} for ${input.workItem} from the story (no model).`,
     scenarios: scenarios.slice(0, 40),
   };
 }
 
 /**
- * playwright-test-generator. Each scenario becomes one Playwright test and one Squash reference.
+ * playwright-test-generator (heuristic). Each scenario becomes one Playwright test and one Squash reference.
+ * Optional findings from UI exploration are embedded as comments for later model / MCP enrichment.
  */
-export function generateWithPlaywrightGenerator(input: { workItem: string; application: string; scenarios: PlannerScenario[] }): { summary: string; cases: GeneratedPlaywrightCase[] } {
+export function generateWithPlaywrightGenerator(input: {
+  workItem: string;
+  application: string;
+  scenarios: PlannerScenario[];
+  findings?: string;
+}): { summary: string; cases: GeneratedPlaywrightCase[] } {
   const application = slug(input.application);
   const work = slug(input.workItem);
+  const findingsNote = (input.findings ?? '').trim();
   const cases = input.scenarios.slice(0, 40).map((scenario, index) => {
     const testId = `${work}-${scenario.kind}-${index + 1}`;
     const file = `tests/${application}/${work}.spec.js`;
+    const findingLine = findingsNote
+      ? `  // Exploration: ${clip(findingsNote.replace(/\s+/g, ' '), 200)}`
+      : '  // Exploration: none yet — bind Playwright browser and an environment to enrich selectors.';
     const source = [
       "import { test, expect } from '@playwright/test';",
       '',
       `test('${scenario.name.replace(/'/g, "\\'")}', async ({ page }) => {`,
       "  await page.goto('/');",
       `  // ${scenario.kind} (${scenario.priority}): ${scenario.criterion}`,
+      `  // Steps: ${clip(scenario.steps.replace(/\s+/g, ' '), 220)}`,
+      findingLine,
       `  await expect(page.locator('body')).toBeVisible();`,
       '});',
       '',
@@ -112,7 +154,7 @@ export function generateWithPlaywrightGenerator(input: { workItem: string; appli
     };
   });
   return {
-    summary: `${PLAYWRIGHT_TEST_GENERATOR} wrote ${cases.length} Playwright test${cases.length === 1 ? '' : 's'} for ${input.workItem}.`,
+    summary: `${PLAYWRIGHT_TEST_GENERATOR} wrote ${cases.length} Playwright test${cases.length === 1 ? '' : 's'} for ${input.workItem} from the plan (no model).`,
     cases,
   };
 }

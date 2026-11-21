@@ -1,11 +1,13 @@
+import { browserPortFromInvoker, createBrowserExplorer, createLlmTestGenerator, createLlmTestPlanner, PLAYWRIGHT_TEST_GENERATOR, PLAYWRIGHT_TEST_PLANNER } from '@qa/agents';
 import { buildProviders, buildSecretStore, connectDatabase } from '@qa/bootstrap';
 import { ConnectorExecutionManager } from '@qa/connector-sdk';
 import { PlatformError, type DeploymentProfile, type PlatformEnv } from '@qa/domain';
-import { EgressPolicy, HardenedHttpClient, RemoteRunnerLauncher, initTelemetry, readSecretFile, type EgressRule } from '@qa/infrastructure';
+import { EgressPolicy, HardenedHttpClient, OllamaAdapter, OpenAiCompatibleAdapter, RemoteRunnerLauncher, initTelemetry, readSecretFile, type EgressRule } from '@qa/infrastructure';
+import { LlmGateway, StaticAssignmentResolver, StaticProviderRegistry, type DataClass, type LlmPort, type ProviderEntry } from '@qa/llm';
 import { SecretRedactor } from '@qa/security';
-import { runFlowStep, tick as engineTick } from '@qa/workflow-engine';
+import { tick as engineTick } from '@qa/workflow-engine';
 import { TestCaseService } from '@qa/application';
-import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgEnvironmentRepository, PgExecutionRepository, PgInstanceResolver, PgOperationLogSink, PgRunPolicyStore, PgTestCaseRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
+import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgEnvironmentRepository, PgExecutionRepository, PgInstanceResolver, PgLlmAuditSink, PgOperationLogSink, PgRunPolicyStore, PgTestCaseRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
 import { publishGeneratedCases, type GeneratedCase } from './publish-cases';
 import { buildWorkerApp } from './app';
 import { ConnectorTester } from './connector-tester';
@@ -13,6 +15,7 @@ import { ConnectorHealthScheduler } from './health-scheduler';
 import { WorkerLoop } from './loop';
 import { checkReachability } from './reachability';
 import { enrichStoryFromConnector } from './read-story';
+import { performRequirementStep } from './requirement-agents';
 import { launcherDown, runReachabilityCheck } from './runner-check';
 import { launcherDown as workItemLauncherDown, processWorkItemExecutions, runWorkItemCases } from './run-work-item';
 import { squashIdFromSummary, syncCaseResultsToSquash } from './sync-execution';
@@ -94,6 +97,62 @@ function squashWriteAllowed(method: string, path: string): boolean {
 const executions = conn ? new PgExecutionRepository(conn.db) : undefined;
 const testCases = conn ? new TestCaseService({ cases: new PgTestCaseRepository(conn.db), audit: new PgAuditSink(new PgAuditLog(conn.db)) }) : undefined;
 const environments = conn ? new PgEnvironmentRepository(conn.db) : undefined;
+
+const ALL_DATA_CLASSES: DataClass[] = ['story', 'code', 'page', 'screenshot', 'test-data', 'evidence'];
+
+/** Local Ollama / vLLM gateway for playwright-test-planner and playwright-test-generator. Absent when neither URL is set. */
+function buildRequirementLlm(): LlmGateway | undefined {
+  const ollamaUrl = env.OLLAMA_URL;
+  const vllmUrl = env.VLLM_URL;
+  if (!ollamaUrl && !vllmUrl) return undefined;
+  const rules: EgressRule[] = [];
+  for (const u of [ollamaUrl, vllmUrl].filter((x): x is string => !!x)) {
+    const url = new URL(u);
+    rules.push({ hostPattern: url.hostname, purpose: 'llm', internal: true, allowHttp: url.protocol === 'http:', allowLoopback: true });
+  }
+  const http = new HardenedHttpClient({ egress: new EgressPolicy({ rules, profile, platformEnv }), allowedMethods: ['GET', 'POST'], timeoutMs: 300_000, maxBodyBytes: 16 * 1024 * 1024 });
+  const entries: ProviderEntry[] = [];
+  const add = (id: string, port: LlmPort, model: string) => {
+    entries.push({
+      descriptor: {
+        id,
+        kind: 'local',
+        enabled: true,
+        allowedDataClasses: ALL_DATA_CLASSES,
+        concurrencySlots: 1,
+        models: [{ name: model, supportsStructuredOutput: true }],
+      },
+      port,
+    });
+  };
+  const ollamaModel = env.OLLAMA_MODEL || 'qwen2.5:7b';
+  const vllmModel = env.VLLM_MODEL || 'default';
+  if (ollamaUrl) add('ollama', new OllamaAdapter({ baseUrl: ollamaUrl, http, keepAlive: env.OLLAMA_KEEP_ALIVE }), ollamaModel);
+  if (vllmUrl) {
+    const apiKey = env.VLLM_API_KEY_FILE ? readSecretFile(env.VLLM_API_KEY_FILE) : undefined;
+    add('vllm', new OpenAiCompatibleAdapter({ baseUrl: vllmUrl, http, apiKey, adapterName: 'vllm' }), vllmModel);
+  }
+  if (entries.length === 0) return undefined;
+  const primary = entries[0]!;
+  const model = primary.descriptor.models[0]!.name;
+  const assignment = { primary: { providerId: primary.descriptor.id, model }, maxOutputTokens: 4_096, temperature: 0.1 };
+  const redactor = new SecretRedactor();
+  return new LlmGateway({
+    registry: new StaticProviderRegistry(entries),
+    assignments: new StaticAssignmentResolver({
+      [PLAYWRIGHT_TEST_PLANNER]: assignment,
+      [PLAYWRIGHT_TEST_GENERATOR]: assignment,
+    }),
+    redactor: { redact: (s) => redactor.redactString(s) },
+    audit: conn ? new PgLlmAuditSink(conn.db) : { append: async () => undefined },
+    profile: profile === 'airgapped' ? 'airgapped' : profile === 'restricted' ? 'restricted' : 'standard',
+  });
+}
+
+const requirementLlm = buildRequirementLlm();
+const plannerPort = createLlmTestPlanner(requirementLlm);
+const generatorPort = createLlmTestGenerator(requirementLlm);
+
 const loop = new WorkerLoop({
   tick: async () => {
     let busy = false;
@@ -114,7 +173,30 @@ const loop = new WorkerLoop({
           });
           if (enriched) params = { ...step.params, story: enriched.story };
         }
-        const result = runFlowStep({ ...step, params });
+        const explorer = createBrowserExplorer(
+          squash
+            ? browserPortFromInvoker(async (capability, input) => squash.invoke({
+              role: 'browserAutomation',
+              capability,
+              input: input ?? {},
+              actor: { type: 'step', id: step.id, executionId: step.runId, stepId: step.id },
+            }))
+            : undefined,
+        );
+        const result = await performRequirementStep(
+          { ...step, params },
+          {
+            planner: plannerPort,
+            generator: generatorPort,
+            explorer,
+            resolveEnvironmentUrl: environments
+              ? async (id) => {
+                const row = await environments.get(id);
+                return row?.applicationUrl;
+              }
+              : undefined,
+          },
+        );
         if (step.type !== 'rv.publish-testcases' || !testCases) return result;
         const cases: GeneratedCase[] = (Array.isArray(result.outputs.cases) ? result.outputs.cases : []).flatMap((item) => {
           const row = item as Partial<GeneratedCase>;
@@ -291,4 +373,10 @@ process.on('SIGINT', shutdown);
 
 loop.start();
 await app.listen({ host: env.HOST ?? '127.0.0.1', port: Number(env.PORT ?? 3001) });
-log('worker started', { profile, database: conn ? 'configured' : 'none', secretStore: secrets?.kind ?? 'none', connectorTests: tester ? 'enabled' : 'disabled' });
+log('worker started', {
+  profile,
+  database: conn ? 'configured' : 'none',
+  secretStore: secrets?.kind ?? 'none',
+  connectorTests: tester ? 'enabled' : 'disabled',
+  requirementAgents: requirementLlm ? 'model' : 'heuristic',
+});

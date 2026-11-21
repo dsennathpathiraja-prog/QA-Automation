@@ -3,9 +3,9 @@
 Written 19 Nov 2026. Updated the same day. The requirement-validation workflow ends when the cases are stored. Execution of a work item, with the environment chosen at that time, is a separate action. The phase split is [requirement-validation-phases.md](requirement-validation-phases.md).
 
 ## Already in a run
-The story is the text typed on the Run tab. `playwright-test-planner` writes a positive, a negative, and an edge scenario for each acceptance criterion (with priority high/medium/low by kind). `playwright-test-generator` writes one Playwright test for each scenario. Publish stores those cases in Test Cases under the work item, in a collection of that name, and in Squash when the connector has a READ_WRITE token. The same reference is not created twice. The run stops there. Engineers can clear platform cases via Test Cases → Clear platform test cases or `POST /api/v1/test-cases/reset` (Squash is not wiped).
+The story is the text typed on the Run tab (or the work item loaded by id). `playwright-test-planner` writes a positive, a negative, and an edge scenario for each acceptance criterion (with priority high/medium/low by kind). `playwright-test-generator` writes one Playwright test for each scenario. When `OLLAMA_URL` or `VLLM_URL` is set on the worker, both agents call the local model through `LlmGateway` with a fixed JSON shape (one repair). Otherwise a description-aware heuristic still builds criterion-specific steps. Optional Explore UI uses the bound `playwright-mcp` connector when an environment URL is present. Publish stores those cases in Test Cases under the work item, in a collection of that name, and in Squash when the connector has a READ_WRITE token. The same reference is not created twice. The run stops there. Engineers can clear platform cases via Test Cases → Clear platform test cases or `POST /api/v1/test-cases/reset` (Squash is not wiped).
 
-The UI stage and the source stage do not drive a browser or read a repository yet. The planner and the generator do not call a model yet. Executing the stored cases, with a screenshot and a Squash result, is the execution of the work item. It is not another step of this workflow.
+Cursor MCP wiring and retest steps: [playwright-agents-mcp.md](playwright-agents-mcp.md). Executing the stored cases, with a screenshot and a Squash result, is the execution of the work item. It is not another step of this workflow.
 
 ## 1. Read the work item
 The Run tab takes the work item id. The worker calls the bound Azure Boards or Jira connector and reads the title, description, and acceptance criteria. Azure Boards turns Description HTML into text, reads the Acceptance Criteria field when set, and otherwise parses Acceptance Criteria / bullets / Given-When-Then from the Description (and Repro Steps when present). Those criteria become the planner input. When no work-item connector is selected, or the read is denied, the typed story stays the input, so a run without Azure or Jira still completes.
@@ -13,16 +13,14 @@ The Run tab takes the work item id. The worker calls the bound Azure Boards or J
 Done when a run of a real work item id shows the criteria from that work item in the Read stage, and the cases in Test Cases use that id.
 
 ## 2. Call the planner and the generator through a model
-When `OLLAMA_URL` or `VLLM_URL` is set, the worker sends the story to `playwright-test-planner` and the plan plus later findings to `playwright-test-generator`. Both answers must match a fixed shape: scenarios with a kind, and Playwright tests with a name, steps, expected result, and reference. A bad answer is repaired once. If it is still bad, the stage fails and says the model output was not usable.
+**Done in worker + `@qa/agents`.** When `OLLAMA_URL` or `VLLM_URL` is set, the worker sends the story to `playwright-test-planner` and the plan plus later findings to `playwright-test-generator`. Both answers must match a fixed shape: scenarios with a kind, and Playwright tests with a name, steps, expected result, and reference. A bad answer is repaired once. If it is still bad, the stage fails and says the model output was not usable.
 
-When no model is configured, the current rules stay and the Done line says the plan was written from the story without a model. The Models screen assignment comes after this, so the run is not blocked on that screen.
-
-Done when a run with a local model shows the planner and generator Done lines, and the cases still appear in Test Cases and in Squash.
+When no model is configured, the description-aware heuristic runs and the Done line says the plan was written from the story without a model. The Models screen assignment comes after this, so the run is not blocked on that screen.
 
 ## 3. Walk the UI
-The bound Playwright browser opens the environment address and follows the scenarios from the plan. It records what it saw, and it takes a screenshot at the end of each scenario. It may open only the addresses listed on the browser connector. It does not submit a payment, delete data, or type a one-time code. A saved browser session is used when the connector has one.
+**Partial.** When Explore UI is enabled, an environment URL resolves, and a Playwright browser connector is bound, the worker opens the address, takes accessibility snapshots and screenshots for up to a few planned scenarios, and passes findings into generate. It may open only the addresses listed on the browser connector. It does not submit a payment, delete data, or type a one-time code. A saved browser session is used when the connector has one. Without those bindings the stage records a skip note and the run continues.
 
-Done when the UI stage Done line names the pages it opened, and each scenario has a stored screenshot.
+Done when the UI stage Done line names the pages it opened; screenshot bytes stay out of step outputs (execution stores screenshots later).
 
 ## 4. Read the source
 The bound GitHub or Azure DevOps connector lists and reads the files that match the scenarios. The notes say which files were read and what they check. The connector stays read-only. Nothing is committed, pushed, or edited in that repository.

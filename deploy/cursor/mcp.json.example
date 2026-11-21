@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "playwright-test-planner": {
+      "command": "npx",
+      "args": ["-y", "@playwright/test-planner-mcp"],
+      "env": {}
+    },
+    "playwright-test-generator": {
+      "command": "npx",
+      "args": ["-y", "@playwright/test-generator-mcp"],
+      "env": {}
+    },
+    "playwright-browser": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"],
+      "env": {}
+    }
+  }
+}

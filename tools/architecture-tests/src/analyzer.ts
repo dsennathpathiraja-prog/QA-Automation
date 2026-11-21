@@ -60,7 +60,7 @@ export const ALLOWED_WORKSPACE_DEPS: Record<string, readonly string[]> = {
   'runner-launcher': ['domain', 'infrastructure', 'telemetry', 'testing', 'connector-sdk'],
   // Container image only (mjs + Playwright); no @qa workspace imports.
   runner: [],
-  worker: ['domain', 'connector-sdk', 'security', 'infrastructure', 'persistence', 'llm', 'telemetry', 'application', 'bootstrap', 'workflow-engine'],
+  worker: ['domain', 'connector-sdk', 'security', 'infrastructure', 'persistence', 'llm', 'telemetry', 'application', 'bootstrap', 'workflow-engine', 'agents'],
 };
 
 /** Layers that must never read secret values. Only the worker side (Connector Execution Manager) and the runner launcher lease secrets. */
