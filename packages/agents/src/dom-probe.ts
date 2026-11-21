@@ -303,10 +303,16 @@ export function describeEmptyCapture(input: {
         'Re-run Playwright → Test connection (Success closes the circuit), confirm browser.evaluate is granted, Switch the connector on, then retry Explore UI'
       );
     }
+    if (/already in use|mcp-chromium|use --isolated/i.test(input.probeError)) {
+      return (
+        `DOM probe blocked by a locked Chromium profile (${input.probeError.replace(/\s+/g, ' ').slice(0, 160)}). ` +
+        'Rebuild playwright-mcp with --isolated (QA-43), recreate the browser container, rebuild worker if needed (durable-pool-qa43), Test connection, then retry'
+      );
+    }
     if (/No open pages?|No open tabs|mcp-session-id|lost the tab|durable-pool|session was not found/i.test(input.probeError)) {
       return (
         `DOM probe found no open browser page after navigate (${input.probeError.replace(/\s+/g, ' ').slice(0, 180)}). ` +
-        'Rebuild worker + playwright-mcp with --build from foundation (must include durable-pool-qa42), restart both, Test connection, then retry Explore UI'
+        'Rebuild worker + playwright-mcp with --build from foundation (must include durable-pool-qa43), restart both, Test connection, then retry Explore UI'
       );
     }
     return (

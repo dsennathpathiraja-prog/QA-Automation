@@ -30,8 +30,12 @@ ENV PLAYWRIGHT_MCP_BROWSER=chromium \
 USER pwuser
 EXPOSE 8931
 # Flags must match @playwright/mcp@0.0.35 (no --allowed-hosts — that option is newer and exits 1).
+# QA-43: --isolated keeps each MCP session's Chromium profile in memory so concurrent /
+# leftover Explore sessions do not collide on /ms-playwright/mcp-chromium ("Browser is
+# already in use"). Persistent MFA still uses savedSessionName / storage-state when set.
 ENTRYPOINT ["node", "/opt/playwright-mcp/node_modules/@playwright/mcp/cli.js", \
   "--browser", "chromium", \
   "--headless", \
+  "--isolated", \
   "--port", "8931", \
   "--host", "0.0.0.0"]

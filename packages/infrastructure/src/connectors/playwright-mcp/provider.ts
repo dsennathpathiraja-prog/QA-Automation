@@ -6,10 +6,10 @@ import { joinUrl, requestJson, required } from '../rest';
 export const PLAYWRIGHT_PROVIDER_KEY = 'playwright-mcp';
 
 /**
- * Build/ops marker — Explore UI session continuity mode after QA-42.
- * Verify the running worker image includes this string (see qa-42 notes).
+ * Build/ops marker — Explore UI session continuity (QA-42 pool + QA-43 close/recovery).
+ * Verify the running worker image includes this string (see qa-43 notes).
  */
-export const PLAYWRIGHT_MCP_SESSION_MODE = 'durable-pool-qa42';
+export const PLAYWRIGHT_MCP_SESSION_MODE = 'durable-pool-qa43';
 
 /**
  * ConnectorExecutionManager creates a new PlaywrightClient per invoke() and disposes it.
@@ -17,6 +17,9 @@ export const PLAYWRIGHT_MCP_SESSION_MODE = 'durable-pool-qa42';
  * ("No open pages available") even when the platform sessionId is passed correctly.
  */
 const liveBySessionId = new Map<string, PlaywrightClient>();
+
+const browserProfileBusy = (msg: string) =>
+  /Browser is already in use|already in use for .+mcp-chromium|use --isolated/i.test(msg);
 
 /** Test-only: clear durable session owners between cases. */
 export function resetPlaywrightMcpSessionPoolForTests(): void {
@@ -206,6 +209,26 @@ class PlaywrightClient implements ConnectorClient {
     return message?.result;
   }
 
+  /**
+   * Best-effort browser_close on pooled owners so a stuck mcp-chromium profile can unlock.
+   * Keeps `keep` registered (MCP session + durable pool) so navigate can retry on the same session.
+   */
+  private async releasePooledBrowsers(keep?: PlaywrightClient): Promise<void> {
+    const owners = [...new Set(liveBySessionId.values())];
+    for (const owner of owners) {
+      try {
+        await owner.rpcCall('tools/call', { name: 'browser_close', arguments: {} });
+      } catch {
+        /* already closed / session gone */
+      }
+      if (owner === keep) continue;
+      const id = owner.sessionId;
+      if (id) liveBySessionId.delete(id);
+      owner.sessionId = undefined;
+      owner.opening = undefined;
+    }
+  }
+
   async testConnection(): Promise<ConnectionTestResult> {
     const started = Date.now();
     try {
@@ -263,6 +286,13 @@ class PlaywrightClient implements ConnectorClient {
     if (e instanceof PlatformError && e.errorClass === 'denied') {
       if (/approved-host|plain http|loopback|HTTP method/i.test(msg)) return msg;
       return 'The Playwright server refused this call (HTTP 403). Confirm the connector uses http://playwright-mcp:8931 and host playwright-mcp is approved for plain http.';
+    }
+    if (browserProfileBusy(msg)) {
+      return (
+        'Playwright Chromium profile is locked (Browser already in use for mcp-chromium). ' +
+        'Rebuild playwright-mcp with --isolated (QA-43), recreate the browser container, then retry. ' +
+        'If the image already has --isolated, restart playwright-mcp to clear a stuck session.'
+      );
     }
     return msg;
   }
@@ -341,15 +371,42 @@ class PlaywrightClient implements ConnectorClient {
       }
       // Do not pass unknown args (e.g. savedSessionName as `session`) — 0.0.35 navigate only accepts `url`.
       const navArgs: Record<string, unknown> = { url };
-      const navResult = await this.rpcCall('tools/call', { name: 'browser_navigate', arguments: navArgs });
-      let text = toolText(navResult);
-      // Give SPAs a settle window; browser_wait_for also re-attaches a snapshot.
+      const runNavigate = async () => {
+        const navResult = await this.rpcCall('tools/call', { name: 'browser_navigate', arguments: navArgs });
+        let text = toolText(navResult);
+        // Give SPAs a settle window; browser_wait_for also re-attaches a snapshot.
+        try {
+          const waited = await this.rpcCall('tools/call', { name: 'browser_wait_for', arguments: { time: 2.5 } });
+          const waitedText = toolText(waited);
+          if (waitedText.length >= text.length) text = waitedText;
+        } catch {
+          /* wait_for is best-effort; navigate snapshot may already be enough */
+        }
+        return text;
+      };
+      let text: string;
       try {
-        const waited = await this.rpcCall('tools/call', { name: 'browser_wait_for', arguments: { time: 2.5 } });
-        const waitedText = toolText(waited);
-        if (waitedText.length >= text.length) text = waitedText;
-      } catch {
-        /* wait_for is best-effort; navigate snapshot may already be enough */
+        text = await runNavigate();
+      } catch (e) {
+        const msg = e instanceof PlatformError ? e.message : String(e);
+        if (!browserProfileBusy(msg)) throw e;
+        // Prior Explore/Test left a locked persistent profile — close pooled browsers and retry once.
+        console.warn(JSON.stringify({ msg: 'playwright browser profile busy; releasing pooled sessions and retrying navigate' }));
+        await this.releasePooledBrowsers(this);
+        if (this.sessionId) liveBySessionId.set(this.sessionId, this);
+        try {
+          text = await runNavigate();
+        } catch (e2) {
+          const msg2 = e2 instanceof PlatformError ? e2.message : String(e2);
+          throw new PlatformError(
+            'transient',
+            browserProfileBusy(msg2)
+              ? 'Playwright Chromium profile is still locked after close/retry. Rebuild playwright-mcp with --isolated and recreate the container, then retry Explore UI.'
+              : msg2,
+            undefined,
+            e2,
+          );
+        }
       }
       const meta = pageMetaFromToolText(text);
       return {
@@ -452,12 +509,13 @@ class PlaywrightClient implements ConnectorClient {
     }
     if (cap.id === 'browser.session.close') {
       const id = this.sessionId;
+      // Drop the pool entry first so a parallel open cannot reuse a closing owner.
+      if (id) liveBySessionId.delete(id);
       try {
         await this.rpcCall('tools/call', { name: 'browser_close', arguments: {} });
       } catch {
         /* session may already be gone */
       }
-      if (id) liveBySessionId.delete(id);
       this.sessionId = undefined;
       this.opening = undefined;
       return { ok: true };
