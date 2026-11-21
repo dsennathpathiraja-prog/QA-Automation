@@ -1,5 +1,13 @@
 import { PlatformError } from '@qa/domain';
 import {
+  DOM_PROBE_SCRIPT,
+  describeEmptyCapture,
+  domProbeIsActionable,
+  parseEvaluateToolResult,
+  parsedSnapshotFromDomProbe,
+  type DomProbeResult,
+} from './dom-probe';
+import {
   parseMcpPageSnapshot,
   snapshotArtifactBody,
   snapshotIsActionable,
@@ -9,28 +17,56 @@ import type { BrowserAutomationPort, BrowserExplorerPort, ExploreFinding, Explor
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+type Captured = {
+  parsed: ReturnType<typeof parseMcpPageSnapshot>;
+  accessibilityTree: string;
+  probe?: DomProbeResult;
+};
+
 /**
- * Capture a snapshot that is useful for planning: wait for SPA settle, retry
- * when the tree is empty, and prefer YAML aria content over raw MCP chrome.
+ * Time-based SPA settle only. Do not call MCP `browser_wait_for` with `text` here:
+ * @playwright/mcp@0.0.35 has no timeout arg, so missing copy can block ~30s per attempt.
+ */
+async function settleForStorefront(browser: BrowserAutomationPort, seconds = 2): Promise<void> {
+  if (!browser.waitFor) {
+    await sleep(Math.round(seconds * 1000));
+    return;
+  }
+  await browser.waitFor({ timeSeconds: seconds }).catch(() => undefined);
+}
+
+async function probeDom(browser: BrowserAutomationPort): Promise<DomProbeResult | undefined> {
+  if (!browser.evaluate) return undefined;
+  try {
+    const out = await browser.evaluate({ script: DOM_PROBE_SCRIPT });
+    const fromResult = parseEvaluateToolResult(out.resultText || '');
+    if (fromResult) return fromResult;
+    // Some connectors return only accessibilityTree wrapping the evaluate payload.
+    return parseEvaluateToolResult(out.accessibilityTree || out.resultText || '');
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Capture a snapshot useful for planning: SPA settle, aria retries, then DOM/iframe
+ * evaluate when the accessibility tree is empty (PayNSure shop / SDK shells).
  */
 async function captureActionableSnapshot(
   browser: BrowserAutomationPort,
   fallbackUrl: string,
-): Promise<{ parsed: ReturnType<typeof parseMcpPageSnapshot>; accessibilityTree: string }> {
-  const attempts = 3;
+): Promise<Captured> {
+  const attempts = 4;
   let lastRaw = '';
   let lastUrl = fallbackUrl;
   let lastTitle = '';
+  let lastProbe: DomProbeResult | undefined;
+
+  await settleForStorefront(browser, 2.5);
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (attempt === 0 && browser.waitFor) {
-      await browser.waitFor({ timeSeconds: 1.5 }).catch(() => undefined);
-    } else if (attempt > 0) {
-      if (browser.waitFor) {
-        await browser.waitFor({ timeSeconds: 1 }).catch(() => undefined);
-      } else {
-        await sleep(800);
-      }
+    if (attempt > 0) {
+      await settleForStorefront(browser, Math.min(4, 1.5 + attempt));
     }
 
     try {
@@ -40,20 +76,41 @@ async function captureActionableSnapshot(
       lastTitle = snap.title ?? '';
     } catch {
       // Provider may throw on a truly empty MCP payload; retry after wait.
-      continue;
     }
+
     const parsed = parseMcpPageSnapshot(lastRaw);
     if (!parsed.url && lastUrl) parsed.url = lastUrl;
     if (!parsed.title && lastTitle) parsed.title = lastTitle;
     if (snapshotIsActionable(parsed)) {
       return { parsed, accessibilityTree: snapshotArtifactBody(parsed) || lastRaw };
     }
+
+    // Aria empty / title-only — probe the live DOM (and same-origin iframes).
+    lastProbe = await probeDom(browser);
+    if (domProbeIsActionable(lastProbe)) {
+      const fromDom = parsedSnapshotFromDomProbe(lastProbe!);
+      return { parsed: fromDom, accessibilityTree: snapshotArtifactBody(fromDom), probe: lastProbe };
+    }
+
+    // Click a likely storefront control once if DOM probe found cart/checkout copy.
+    if (attempt === 1 && browser.interact && lastProbe) {
+      const clickTarget = lastProbe.buttons.find((b) => /add to cart|checkout|buy|pay|cart/i.test(b));
+      if (clickTarget) {
+        await browser.interact({ action: 'click', target: clickTarget }).catch(() => undefined);
+        await settleForStorefront(browser, 1.5);
+      }
+    }
+  }
+
+  if (domProbeIsActionable(lastProbe)) {
+    const fromDom = parsedSnapshotFromDomProbe(lastProbe!);
+    return { parsed: fromDom, accessibilityTree: snapshotArtifactBody(fromDom), probe: lastProbe };
   }
 
   const parsed = parseMcpPageSnapshot(lastRaw);
   if (!parsed.url && lastUrl) parsed.url = lastUrl;
   if (!parsed.title && lastTitle) parsed.title = lastTitle;
-  return { parsed, accessibilityTree: snapshotArtifactBody(parsed) || lastRaw };
+  return { parsed, accessibilityTree: snapshotArtifactBody(parsed) || lastRaw, probe: lastProbe };
 }
 
 /**
@@ -84,6 +141,7 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         ? input.scenarios.map((s) => s.name)
         : (input.criteria?.length ? input.criteria : [input.application]).map((c) => `Explore: ${c}`);
       const details: ExploreFinding[] = [];
+      const probes: Array<DomProbeResult | undefined> = [];
       const limit = Math.min(input.maxPages ?? 5, Math.max(1, labels.length), 8);
       try {
         await browser.openSession();
@@ -103,12 +161,16 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
               cuesSummary: summarizeSnapshotForFindings(fromNav),
               screenshotBase64: shot.artifactBase64 || undefined,
             });
+            probes.push(undefined);
           }
         }
 
         for (let i = details.length; i < limit; i += 1) {
           const label = labels[i] ?? `page-${i + 1}`;
-          const { parsed, accessibilityTree } = await captureActionableSnapshot(browser, nav.finalUrl || input.url);
+          const { parsed, accessibilityTree, probe } = await captureActionableSnapshot(
+            browser,
+            nav.finalUrl || input.url,
+          );
           const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
           details.push({
             scenarioName: label,
@@ -118,6 +180,7 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
             cuesSummary: summarizeSnapshotForFindings(parsed),
             screenshotBase64: shot.artifactBase64 || undefined,
           });
+          probes.push(probe);
         }
       } finally {
         await browser.closeSession().catch(() => undefined);
@@ -136,13 +199,16 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
 
       if (actionable.length === 0) {
         const sample = details[0];
-        const reason = sample?.title
-          ? `page title "${sample.title}" but no accessibility tree / interactive cues`
-          : 'empty accessibility snapshot (page blank, still loading, iframe-only, or MCP returned no content)';
+        const probe = probes[0];
+        const reason = describeEmptyCapture({
+          url: input.url,
+          title: sample?.title,
+          rawSnapshot: sample?.snapshotExcerpt,
+          probe,
+        });
         throw new PlatformError(
           'transient',
-          `Explore UI reached ${input.url} but snapshot content is empty — not useful for test planning (${reason}). ` +
-            'Wait for the app to finish loading, confirm the shop URL renders outside an opaque iframe, then retry Explore UI.',
+          `Explore UI reached ${sample?.url || input.url} but snapshot content is empty — not useful for test planning (${reason}).`,
         );
       }
 
@@ -198,9 +264,42 @@ export function browserPortFromInvoker(
       };
     },
     async waitFor(input) {
-      // Local settle only — MCP wait is performed inside browser.navigate on the connector.
-      const ms = Math.min(30_000, Math.max(0, (input?.timeSeconds ?? 1.5) * 1000));
-      await sleep(ms);
+      try {
+        const out = await invoke('browser.wait', withSession({
+          timeSeconds: input?.timeSeconds,
+          text: input?.text,
+        })) as { accessibilityTree?: string; url?: string; title?: string };
+        return out;
+      } catch (e) {
+        // Older connectors may lack browser.wait — fall back to a local settle.
+        if (e instanceof PlatformError && (e.errorClass === 'unsupported' || e.errorClass === 'denied')) {
+          const ms = Math.min(30_000, Math.max(0, (input?.timeSeconds ?? 1.5) * 1000));
+          await sleep(ms);
+          return;
+        }
+        throw e;
+      }
+    },
+    async evaluate(input) {
+      const out = await invoke('browser.evaluate', withSession({ script: input.script })) as {
+        resultText?: string;
+        accessibilityTree?: string;
+        url?: string;
+        title?: string;
+      };
+      return {
+        resultText: out?.resultText ?? '',
+        accessibilityTree: out?.accessibilityTree,
+        url: out?.url,
+        title: out?.title,
+      };
+    },
+    async interact(input) {
+      await invoke('browser.interact', withSession({
+        action: input.action,
+        target: input.target,
+        value: input.value,
+      }));
     },
     async snapshot() {
       const out = await invoke('browser.snapshot', withSession()) as {

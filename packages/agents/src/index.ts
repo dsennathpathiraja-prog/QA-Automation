@@ -5,6 +5,7 @@ export * from './heuristic';
 export * from './plan-markdown';
 export * from './explore-markdown';
 export * from './snapshot-content';
+export * from './dom-probe';
 export * from './schemas';
 export * from './planner';
 export * from './generator';

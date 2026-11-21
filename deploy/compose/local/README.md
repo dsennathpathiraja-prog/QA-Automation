@@ -58,6 +58,15 @@ If Explore UI / Test connection says `could not resolve playwright-mcp`, the bro
 
 If `docker compose … ps` shows `playwright-mcp` **Restarting** and logs say `unknown option '--allowed-hosts'`, rebuild after pulling a Dockerfile that only uses flags supported by `@playwright/mcp@0.0.35` (`--browser chromium --headless --port 8931 --host 0.0.0.0`).
 
+### Private shop hosts (PayNSure / `*.internal`)
+
+Desktop Chrome can open `http://sdk.paynsure.internal/shop` via the **host** resolver (`/etc/hosts` or VPN DNS). Chromium inside `playwright-mcp` does **not** inherit host `/etc/hosts`, so Explore UI may “reach” the URL yet capture an empty snapshot (DNS error / blank page).
+
+1. Add the hostname under `playwright-mcp.extra_hosts` in `docker-compose.local.yml` (example: `sdk.paynsure.internal:host-gateway` if the shop is published on the host, or `sdk.paynsure.internal:<LAN-IP>`).
+2. Rebuild/restart: `docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d playwright-mcp`
+3. Keep the origin on the connector allowlist (`http://sdk.paynsure.internal` or the bare host).
+4. Retry Explore UI — the MD artifact should list storefront cues (Search products, Add to cart, Proceed to checkout, …).
+
 ## Runner
 
 The reachability button checks the address from the worker unless you also start the runner:

@@ -63,20 +63,21 @@ export function parseMcpPageSnapshot(raw: string): ParsedPageSnapshot {
 
 /**
  * True when the snapshot has enough structure for playwright-test-planner
- * (roles, labels, or a real document title) — not a blank Done with _(empty)_.
+ * (interactive roles / labels / substantial YAML) — not title-only or _(empty)_.
  */
 export function snapshotIsActionable(parsed: ParsedPageSnapshot): boolean {
   if (!parsed.raw && !parsed.yaml) return false;
   if (/No open tabs/i.test(parsed.raw)) return false;
   if (/^about:blank$/i.test(parsed.url) || /^chrome-error:\/\//i.test(parsed.url)) return false;
-  const yaml = parsed.yaml || '';
-  if (yaml.length >= 24) return true;
-  if (/\b(button|link|textbox|heading|searchbox|checkbox|combobox|listitem|menuitem|tab)\b/i.test(yaml || parsed.raw)) {
-    return true;
-  }
+  if (/ERR_NAME_NOT_RESOLVED|DNS_PROBE|This site (can.t|cannot) be reached/i.test(parsed.raw)) return false;
   const cues = parsed.cues;
   if (cues.links.length + cues.buttons.length + cues.fields.length + cues.headings.length > 0) return true;
-  if (parsed.title.trim() && !/^about:blank$/i.test(parsed.title)) return true;
+  if (/\b(button|link|textbox|heading|searchbox|checkbox|combobox|listitem|menuitem|tab)\b/i.test(parsed.yaml || parsed.raw)) {
+    return true;
+  }
+  // Substantial aria YAML (storefront trees) without named quotes still counts.
+  const yaml = (parsed.yaml || '').trim();
+  if (yaml.length >= 80) return true;
   return false;
 }
 

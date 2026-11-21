@@ -117,7 +117,9 @@ Run story id
   → rv.explore-ui (when on):
        environment → applicationUrl
        → browser.session.open → sessionId
-       → browser.navigate({ sessionId, url }) → snapshot / screenshot
+       → browser.navigate({ sessionId, url })
+       → browser.wait (SPA / shop copy) → browser.snapshot
+       → browser.evaluate DOM probe when aria tree empty → screenshot
   → rv.explore-code (when on):
        bound source-repo config.repo
        → scm.code.search({ query, repo }) → scm.file.read

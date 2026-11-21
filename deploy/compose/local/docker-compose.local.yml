@@ -87,6 +87,12 @@ services:
     expose: ["8931"]
     # Loopback publish for host curl/debug only. The worker must use http://playwright-mcp:8931, not this port mapping.
     ports: ["127.0.0.1:${PLAYWRIGHT_MCP_HOST_PORT:-8931}:8931"]
+    # Host /etc/hosts is NOT inherited. Private shop hosts (e.g. sdk.paynsure.internal) that work in
+    # desktop Chrome must be listed here or provided via Compose DNS, or Explore UI Chromium sees a blank/DNS error page.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      # Uncomment / set to the LAN IP (or host-gateway if the shop is published on the host):
+      # - "sdk.paynsure.internal:host-gateway"
     healthcheck:
       test: ["CMD", "node", "-e", "require('net').connect(8931,'127.0.0.1',()=>process.exit(0)).on('error',()=>process.exit(1))"]
       interval: 15s
