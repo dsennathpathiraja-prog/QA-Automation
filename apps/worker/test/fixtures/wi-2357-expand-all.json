@@ -1,0 +1,23 @@
+{
+  "id": 2357,
+  "rev": 7,
+  "fields": {
+    "System.Id": 2357,
+    "System.TeamProject": "PayNSure",
+    "System.WorkItemType": "Requirement",
+    "System.State": "Proposed",
+    "System.AreaPath": "PayNSure\\Escrow",
+    "System.IterationPath": "PayNSure\\Sprint 12",
+    "System.Title": "Order Amount Placement in Escrow Notification Template",
+    "System.Description": "<div><h2>1. Title</h2><p>Amount Placement in escrow Notification</p></div>",
+    "Microsoft.VSTS.Common.AcceptanceCriteria": "<div><img src=\"https://example.com/ac.png\" alt=\"Image\"></div>",
+    "Microsoft.VSTS.Common.Priority": 2,
+    "Microsoft.VSTS.Common.ValueArea": "Business",
+    "Microsoft.VSTS.Common.RequirementType": "Feature",
+    "System.Parent": 2353
+  },
+  "multilineFieldsFormat": {
+    "System.Description": "html",
+    "Microsoft.VSTS.Common.AcceptanceCriteria": "html"
+  }
+}

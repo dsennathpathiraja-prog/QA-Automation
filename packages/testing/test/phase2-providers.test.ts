@@ -304,6 +304,70 @@ describe('source and work-item providers', () => {
     expect(m.hits[0]?.path).not.toMatch(/[?&]fields=/);
   });
 
+  it('maps WI 2357 sample fields and { data } wrappers into expand=All context fields', async () => {
+    const sample = {
+      id: 2357,
+      rev: 7,
+      fields: {
+        'System.Id': 2357,
+        'System.TeamProject': 'PayNSure',
+        'System.WorkItemType': 'Requirement',
+        'System.State': 'Proposed',
+        'System.AreaPath': 'PayNSure\\Escrow',
+        'System.IterationPath': 'PayNSure\\Sprint 12',
+        'System.Title': 'Order Amount Placement in Escrow Notification Template',
+        'System.Description': '<div><h2>1. Title</h2><p>Amount Placement in escrow Notification</p></div>',
+        'Microsoft.VSTS.Common.AcceptanceCriteria': '<div><img src="https://example.com/ac.png" alt="Image"></div>',
+        'Microsoft.VSTS.Common.Priority': 2,
+        'Microsoft.VSTS.Common.ValueArea': 'Business',
+        'Microsoft.VSTS.Common.RequirementType': 'Feature',
+        'System.Parent': 2353,
+      },
+      multilineFieldsFormat: {
+        'System.Description': 'html',
+        'Microsoft.VSTS.Common.AcceptanceCriteria': 'html',
+      },
+    };
+    expect(azureWorkItemTitle(sample)).toBe('Order Amount Placement in Escrow Notification Template');
+    expect(azureWorkItemFields(sample)['System.Description']).toMatch(/<div>/);
+    expect(azureWorkItemTitle({ data: sample })).toBe('Order Amount Placement in Escrow Notification Template');
+    expect(azureWorkItemTitle({ data: sample.fields })).toBe('Order Amount Placement in Escrow Notification Template');
+
+    const m = await mock((hit) => {
+      if (pathOf(hit) === '/_apis/wit/workitems/2357') return { body: { data: sample } };
+      return { status: 404, body: {} };
+    });
+    const client = azureBoardsProvider.create({ organization: 'trafforge', project: 'PayNSure', baseUrl: m.baseUrl }, lease, { http: m.http });
+    expect(await client.handle({ id: 'workitem.read' } as never, { id: '2357' }, {} as never)).toMatchObject({
+      id: '2357',
+      title: 'Order Amount Placement in Escrow Notification Template',
+      type: 'Requirement',
+      state: 'Proposed',
+      areaPath: 'PayNSure\\Escrow',
+      iterationPath: 'PayNSure\\Sprint 12',
+      priority: '2',
+      valueArea: 'Business',
+      requirementType: 'Feature',
+      parentId: '2353',
+      description: '<div><h2>1. Title</h2><p>Amount Placement in escrow Notification</p></div>',
+      acceptanceCriteriaHtml: '<div><img src="https://example.com/ac.png" alt="Image"></div>',
+    });
+  });
+
+  it('fails workitem.read clearly when expand=All Succeeds without System.Title', async () => {
+    const m = await mock((hit) => {
+      if (pathOf(hit) === '/_apis/wit/workitems/2357') {
+        return { body: { id: 2357, fields: { 'System.State': 'Proposed', 'System.WorkItemType': 'Requirement' } } };
+      }
+      return { status: 404, body: {} };
+    });
+    const client = azureBoardsProvider.create({ organization: 'trafforge', project: 'PayNSure', baseUrl: m.baseUrl }, lease, { http: m.http });
+    await expect(client.handle({ id: 'workitem.read' } as never, { id: '2357' }, {} as never)).rejects.toMatchObject({
+      errorClass: 'validation',
+      message: expect.stringMatching(/no System\.Title after expand=All/),
+    });
+  });
+
   it('scores Azure Repos source paths above HTML/SDK noise', () => {
     expect(azureReposSourceScore('src/pay/CardList.tsx', 'card')).toBeGreaterThan(azureReposSourceScore('docs/readme.md', 'card'));
     expect(azureReposSourceScore('README.md', 'readme')).toBeGreaterThan(0);
