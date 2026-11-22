@@ -512,12 +512,12 @@ export function WorkflowPage() {
                   Evidence for this run is on the platform.
                   <Stack direction="row" spacing={1} useFlexGap sx={{ mt: 1, flexWrap: 'wrap' }}>
                     {session.can('report.view') && (
-                      <Link to="/reports" search={{ focus: evidenceExecutionId } as never}>
+                      <Link to="/runs/$id" params={{ id: evidenceExecutionId }} search={{ view: 'report', from: 'executions' } as never}>
                         <Button size="small" variant="contained">Open report</Button>
                       </Link>
                     )}
                     {session.can('evidence.view') && (
-                      <Link to="/evidence" search={{ focus: evidenceExecutionId } as never}>
+                      <Link to="/runs/$id" params={{ id: evidenceExecutionId }} search={{ view: 'evidence', from: 'executions' } as never}>
                         <Button size="small">Open evidence</Button>
                       </Link>
                     )}
