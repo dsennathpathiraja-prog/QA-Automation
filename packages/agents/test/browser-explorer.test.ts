@@ -81,6 +81,51 @@ describe('browser explorer', () => {
     expect(calls).toEqual(['open', 'nav:https://shop.example.com/pay', 'close']);
   });
 
+  it('marks blockingGap when a notification-template WI only reaches shop/catalog', async () => {
+    const navigated: string[] = [];
+    const shopTree = `
+### Page state
+- Page URL: http://sdk.paynsure.internal/shop
+- Page Title: PayNSure Host App Simulator
+- Page Snapshot:
+\`\`\`yaml
+- heading "All items" [ref=e1]
+- button "Search" [ref=e2]
+- button "Add to cart" [ref=e3]
+- link "0 items in cart — go to order summary" [ref=e4]
+\`\`\`
+`;
+    const browser: BrowserAutomationPort = {
+      async openSession() {},
+      async navigate(url) {
+        navigated.push(url);
+        return { finalUrl: url, accessibilityTree: shopTree, title: 'PayNSure Host App Simulator' };
+      },
+      async snapshot() {
+        return { accessibilityTree: shopTree, url: navigated[navigated.length - 1] || 'http://sdk.paynsure.internal/shop', title: 'PayNSure Host App Simulator' };
+      },
+      async screenshot() { return { artifactBase64: '' }; },
+      async closeSession() {},
+    };
+    const out = await createBrowserExplorer(browser).explore({
+      application: 'PayNSure',
+      url: 'http://sdk.paynsure.internal/shop',
+      workItemTitle: 'Order Amount Placement in Escrow Notification Template',
+      story: '2357\nOrder Amount Placement in Escrow Notification Template\nEmail subject: held in escrow\nGreeting: Hi [Customer Name],\nPaid Amount',
+      criteria: ['Greeting', 'Paid Amount'],
+      scenarios: [],
+      maxPages: 2,
+    });
+    expect(out.surfaceKind).toBe('template');
+    expect(out.blockingGap).toBe(true);
+    expect(out.relevant).toBe(false);
+    expect(out.warning).toMatch(/Blocking explore gap|shop\/catalog|needs-surface/i);
+    expect(out.findings).toMatch(/Blocking explore gap|Story surface binding/i);
+    expect(out.candidateRoutes?.length).toBeGreaterThan(0);
+    // Tried environment root plus at least one candidate beyond /shop.
+    expect(navigated.some((u) => /\/email|\/notification|\/template|\/preview/i.test(u))).toBe(true);
+  });
+
   it('recovers PayNSure shop cues via DOM evaluate when aria snapshot is empty', async () => {
     let evaluated = false;
     const browser: BrowserAutomationPort = {

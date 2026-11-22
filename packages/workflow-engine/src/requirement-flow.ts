@@ -410,14 +410,36 @@ export function runFlowStep(step: FlowStep): FlowResult {
       const code = text(step.prior.explore_code?.findings);
       const codeRelevant = step.prior.explore_code?.relevant !== false
         && !/Code explore not relevant|path-only|application-only/i.test(code);
-      const uiNote = ui ? `UI: ${ui}` : '';
+      const uiRelevant = step.prior.explore_ui?.relevant !== false;
+      const uiBlockingGap = step.prior.explore_ui?.blockingGap === true
+        || /Blocking explore gap/i.test(ui);
+      const surfaceKind = text(step.prior.explore_ui?.surfaceKind) || undefined;
+      const primarySurfaceUrl = text(step.prior.explore_ui?.primarySurfaceUrl) || undefined;
+      // Keep UI findings for gap messaging, but mark mismatched surfaces so planner/generator fail closed.
+      const uiNote = ui
+        ? (uiRelevant
+          ? `UI: ${ui}`
+          : `UI (surface mismatch — not valid coverage for email/template ACs): ${ui}`)
+        : '';
       const codeNote = code
         ? (codeRelevant ? `Source: ${code}` : `Source (ignored — not relevant for scenarios): ${code.slice(0, 240)}`)
         : '';
       const combined = [uiNote, codeNote].filter(Boolean).join('\n') || 'no exploration findings';
+      const gapNote = uiBlockingGap || !uiRelevant
+        ? ' Explore UI marked not relevant / blocking surface gap — template scenarios must fail closed.'
+        : '';
       return {
-        summary: `Combined the story, the UI note, and the source note for the planner. ${criteria.length || 1} acceptance cue${(criteria.length || 1) === 1 ? '' : 's'} go forward.${code && !codeRelevant ? ' Code explore marked not relevant.' : ''}`,
-        outputs: { workItem, findings: combined, combined, acceptanceCriteria: criteria },
+        summary: `Combined the story, the UI note, and the source note for the planner. ${criteria.length || 1} acceptance cue${(criteria.length || 1) === 1 ? '' : 's'} go forward.${code && !codeRelevant ? ' Code explore marked not relevant.' : ''}${gapNote}`,
+        outputs: {
+          workItem,
+          findings: combined,
+          combined,
+          acceptanceCriteria: criteria,
+          ...(uiBlockingGap ? { blockingGap: true } : {}),
+          ...(surfaceKind ? { surfaceKind } : {}),
+          ...(primarySurfaceUrl ? { primarySurfaceUrl } : {}),
+          ...(uiRelevant === false ? { uiRelevant: false } : {}),
+        },
       };
     }
     case 'rv.generate-test-plan': {

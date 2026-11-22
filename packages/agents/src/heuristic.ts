@@ -6,9 +6,11 @@ import {
   assessExplorationCoverage,
   buildMeaningfulPlaywrightSource,
   exploreSupportsDistinctUiScenarios,
+  isTemplateSurfaceScenario,
   type ExploreCoverage,
 } from './playwright-source';
 import { notificationTemplateScenarioSeeds } from './story-scenarios';
+import { bindStorySurface, NEEDS_SURFACE_MARKER, NEEDS_SURFACE_TAG } from './surface-binding';
 import type { GeneratedPlaywrightCase, GenerateRequest, GenerateResult, PlanRequest, PlanResult, PlannerScenario, ScenarioKind, ScenarioPriority } from './types';
 
 /** Drop noisy Source: code-explore dumps so they do not drive scenarios. */
@@ -347,11 +349,22 @@ export function planHeuristically(input: PlanRequest): PlanResult {
   }
 
   const sliced = scenarios.slice(0, MAX_PLAN_SCENARIOS);
+  const binding = bindStorySurface({
+    story: input.story,
+    criteria,
+    workItemTitle,
+    application: input.application,
+    environmentUrl: input.environmentUrl,
+  });
+  const blockingGap = coverage.blockingGap
+    || (coverage.templateWorkItem && coverage.shopSurface);
   const exploreWarning = [
     coverage.warning,
-    weakExplore && storySeeds.length > 0
-      ? 'Scenarios grounded in work item story/AC; weak shop explore was not used to invent catalog cases.'
-      : '',
+    blockingGap
+      ? 'Template/email scenarios will be Blocked (needs-surface) until a matching preview/template URL is reachable — shop catalog is not successful coverage.'
+      : weakExplore && storySeeds.length > 0
+        ? 'Scenarios grounded in work item story/AC; weak shop explore was not used to invent catalog cases.'
+        : '',
   ].filter(Boolean).join(' ');
   const planMarkdown = renderPlanMarkdown(sliced, {
     workItem: input.workItem,
@@ -360,6 +373,10 @@ export function planHeuristically(input: PlanRequest): PlanResult {
     findings: planningFindings,
     source: 'heuristic',
     exploreWarning: exploreWarning || undefined,
+    blockingGap,
+    surfaceKind: binding.surfaceKind,
+    primarySurfaceUrl: binding.primarySurfaceUrl || coverage.primarySurfaceUrl,
+    candidateRoutes: binding.candidateRoutes,
   });
   const planArtifact = planArtifactPath(input.workItem, input.application);
   const warn = exploreWarning ? ` ${exploreWarning}` : '';
@@ -370,6 +387,9 @@ export function planHeuristically(input: PlanRequest): PlanResult {
     planArtifact,
     source: 'heuristic',
     exploreWarning: exploreWarning || undefined,
+    blockingGap,
+    surfaceKind: binding.surfaceKind,
+    primarySurfaceUrl: binding.primarySurfaceUrl || coverage.primarySurfaceUrl,
   };
 }
 
@@ -381,47 +401,82 @@ export function planHeuristically(input: PlanRequest): PlanResult {
 export function generateHeuristically(input: GenerateRequest): GenerateResult {
   const application = slug(input.application);
   const work = slug(input.workItem);
+  const storyBlob = input.story
+    || input.planMarkdown
+    || input.scenarios.map((s) => `${s.criterion}\n${s.name}\n${s.steps}`).join('\n');
   const coverage = assessExplorationCoverage({
     findings: input.findings,
-    story: input.scenarios.map((s) => s.criterion).join('\n'),
+    story: storyBlob,
     criteria: input.scenarios.map((s) => s.criterion),
   });
+  const binding = bindStorySurface({
+    story: storyBlob,
+    criteria: input.scenarios.map((s) => s.criterion),
+    application: input.application,
+    environmentUrl: input.environmentUrl,
+  });
+  const blockingGap = coverage.blockingGap
+    || (coverage.templateWorkItem && coverage.shopSurface);
   const cases: GeneratedPlaywrightCase[] = input.scenarios.slice(0, MAX_GENERATED_CASES).map((scenario, index) => {
     const testId = `${work}-${scenario.kind}-${index + 1}`;
     const file = `tests/${application}/${work}.spec.js`;
+    const needsSurface = blockingGap && isTemplateSurfaceScenario(scenario);
     const source = buildMeaningfulPlaywrightSource({
       scenario,
       application: input.application,
       findings: input.findings,
-      story: scenario.criterion,
+      story: storyBlob,
       criteria: [scenario.criterion],
       index,
     });
-    const humanParts = scenario.steps
-      .split(/(?<=[.!?])\s+/)
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .slice(0, 40);
+    const gapExpected = needsSurface
+      ? `Blocked (${NEEDS_SURFACE_TAG}): ${coverage.warning || 'Required notification/template surface was not explored.'}`
+      : scenario.expected;
+    const humanParts = needsSurface
+      ? [
+        'Do not execute email/template assertions against the shop/catalog host.',
+        gapExpected,
+      ]
+      : scenario.steps
+        .split(/(?<=[.!?])\s+/)
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .slice(0, 40);
     const validationSteps = (humanParts.length > 0 ? humanParts : [scenario.steps.trim()]).map((action, i, all) => ({
       action,
-      expected: i === all.length - 1 ? scenario.expected : '',
+      expected: i === all.length - 1 ? gapExpected : '',
     }));
     return {
       name: scenario.name,
       kind: scenario.kind,
       priority: scenario.priority,
       steps: source,
-      expected: scenario.expected,
+      expected: gapExpected,
       validationSteps,
       workItem: input.workItem,
       reference: `QAP-${work}-${index + 1}`.slice(0, 50),
       file,
       testId,
+      ...(needsSurface
+        ? {
+          runStatus: 'Blocked' as const,
+          tags: [NEEDS_SURFACE_TAG],
+          primarySurfaceUrl: binding.primarySurfaceUrl || coverage.primarySurfaceUrl,
+          surfaceKind: binding.surfaceKind,
+        }
+        : {
+          primarySurfaceUrl: binding.primarySurfaceUrl || coverage.primarySurfaceUrl,
+          surfaceKind: binding.surfaceKind,
+        }),
     };
   });
+  const blocked = cases.filter((c) => c.runStatus === 'Blocked').length;
   const warn = coverage.warning ? ` ${coverage.warning}` : '';
+  const gapNote = blocked > 0
+    ? ` ${blocked} case${blocked === 1 ? '' : 's'} marked Blocked (${NEEDS_SURFACE_MARKER}) due to explore surface gap.`
+    : '';
   return {
-    summary: `${PLAYWRIGHT_TEST_GENERATOR} wrote ${cases.length} Playwright test${cases.length === 1 ? '' : 's'} for ${input.workItem} from the plan (no model).${warn}`,
+    summary: `${PLAYWRIGHT_TEST_GENERATOR} wrote ${cases.length} Playwright test${cases.length === 1 ? '' : 's'} for ${input.workItem} from the plan (no model).${gapNote}${warn}`,
     cases,
     source: 'heuristic',
   };

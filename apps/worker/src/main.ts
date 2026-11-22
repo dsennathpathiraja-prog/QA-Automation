@@ -255,6 +255,13 @@ const loop = new WorkerLoop({
               return [{ action, expected: typeof s?.expected === 'string' ? s.expected : '' }];
             })
             : undefined;
+          const tags = Array.isArray((row as { tags?: unknown }).tags)
+            ? ((row as { tags?: unknown[] }).tags ?? []).flatMap((t) => (typeof t === 'string' && t.trim() ? [t.trim()] : []))
+            : undefined;
+          const runStatus = (row as { runStatus?: unknown }).runStatus === 'Blocked' || (row as { runStatus?: unknown }).runStatus === 'Skipped'
+            ? (row as { runStatus: 'Blocked' | 'Skipped' }).runStatus
+            : undefined;
+          const surfaceKind = (row as { surfaceKind?: unknown }).surfaceKind;
           return [{
             name: row.name,
             steps: row.steps,
@@ -265,6 +272,14 @@ const loop = new WorkerLoop({
             priority,
             validationSteps,
             file: typeof row.file === 'string' ? row.file : undefined,
+            ...(runStatus ? { runStatus } : {}),
+            ...(tags && tags.length > 0 ? { tags } : {}),
+            ...(typeof (row as { primarySurfaceUrl?: unknown }).primarySurfaceUrl === 'string'
+              ? { primarySurfaceUrl: (row as { primarySurfaceUrl: string }).primarySurfaceUrl }
+              : {}),
+            ...(surfaceKind === 'shop' || surfaceKind === 'template' || surfaceKind === 'other'
+              ? { surfaceKind }
+              : {}),
           }];
         });
         const published = await publishGeneratedCases({

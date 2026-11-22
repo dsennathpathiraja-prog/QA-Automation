@@ -30,7 +30,7 @@ describe('playwright-source', () => {
     expect(hasNearDuplicateExploreFindings('- Explore: A @ https://a.example/x\n  buttons="One"\n- Explore: B @ https://b.example/y\n  buttons="Two"')).toBe(false);
   });
 
-  it('flags template WI + duplicate shop as secondary coverage', () => {
+  it('flags template WI + duplicate shop as blocking secondary coverage', () => {
     const coverage = assessExplorationCoverage({
       findings: shopFindings,
       story: '2357\nOrder Amount Placement in Escrow Notification Template',
@@ -40,7 +40,9 @@ describe('playwright-source', () => {
     expect(coverage.duplicateSurfaces).toBe(true);
     expect(coverage.shopSurface).toBe(true);
     expect(coverage.templateWorkItem).toBe(true);
-    expect(coverage.warning).toMatch(/Weak Explore UI|shop|template|order/i);
+    expect(coverage.blockingGap).toBe(true);
+    expect(coverage.surfaceKind).toBe('template');
+    expect(coverage.warning).toMatch(/Blocking explore gap|shop|template|needs-surface/i);
   });
 
   it('rejects body-only stubs', () => {
@@ -50,7 +52,7 @@ describe('playwright-source', () => {
     expect(isStubPlaywrightSource(real)).toBe(false);
   });
 
-  it('builds story-grounded Playwright instead of fake shop Greeting/catalog assertions', () => {
+  it('builds needs-surface skip instead of fake shop Greeting/catalog assertions', () => {
     const source = buildMeaningfulPlaywrightSource({
       scenario: {
         name: 'Positive: Order Amount Placement — Paid Amount placement in order details table',
@@ -66,8 +68,10 @@ describe('playwright-source', () => {
       criteria: ['Paid Amount', 'Greeting'],
       index: 0,
     });
-    expect(source).toMatch(/Story-grounded|Paid Amount|held in escrow/i);
+    expect(source).toMatch(/@qa-platform:needs-surface/);
+    expect(source).toMatch(/test\.skip/);
     expect(source).not.toMatch(/locator\(['"]body['"]\)\s*\)\s*\.toBeVisible/);
     expect(source).not.toMatch(/getByRole\('button', \{ name: 'Kitchen'/);
+    expect(source).not.toMatch(/Paid Amount appears with live amount/);
   });
 });

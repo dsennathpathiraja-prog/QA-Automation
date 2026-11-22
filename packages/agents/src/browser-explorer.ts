@@ -17,6 +17,11 @@ import {
   summarizeSnapshotForFindings,
 } from './snapshot-content';
 import { analyzeWorkItemStory, isNotificationTemplateStory } from './story-scenarios';
+import {
+  bindStorySurface,
+  exploredSurfaceMatchesKind,
+  resolvePrimarySurfaceUrl,
+} from './surface-binding';
 import { hasNearDuplicateExploreFindings, looksLikeShopSurface, parseExplorationCues } from './playwright-source';
 import type { BrowserAutomationPort, BrowserExplorerPort, ExploreFinding, ExploreRequest, ExploreResult } from './types';
 
@@ -213,8 +218,17 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         workItemTitle: input.workItemTitle,
         application: input.application,
       });
+      const binding = bindStorySurface({
+        story: input.story || '',
+        criteria: input.criteria,
+        workItemTitle: input.workItemTitle,
+        application: input.application,
+        environmentUrl: input.url,
+        analysis,
+      });
       const templateStory = analysis.notificationTemplate
-        || isNotificationTemplateStory(input.story || '', input.criteria ?? []);
+        || isNotificationTemplateStory(input.story || '', input.criteria ?? [])
+        || binding.surfaceKind === 'template';
       // Story-driven labels: for template WIs prefer template surfaces, not every AC as a fake page.
       const labels = input.scenarios.length > 0
         ? input.scenarios.map((s) => s.name)
@@ -229,6 +243,8 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
       const details: ExploreFinding[] = [];
       const probes: Array<DomProbeResult | undefined> = [];
       const probeErrors: Array<string | undefined> = [];
+      // Prefer a WI-bound primary URL when known; otherwise the environment app root.
+      const startUrl = binding.primarySurfaceUrl || input.url;
       // One primary capture is enough when we only have a single environment URL; avoid
       // repeating identical snapshots once per AC label on the same shop page.
       const limit = Math.min(input.maxPages ?? (templateStory ? 2 : 5), Math.max(1, labels.length), templateStory ? 2 : 8);
@@ -236,18 +252,32 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         await browser.openSession();
         let nav: Awaited<ReturnType<BrowserAutomationPort['navigate']>>;
         try {
-          nav = await browser.navigate(input.url);
+          nav = await browser.navigate(startUrl);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           if (isHttpResponseCodeFailure(msg) || /ERR_NAME_NOT_RESOLVED|DNS_PROBE|chrome-error/i.test(msg)) {
-            throw new PlatformError('transient', navigationFailureGuidance(input.url, msg), undefined, e);
+            // Fall back to environment root when a bound primary URL is unreachable.
+            if (startUrl !== input.url) {
+              try {
+                nav = await browser.navigate(input.url);
+              } catch (e2) {
+                const msg2 = e2 instanceof Error ? e2.message : String(e2);
+                if (isHttpResponseCodeFailure(msg2) || /ERR_NAME_NOT_RESOLVED|DNS_PROBE|chrome-error/i.test(msg2)) {
+                  throw new PlatformError('transient', navigationFailureGuidance(input.url, msg2), undefined, e2);
+                }
+                throw e2;
+              }
+            } else {
+              throw new PlatformError('transient', navigationFailureGuidance(input.url, msg), undefined, e);
+            }
+          } else {
+            throw e;
           }
-          throw e;
         }
 
         // Fail fast on chrome-error / DNS / HTTP status before spending retries on empty aria trees.
         throwIfNavigationFailed({
-          targetUrl: input.url,
+          targetUrl: startUrl,
           pageUrl: nav.finalUrl,
           raw: nav.accessibilityTree,
         });
@@ -255,13 +285,13 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         // Prefer a snapshot already attached to navigate when the tree is rich enough.
         if (nav.accessibilityTree) {
           const fromNav = parseMcpPageSnapshot(nav.accessibilityTree);
-          if (!fromNav.url) fromNav.url = nav.finalUrl || input.url;
+          if (!fromNav.url) fromNav.url = nav.finalUrl || startUrl;
           if (!fromNav.title && nav.title) fromNav.title = nav.title;
           if (snapshotIsActionable(fromNav) && labels.length === 1) {
             const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
             details.push({
               scenarioName: labels[0]!,
-              url: fromNav.url || nav.finalUrl || input.url,
+              url: fromNav.url || nav.finalUrl || startUrl,
               title: fromNav.title || undefined,
               snapshotExcerpt: snapshotArtifactBody(fromNav),
               cuesSummary: summarizeSnapshotForFindings(fromNav),
@@ -275,9 +305,9 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         // One early DOM probe when navigate aria is empty — reused by capture (no evaluate spam).
         let earlyProbe: { probe?: DomProbeResult; error?: string } | undefined;
         if (details.length === 0 && browser.evaluate) {
-          earlyProbe = await probeDom(browser, { reNavigateUrl: input.url });
+          earlyProbe = await probeDom(browser, { reNavigateUrl: startUrl });
           throwIfNavigationFailed({
-            targetUrl: input.url,
+            targetUrl: startUrl,
             pageUrl: earlyProbe.probe?.url || nav.finalUrl,
             raw: nav.accessibilityTree,
             probe: earlyProbe.probe,
@@ -287,7 +317,7 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
             const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
             details.push({
               scenarioName: labels[0]!,
-              url: fromDom.url || nav.finalUrl || input.url,
+              url: fromDom.url || nav.finalUrl || startUrl,
               title: fromDom.title || undefined,
               snapshotExcerpt: snapshotArtifactBody(fromDom),
               cuesSummary: summarizeSnapshotForFindings(fromDom),
@@ -302,14 +332,14 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
           const label = labels[i] ?? `page-${i + 1}`;
           const { parsed, accessibilityTree, probe, probeError } = await captureActionableSnapshot(
             browser,
-            nav.finalUrl || input.url,
-            input.url,
+            nav.finalUrl || startUrl,
+            startUrl,
             earlyProbe,
           );
           const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
           details.push({
             scenarioName: label,
-            url: parsed.url || nav.finalUrl || input.url,
+            url: parsed.url || nav.finalUrl || startUrl,
             title: parsed.title || undefined,
             snapshotExcerpt: accessibilityTree,
             cuesSummary: summarizeSnapshotForFindings(parsed),
@@ -317,6 +347,70 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
           });
           probes.push(probe);
           probeErrors.push(probeError);
+        }
+
+        // Template WI + shop-only root: quick-probe a few candidate routes (no long SPA settle).
+        const rootCues = parseExplorationCues(
+          details.map((d) => `- ${d.scenarioName} @ ${d.url}\n  ${d.cuesSummary || ''}`).join('\n'),
+        );
+        if (
+          templateStory
+          && looksLikeShopSurface(rootCues)
+          && !exploredSurfaceMatchesKind('template', rootCues)
+          && binding.candidateUrls.length > 0
+        ) {
+          const tried = new Set(details.map((d) => (d.url || '').toLowerCase()));
+          const toTry = binding.candidateUrls
+            .filter((u) => u !== startUrl && u !== input.url && !tried.has(u.toLowerCase()))
+            .slice(0, 2);
+          for (const candidate of toTry) {
+            try {
+              const candNav = await browser.navigate(candidate);
+              throwIfNavigationFailed({
+                targetUrl: candidate,
+                pageUrl: candNav.finalUrl,
+                raw: candNav.accessibilityTree,
+              });
+              let tree = candNav.accessibilityTree || '';
+              let pageUrl = candNav.finalUrl || candidate;
+              let pageTitle = candNav.title || '';
+              if (!snapshotIsActionable(parseMcpPageSnapshot(tree))) {
+                const snap = await browser.snapshot().catch(() => undefined);
+                if (snap?.accessibilityTree) {
+                  tree = snap.accessibilityTree;
+                  pageUrl = snap.url || pageUrl;
+                  pageTitle = snap.title || pageTitle;
+                }
+              }
+              const parsed = parseMcpPageSnapshot(tree);
+              if (!parsed.url) parsed.url = pageUrl;
+              if (!parsed.title && pageTitle) parsed.title = pageTitle;
+              if (!snapshotIsActionable(parsed)) continue;
+              const body = snapshotArtifactBody(parsed) || tree;
+              const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
+              details.push({
+                scenarioName: `Explore candidate: ${candidate}`,
+                url: parsed.url || pageUrl,
+                title: parsed.title || undefined,
+                snapshotExcerpt: body,
+                cuesSummary: summarizeSnapshotForFindings(parsed),
+                screenshotBase64: shot.artifactBase64 || undefined,
+              });
+              probes.push(undefined);
+              probeErrors.push(undefined);
+              if (exploredSurfaceMatchesKind('template', {
+                url: parsed.url || pageUrl,
+                title: parsed.title,
+                headings: [],
+                buttons: [],
+                fields: [],
+              }) || /template|email|notif|preview|greeting|paid amount/i.test(body)) {
+                break;
+              }
+            } catch {
+              // Candidate miss is expected on shop-only hosts — continue; gap recorded below.
+            }
+          }
         }
       } finally {
         await browser.closeSession().catch(() => undefined);
@@ -370,28 +464,43 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
       const cues = parseExplorationCues(findingsText);
       const shopOnly = looksLikeShopSurface(cues, findingsText);
       const duplicate = hasNearDuplicateExploreFindings(findingsText) || actionable.length > unique.length;
+      const templateMatch = unique.some((d) => exploredSurfaceMatchesKind('template', {
+        url: d.url,
+        title: d.title,
+        headings: [],
+        buttons: [],
+        fields: [],
+      }) || /template|email|notif|preview|greeting|paid amount/i.test(`${d.title || ''} ${d.cuesSummary || ''} ${d.snapshotExcerpt || ''}`));
       let warning = '';
       let relevant = true;
-      if (templateStory && shopOnly) {
-        warning = 'Explore UI gap: only the shop/catalog surface was reachable; escrow notification email template / preview was not found. Do not treat catalog snapshots as distinct email-field evidence. Prefer story-grounded scenarios.';
+      let blockingGap = false;
+      if (templateStory && shopOnly && !templateMatch) {
+        warning = 'Blocking explore gap: only the shop/catalog surface was reachable; escrow notification email template / preview was not found. Do not treat catalog snapshots as email-field evidence — cases for those ACs must be Blocked (needs-surface), not Passed.';
         relevant = false;
+        blockingGap = true;
       } else if (duplicate && unique.length <= 1) {
         warning = 'Explore UI: near-duplicate same-URL snapshots across targets — counted as one surface, not distinct AC evidence.';
         relevant = !templateStory;
+        blockingGap = templateStory;
       }
 
-      if (warning) {
-        // Keep a single representative snapshot plus an explicit gap note for the planner.
-      }
+      const visitedUrls = [...new Set(unique.map((d) => d.url).filter(Boolean))];
+      const primarySurfaceUrl = resolvePrimarySurfaceUrl(binding, visitedUrls)
+        || (templateMatch ? visitedUrls.find((u) => exploredSurfaceMatchesKind('template', { url: u })) : undefined);
       const findings = [
         findingsBody,
+        `\n- Story surface binding: kind=${binding.surfaceKind}`
+          + (primarySurfaceUrl ? `; primary=${primarySurfaceUrl}` : '; primary=(unbound)')
+          + (binding.candidateRoutes.length
+            ? `; candidates=${binding.candidateRoutes.slice(0, 6).join(',')}`
+            : ''),
         warning ? `\n- Explore coverage warning: ${warning}` : '',
+        blockingGap ? '\n- Blocking explore gap: true (fail closed — no Passed on mismatched surface)' : '',
         templateStory && analysis.searchTerms.length
           ? `\n- Story search terms (for template surfaces): ${analysis.searchTerms.slice(0, 8).join(', ')}`
           : '',
       ].filter(Boolean).join('');
 
-      const visitedUrls = [...new Set(unique.map((d) => d.url).filter(Boolean))];
       const urlList = (visitedUrls.length > 0 ? visitedUrls : [input.url]).join(', ');
       const summary = warning
         ? `Visited ${urlList} (${unique.length} distinct surface${unique.length === 1 ? '' : 's'}) for ${input.application} before planning. ${warning}`
@@ -403,6 +512,10 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         source: 'browser',
         warning: warning || undefined,
         relevant,
+        blockingGap,
+        surfaceKind: binding.surfaceKind,
+        primarySurfaceUrl,
+        candidateRoutes: binding.candidateRoutes,
       };
     },
   };

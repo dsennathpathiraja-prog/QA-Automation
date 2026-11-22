@@ -4,6 +4,7 @@ export * from './case-template';
 export * from './heuristic';
 export * from './playwright-source';
 export * from './story-scenarios';
+export * from './surface-binding';
 export * from './plan-markdown';
 export * from './explore-markdown';
 export * from './snapshot-content';

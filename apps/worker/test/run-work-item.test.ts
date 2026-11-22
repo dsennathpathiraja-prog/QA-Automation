@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { FakeRunnerLauncher, InMemoryAuditSink, InMemoryTestCaseRepository, sampleRunnerSpec } from '@qa/testing';
 import { isPlaceholderScreenshot, PLACEHOLDER_SCREENSHOT_B64, screenshotContentType, TestCaseService } from '@qa/application';
 import { PlatformError } from '@qa/domain';
-import { compactCasesForRunner, launchWhenPoolFree, mergeLiveProgress, parseCaseResults, processWorkItemExecutions, RUNNER_REQUIRED, runWorkItemCases } from '../src/run-work-item';
+import { compactCasesForRunner, launchWhenPoolFree, mergeLiveProgress, NEEDS_SURFACE_BLOCKED, parseCaseResults, processWorkItemExecutions, RUNNER_REQUIRED, runWorkItemCases } from '../src/run-work-item';
 import { squashIdFromSummary, syncCaseResultsToSquash } from '../src/sync-execution';
 
 const image = `qa-runner@sha256:${'a'.repeat(64)}`;
@@ -134,6 +134,40 @@ describe('work-item Playwright run', () => {
     expect(out.results[0]?.status).toBe('Blocked');
     expect(out.results[0]?.message).toBe(RUNNER_REQUIRED);
     expect(out.results[0]?.screenshotPng).toBeUndefined();
+  });
+
+  it('blocks needs-surface cases without running them on the shop host', async () => {
+    const launcher = new FakeRunnerLauncher();
+    let launched = false;
+    launcher.launch = async () => {
+      launched = true;
+      throw new Error('should not launch for needs-surface-only batch');
+    };
+    const run = {
+      id: '11111111-1111-4111-8111-111111111111',
+      workItem: '2357',
+      environmentId: '22222222-2222-4222-8222-222222222222',
+      environmentName: 'QA',
+      caseCount: 1,
+      status: 'running' as const,
+      createdAt: new Date(),
+    };
+    const out = await runWorkItemCases({
+      run,
+      cases: [{
+        id: '33333333-3333-4333-8333-333333333333',
+        name: 'Positive: Paid Amount',
+        steps: "// @qa-platform:needs-surface Blocked\nimport { test } from '@playwright/test';\ntest('x', async () => { test.skip(true, 'gap'); });\n",
+        summary: '[needs-surface] Blocked — explore surface gap',
+      }],
+      url: 'https://qa.shop.example/shop',
+      launcher: { launcher, image, logs: async () => '' },
+      now: 1,
+    });
+    expect(launched).toBe(false);
+    expect(out.viaRunner).toBe(false);
+    expect(out.results[0]?.status).toBe('Blocked');
+    expect(out.results[0]?.message).toBe(NEEDS_SURFACE_BLOCKED);
   });
 
   it('runs through the launcher with bundleRef work-item', async () => {

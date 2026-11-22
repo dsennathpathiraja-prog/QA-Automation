@@ -1,4 +1,12 @@
-import { toSquashUpsertInput, type CaseKind, type CasePriority, type ValidationStep } from '@qa/agents';
+import {
+  isNeedsSurfaceCase,
+  NEEDS_SURFACE_TAG,
+  toSquashUpsertInput,
+  type CaseKind,
+  type CasePriority,
+  type SurfaceKind,
+  type ValidationStep,
+} from '@qa/agents';
 import { PlatformError } from '@qa/domain';
 import type { TestCaseService } from '@qa/application';
 
@@ -13,6 +21,10 @@ export interface GeneratedCase {
   priority?: CasePriority;
   validationSteps?: ValidationStep[];
   file?: string;
+  runStatus?: 'Blocked' | 'Skipped';
+  tags?: string[];
+  primarySurfaceUrl?: string;
+  surfaceKind?: SurfaceKind;
 }
 
 interface SquashResult {
@@ -38,8 +50,13 @@ export async function publishGeneratedCases(input: {
   const references: string[] = [];
   let projectId = '';
   let squashError = '';
+  let needsSurfaceCount = 0;
   for (const item of input.cases) {
     let squashId = '';
+    const needsSurface = item.runStatus === 'Blocked'
+      || item.tags?.includes(NEEDS_SURFACE_TAG)
+      || isNeedsSurfaceCase(item);
+    if (needsSurface) needsSurfaceCount += 1;
     const upsert = toSquashUpsertInput({
       name: item.name,
       kind: item.kind,
@@ -67,6 +84,10 @@ export async function publishGeneratedCases(input: {
         }
       }
     }
+    const gapSummary = needsSurface
+      ? `[${NEEDS_SURFACE_TAG}] Blocked — explore surface gap${item.surfaceKind ? ` (expected ${item.surfaceKind})` : ''}${item.primarySurfaceUrl ? `; primary ${item.primarySurfaceUrl}` : ''}`
+      : '';
+    const baseSummary = squashId ? `Squash ${squashId}` : item.reference;
     await input.testCases.fileUnderWorkItem(
       { id: 'worker' },
       {
@@ -75,7 +96,7 @@ export async function publishGeneratedCases(input: {
         expected: item.expected,
         workItem: item.workItem || workItem,
         reference: item.reference,
-        summary: squashId ? `Squash ${squashId}` : item.reference,
+        summary: gapSummary ? `${gapSummary}. ${baseSummary}`.slice(0, 500) : baseSummary,
         kind: item.kind,
         priority: item.priority,
       },
@@ -83,7 +104,10 @@ export async function publishGeneratedCases(input: {
   }
   const count = input.cases.length;
   const noun = `test case${count === 1 ? '' : 's'}`;
-  const kept = `Stored ${count} ${noun} for ${workItem} under that work item`;
+  const gapNote = needsSurfaceCount > 0
+    ? ` ${needsSurfaceCount} marked Blocked (${NEEDS_SURFACE_TAG}) for explore surface gap.`
+    : '';
+  const kept = `Stored ${count} ${noun} for ${workItem} under that work item${gapNote}`;
   if (!input.squash) return { summary: `${kept} in Test Cases. No Squash connector is selected on this workflow.` };
   if (squashError && squashIds.length === 0) return { summary: `${kept} in Test Cases. Squash did not store them: ${squashError}` };
   if (squashError) return { summary: `${kept} in Test Cases. Squash stored ${squashIds.length} and then stopped: ${squashError}` };

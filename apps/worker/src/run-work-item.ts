@@ -1,3 +1,4 @@
+import { isNeedsSurfaceCase, NEEDS_SURFACE_TAG } from '@qa/agents';
 import { PlatformError, RUNNER_INLINE_FILES_MAX_BYTES, RUNNER_MAX, chunkEnvValue, type RunnerLauncher, type RunnerSpec } from '@qa/domain';
 import { isPlaceholderScreenshot, type CaseRunStatus, type CaseStepProgress, type TestCaseService, type WorkItemRunRecord } from '@qa/application';
 
@@ -6,6 +7,9 @@ const NO_RESULTS = 'The runner finished without case results.';
 /** Shown when Executions cannot use Playwright (no silent HTTP “Passed” without evidence). */
 export const RUNNER_REQUIRED =
   'Playwright runner-launcher is not available. Start the local stack so runner-launcher and qa-runner:local are up (`docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d`), then re-run.';
+
+export const NEEDS_SURFACE_BLOCKED =
+  `Blocked (${NEEDS_SURFACE_TAG}): Explore did not reach the required notification/template surface. Do not treat shop/catalog as successful coverage.`;
 
 function realScreenshot(b64: string | undefined): string | undefined {
   return b64 && !isPlaceholderScreenshot(b64) ? b64 : undefined;
@@ -17,6 +21,16 @@ function blockedRunnerRequired(cases: WorkItemCaseInput[]): CaseOutcome[] {
     name: c.name,
     status: 'Blocked' as const,
     message: RUNNER_REQUIRED,
+    steps: defaultSteps(c.steps, 'Blocked'),
+  }));
+}
+
+function blockedNeedsSurface(cases: WorkItemCaseInput[]): CaseOutcome[] {
+  return cases.map((c) => ({
+    testCaseId: c.id,
+    name: c.name,
+    status: 'Blocked' as const,
+    message: NEEDS_SURFACE_BLOCKED,
     steps: defaultSteps(c.steps, 'Blocked'),
   }));
 }
@@ -35,11 +49,14 @@ export interface WorkItemCaseInput {
   id: string;
   name: string;
   steps?: string;
+  summary?: string;
+  expected?: string;
 }
 
 /**
  * Runs prepared work-item cases through the Playwright runner only.
  * Never HTTP probe-falls back to a fake Passed without screenshots (QA-54).
+ * Cases tagged needs-surface (explore surface gap) are Blocked without running on the wrong host.
  */
 export async function runWorkItemCases(o: {
   run: WorkItemRunRecord;
@@ -50,17 +67,42 @@ export async function runWorkItemCases(o: {
   onProgress?: (results: CaseOutcome[]) => Promise<void> | void;
 }): Promise<{ viaRunner: boolean; results: CaseOutcome[] }> {
   if (o.cases.length === 0) return { viaRunner: false, results: [] };
+  const gapCases = o.cases.filter((c) => isNeedsSurfaceCase({
+    steps: c.steps,
+    summary: c.summary,
+    expected: c.expected,
+  }));
+  const runnable = o.cases.filter((c) => !isNeedsSurfaceCase({
+    steps: c.steps,
+    summary: c.summary,
+    expected: c.expected,
+  }));
+  const gapResults = blockedNeedsSurface(gapCases);
+  if (runnable.length === 0) {
+    if (o.onProgress) await o.onProgress(gapResults);
+    return { viaRunner: false, results: gapResults };
+  }
   if (!o.launcher) {
-    const results = blockedRunnerRequired(o.cases);
+    const results = [...gapResults, ...blockedRunnerRequired(runnable)];
     if (o.onProgress) await o.onProgress(results);
     return { viaRunner: false, results };
   }
   try {
-    const results = await viaRunner(o);
+    const ran = await viaRunner({ ...o, cases: runnable });
+    const byId = new Map(ran.map((r) => [r.testCaseId, r]));
+    for (const g of gapResults) byId.set(g.testCaseId, g);
+    const results = o.cases.map((c) => byId.get(c.id) ?? {
+      testCaseId: c.id,
+      name: c.name,
+      status: 'Blocked' as const,
+      message: NO_RESULTS,
+      steps: defaultSteps(c.steps, 'Blocked'),
+    });
+    if (o.onProgress) await o.onProgress(results);
     return { viaRunner: true, results };
   } catch (e) {
     if (!launcherDown(e)) throw e;
-    const results = blockedRunnerRequired(o.cases);
+    const results = [...gapResults, ...blockedRunnerRequired(runnable)];
     if (o.onProgress) await o.onProgress(results);
     return { viaRunner: false, results };
   }
@@ -463,7 +505,13 @@ export async function processWorkItemExecutions(o: {
   if (!claimed) return 'idle';
   try {
     const cases = await o.testCases.casesForWorkItem(claimed.workItem);
-    const listed = cases.map((c) => ({ id: c.id, name: c.name, steps: c.steps }));
+    const listed = cases.map((c) => ({
+      id: c.id,
+      name: c.name,
+      steps: c.steps,
+      summary: c.summary,
+      expected: c.expected,
+    }));
     if ((await o.testCases.getWorkItemExecution(claimed.id)).results?.length === 0) {
       await o.testCases.seedQueuedCaseProgress(claimed.id, claimed.workItem);
     }

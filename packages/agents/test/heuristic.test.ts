@@ -51,7 +51,7 @@ describe('description-aware heuristic planner', () => {
     expect(planned.planMarkdown).toMatch(/Wallet button/);
   });
 
-  it('flags duplicate shop explore and plans story themes — not catalog UI seeds', () => {
+  it('flags duplicate shop explore as blocking gap — not catalog UI seeds', () => {
     const planned = planHeuristically({
       workItem: '2357',
       application: 'PayNSure',
@@ -59,8 +59,10 @@ describe('description-aware heuristic planner', () => {
       criteria: ['Title', 'Greeting', 'Main Message', 'Paid Amount'],
       findings: shopFindings,
     });
-    expect(planned.exploreWarning).toMatch(/story|shop|Weak Explore|grounded/i);
-    expect(planned.planMarkdown).toMatch(/Explore coverage warning/);
+    expect(planned.blockingGap).toBe(true);
+    expect(planned.surfaceKind).toBe('template');
+    expect(planned.exploreWarning).toMatch(/Blocked|needs-surface|shop|Blocking|gap/i);
+    expect(planned.planMarkdown).toMatch(/Explore surface gap \(blocking\)|Story surface binding/);
     expect(planned.scenarios.some((s) => /Paid Amount|greeting|Confirm Delivery|held in escrow/i.test(s.name))).toBe(true);
     const uiSeeds = planned.scenarios.filter((s) => /use Search control for|Kitchen/i.test(s.name));
     expect(uiSeeds.length).toBe(0);
@@ -91,7 +93,7 @@ describe('heuristic generator', () => {
     expect(generated.cases.every((c) => !isStubPlaywrightSource(c.steps))).toBe(true);
   });
 
-  it('generates story-grounded cases for WI 2357-style duplicate explore', () => {
+  it('generates needs-surface Blocked cases for WI 2357-style duplicate explore', () => {
     const planned = planHeuristically({
       workItem: '2357',
       application: 'PayNSure',
@@ -102,12 +104,14 @@ describe('heuristic generator', () => {
     const generated = generateHeuristically({
       workItem: '2357',
       application: 'PayNSure',
+      story: '2357\nOrder Amount Placement in Escrow Notification Template\nPaid Amount\nConfirm Delivery',
       scenarios: planned.scenarios.slice(0, 5),
       findings: shopFindings,
     });
     const sources = generated.cases.map((c) => c.steps);
     expect(sources.every((s) => !isStubPlaywrightSource(s))).toBe(true);
     expect(sources.every((s) => !/locator\(['"]body['"]\)\s*\)\s*\.toBeVisible/.test(s))).toBe(true);
-    expect(sources.some((s) => /held in escrow|Paid Amount|Confirm Delivery|Story-grounded/i.test(s))).toBe(true);
+    expect(generated.cases.some((c) => c.runStatus === 'Blocked' && c.tags?.includes('needs-surface'))).toBe(true);
+    expect(sources.some((s) => /@qa-platform:needs-surface|test\.skip/i.test(s))).toBe(true);
   });
 });
