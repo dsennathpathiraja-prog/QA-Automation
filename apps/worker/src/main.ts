@@ -327,21 +327,12 @@ const loop = new WorkerLoop({
         return row.applicationUrl;
       },
       run: async ({ run, cases, url, onProgress }) => {
-        const direct = async () => runWorkItemCases({
-          run,
-          cases,
-          url,
-          onProgress,
-          probe: async (target) => {
-            const rules: EgressRule[] = (await hosts.list('application')).map((h) => ({ hostPattern: h.hostPattern, purpose: 'application', internal: h.internal, allowHttp: h.allowHttp }));
-            const http = new HardenedHttpClient({ egress: new EgressPolicy({ rules, profile, platformEnv }), allowedMethods: ['GET', 'HEAD'], timeoutMs: 10_000, maxBodyBytes: 64 * 1024 });
-            const res = await http.request({ method: 'GET', url: target, headers: { accept: '*/*' } });
-            return { status: res.status };
-          },
-        });
+        // Executions require Playwright via runner-launcher — never HTTP probe-pass without screenshots.
         const launcherUrl = env.RUNNER_LAUNCHER_URL;
         const launcherToken = env.RUNNER_LAUNCHER_TOKEN_FILE ? readSecretFile(env.RUNNER_LAUNCHER_TOKEN_FILE) : env.RUNNER_LAUNCHER_TOKEN;
-        if (!launcherUrl || !launcherToken) return direct();
+        if (!launcherUrl || !launcherToken) {
+          return runWorkItemCases({ run, cases, url, onProgress });
+        }
         try {
           const launcherHost = new URL(launcherUrl);
           const http = new HardenedHttpClient({
@@ -363,15 +354,11 @@ const loop = new WorkerLoop({
             url,
             onProgress,
             launcher: { launcher, image, logs: (id) => launcher.logs(id) },
-            probe: async (target) => {
-              const rules: EgressRule[] = (await hosts.list('application')).map((h) => ({ hostPattern: h.hostPattern, purpose: 'application', internal: h.internal, allowHttp: h.allowHttp }));
-              const appHttp = new HardenedHttpClient({ egress: new EgressPolicy({ rules, profile, platformEnv }), allowedMethods: ['GET', 'HEAD'], timeoutMs: 10_000, maxBodyBytes: 64 * 1024 });
-              const res = await appHttp.request({ method: 'GET', url: target, headers: { accept: '*/*' } });
-              return { status: res.status };
-            },
           });
         } catch (e) {
-          if (workItemLauncherDown(e) || launcherDown(e)) return direct();
+          if (workItemLauncherDown(e) || launcherDown(e)) {
+            return runWorkItemCases({ run, cases, url, onProgress });
+          }
           if (e instanceof PlatformError) throw e;
           throw new PlatformError('internal', 'The runner could not be started.');
         }

@@ -3,9 +3,22 @@ import { isPlaceholderScreenshot, type CaseRunStatus, type CaseStepProgress, typ
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const NO_RESULTS = 'The runner finished without case results.';
+/** Shown when Executions cannot use Playwright (no silent HTTP “Passed” without evidence). */
+export const RUNNER_REQUIRED =
+  'Playwright runner-launcher is not available. Start the local stack so runner-launcher and qa-runner:local are up (`docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d`), then re-run.';
 
 function realScreenshot(b64: string | undefined): string | undefined {
   return b64 && !isPlaceholderScreenshot(b64) ? b64 : undefined;
+}
+
+function blockedRunnerRequired(cases: WorkItemCaseInput[]): CaseOutcome[] {
+  return cases.map((c) => ({
+    testCaseId: c.id,
+    name: c.name,
+    status: 'Blocked' as const,
+    message: RUNNER_REQUIRED,
+    steps: defaultSteps(c.steps, 'Blocked'),
+  }));
 }
 
 export interface CaseOutcome {
@@ -25,31 +38,32 @@ export interface WorkItemCaseInput {
 }
 
 /**
- * Runs the cases of one prepared work-item execution through the runner (or a direct probe when the launcher is down).
+ * Runs prepared work-item cases through the Playwright runner only.
+ * Never HTTP probe-falls back to a fake Passed without screenshots (QA-54).
  */
 export async function runWorkItemCases(o: {
   run: WorkItemRunRecord;
   cases: WorkItemCaseInput[];
   url: string;
   launcher?: { launcher: RunnerLauncher; image: string; logs(id: string): Promise<string> };
-  probe?: (url: string) => Promise<{ status: number }>;
   now?: number;
   onProgress?: (results: CaseOutcome[]) => Promise<void> | void;
 }): Promise<{ viaRunner: boolean; results: CaseOutcome[] }> {
   if (o.cases.length === 0) return { viaRunner: false, results: [] };
-  if (o.launcher) {
-    try {
-      const results = await viaRunner(o);
-      if (!shouldProbeFallback(results) || !o.probe) return { viaRunner: true, results };
-      // Runner produced no parseable RESULT_JSON at all (stale image / crash). Probe for status only —
-      // never do this when log markers were present but truncated (that fakes Passed with no screenshot).
-      const probed = await viaDirect({ ...o, probeReason: 'runner returned no RESULT_JSON' });
-      return { viaRunner: true, results: probed };
-    } catch (e) {
-      if (!launcherDown(e)) throw e;
-    }
+  if (!o.launcher) {
+    const results = blockedRunnerRequired(o.cases);
+    if (o.onProgress) await o.onProgress(results);
+    return { viaRunner: false, results };
   }
-  return { viaRunner: false, results: await viaDirect({ ...o, probeReason: 'runner-launcher unavailable' }) };
+  try {
+    const results = await viaRunner(o);
+    return { viaRunner: true, results };
+  } catch (e) {
+    if (!launcherDown(e)) throw e;
+    const results = blockedRunnerRequired(o.cases);
+    if (o.onProgress) await o.onProgress(results);
+    return { viaRunner: false, results };
+  }
 }
 
 export function parseCaseResults(text: string, fallback: WorkItemCaseInput[]): CaseOutcome[] {
@@ -60,9 +74,10 @@ export function parseCaseResults(text: string, fallback: WorkItemCaseInput[]): C
   // clean legacy reachability log — that hid missing screenshots behind a probe fallback.
   if (/\bRESULT_JSON\b|\bSCREENSHOT_JSON\b|\bRUNNER_MODE\b|\bPROGRESS_JSON\b/.test(text)) {
     const excerpt = text.replace(/\s+/g, ' ').trim().slice(0, 240);
+    const rebuild = 'Rebuild qa-runner:local with: docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d';
     const message = excerpt
-      ? `${NO_RESULTS} Runner log markers were present but RESULT_JSON could not be parsed (often a truncated log line). Rebuild qa-runner:local with --profile runners --build. Log: ${excerpt}`
-      : `${NO_RESULTS} Runner log markers were present but RESULT_JSON could not be parsed. Rebuild qa-runner:local with --profile runners --build.`;
+      ? `${NO_RESULTS} Runner log markers were present but RESULT_JSON could not be parsed (often a truncated log line). ${rebuild}. Log: ${excerpt}`
+      : `${NO_RESULTS} Runner log markers were present but RESULT_JSON could not be parsed. ${rebuild}.`;
     return fallback.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message, steps: defaultSteps(c.steps, 'Blocked') }));
   }
 
@@ -80,9 +95,10 @@ export function parseCaseResults(text: string, fallback: WorkItemCaseInput[]): C
   }
 
   const excerpt = text.replace(/\s+/g, ' ').trim().slice(0, 240);
+  const rebuild = 'Rebuild qa-runner:local with: docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d';
   const message = excerpt
-    ? `${NO_RESULTS} Rebuild qa-runner:local with the runners compose profile if the image predates work-item execute. Log: ${excerpt}`
-    : `${NO_RESULTS} Rebuild qa-runner:local with the runners compose profile if the image predates work-item execute.`;
+    ? `${NO_RESULTS} ${rebuild} if the image predates work-item execute. Log: ${excerpt}`
+    : `${NO_RESULTS} ${rebuild} if the image predates work-item execute.`;
   return fallback.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message, steps: defaultSteps(c.steps, 'Blocked') }));
 }
 
@@ -172,16 +188,6 @@ export function launcherDown(e: unknown): boolean {
   return e instanceof PlatformError && e.errorClass === 'transient' && /could not resolve|network error|timed out|not reachable/.test(e.message);
 }
 
-function isEmptyRunnerResult(results: CaseOutcome[]): boolean {
-  return results.length > 0 && results.every((r) => r.status === 'Blocked' && r.message.startsWith(NO_RESULTS));
-}
-
-/** Probe only when the runner left no usable markers — truncated RESULT_JSON must not become a fake Passed. */
-function shouldProbeFallback(results: CaseOutcome[]): boolean {
-  if (!isEmptyRunnerResult(results)) return false;
-  return !results.some((r) => /could not be parsed|log markers were present/i.test(r.message));
-}
-
 async function viaRunner(o: {
   run: WorkItemRunRecord;
   cases: WorkItemCaseInput[];
@@ -259,37 +265,6 @@ async function viaRunner(o: {
   });
   if (o.onProgress) await o.onProgress(finalResults);
   return finalResults;
-}
-
-async function viaDirect(o: {
-  cases: WorkItemCaseInput[];
-  url: string;
-  probe?: (url: string) => Promise<{ status: number }>;
-  onProgress?: (results: CaseOutcome[]) => Promise<void> | void;
-  probeReason?: string;
-}): Promise<CaseOutcome[]> {
-  const seeded = o.cases.map((c) => ({
-    testCaseId: c.id,
-    name: c.name,
-    status: 'Running' as const,
-    message: 'Probing application URL',
-    steps: defaultSteps(c.steps, 'Running').map((s, i) => ({ ...s, status: i === 0 ? 'Running' as const : 'Queued' as const })),
-  }));
-  if (o.onProgress) await o.onProgress(seeded);
-  if (!o.probe) {
-    return o.cases.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message: 'No probe was configured for a direct run.', steps: defaultSteps(c.steps, 'Blocked') }));
-  }
-  try {
-    const res = await o.probe(o.url);
-    const status: CaseRunStatus = res.status >= 500 ? 'Failed' : res.status >= 200 ? 'Passed' : 'Failed';
-    const why = o.probeReason ? ` · no screenshot (${o.probeReason})` : ' · no screenshot (HTTP probe)';
-    const message = `answered ${res.status}${why}`;
-    // Probe has no browser — omit screenshot so the UI shows an empty state instead of a red stub.
-    return o.cases.map((c) => ({ testCaseId: c.id, name: c.name, status, message, steps: defaultSteps(c.steps, status) }));
-  } catch (e) {
-    const message = e instanceof PlatformError ? e.message : 'did not answer';
-    return o.cases.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked', message, steps: defaultSteps(c.steps, 'Blocked') }));
-  }
 }
 
 function parseResultLines(text: string): CaseOutcome[] {

@@ -86,31 +86,30 @@ docker compose -f deploy/compose/local/docker-compose.local.yml `
 
 Keep `http://sdk.paynsure.internal` (or the bare host) on the Playwright connector allowlist, then retry Explore UI — the MD artifact should list storefront cues (Search products, Add to cart, Proceed to checkout, …).
 
-## Runner
+## Runner (Playwright / Executions screenshots)
 
-The reachability button checks the address from the worker unless you also start the runner:
+`runner-image` and `runner-launcher` are part of the **default** local stack (no compose profile). A normal `up --build` builds `qa-runner:local` and starts the launcher. The worker waits until `runner-launcher` is healthy. Executions **do not** HTTP probe-fall back to a fake Passed when the launcher is missing — cases stay **Blocked** with an actionable message instead.
 
 ```
-docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser --profile runners up --build -d
+docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
 ```
 
-`runner-image` exits on purpose after the image `qa-runner:local` exists. Rebuild that profile whenever `apps/runner/` or `deploy/images/runner.Dockerfile` changes — a stale image is a common cause of Executions showing every case **Blocked** with “without case results.” `runner-launcher` is the service that starts a new container for each check. It is the only service that uses the Docker socket. Open the environment again and press Check reachability. The line starts with "The runner finished." On 19 Nov 2026 that check showed "The runner finished. The application answered 200."
+`runner-image` exits on purpose after `qa-runner:local` exists. Rebuild whenever `apps/runner/` or `deploy/images/runner.Dockerfile` changes. `runner-launcher` starts a fresh container per check/run and is the only service that uses the Docker socket.
+
+Reachability: open the environment and press Check reachability. Prefer a line that starts with “The runner finished.”
 
 ### Run a prepared work item (Executions)
 
-Screenshots need the **runners** profile (Playwright image + launcher). Without it the worker probes over HTTP and cases show **Passed** with “answered 200” but no evidence.
-
-1. Rebuild runners (Playwright-capable `qa-runner:local`) and start the launcher:  
-   `docker compose -f deploy/compose/local/docker-compose.local.yml --profile runners up --build -d`
-2. Confirm the image and launcher:
+1. Ensure the default stack is up (includes runners):
 
 ```
+docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
+docker compose -f deploy/compose/local/docker-compose.local.yml ps
+# Expect: runner-launcher = healthy/running; runner-image = Exited (0)
 docker image inspect qa-runner:local --format '{{.Id}} {{.Created}}'
-docker compose -f deploy/compose/local/docker-compose.local.yml --profile runners ps
-# runner-launcher = running; runner-image = Exited (0) after build — that is expected
 ```
 
-3. Smoke the capture path inside the image (should print `capture":"playwright"` and a `SCREENSHOT_JSON` line):
+2. Smoke Playwright capture inside the image:
 
 ```
 docker run --rm --network qa-platform-local \
@@ -121,11 +120,13 @@ docker run --rm --network qa-platform-local \
 # Expect: RUNNER_MODE {"capture":"playwright",...} then RESULT_JSON ... then SCREENSHOT_JSON ...
 ```
 
-4. Confirm environment Check reachability ends with “The runner finished.”
-5. On Executions, prepare a work item and press **Run**. Expect per-case **Passed** / **Failed** with JPEG screenshots (not the blue “No screenshot” info box).
-6. Squash sync needs a **READ_WRITE** personal API token on the switched-on Squash connector (project name e.g. ToolKit-AgenFlow): Test Connection → Switch on → **restart the worker** after replacing the token.
+3. On Executions, prepare a work item and press **Run**. Expect per-case **Passed** / **Failed** with JPEG screenshots.
 
-If cases still say “answered 200” with no screenshot, check worker logs for `runner-launcher` resolve errors (profile not up) or re-run the `docker run` smoke above — `capture":"http"` means the image lacks Playwright and must be rebuilt with `--build`.
+4. If cases are **Blocked** with “runner-launcher is not available”, the launcher container is not on `qa-platform-local` — re-run step 1 (Docker socket must be available to Compose).
+
+5. Squash sync needs a **READ_WRITE** personal API token on the switched-on Squash connector (project name e.g. ToolKit-AgenFlow): Test Connection → Switch on → **restart the worker** after replacing the token.
+
+Optional browser MCP (Explore UI / connector Test connection) still uses `--profile browser` — that is separate from Executions screenshots.
 
 ## Stop or reset
 
