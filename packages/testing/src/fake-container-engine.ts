@@ -37,6 +37,11 @@ export class FakeContainerEngine implements ContainerEngine {
     if (c && (c.state.status === 'running' || c.state.status === 'created')) Object.assign(c.state, { status: 'exited', exitCode: 137, finishedAt: new Date() });
   }
 
+  async remove(id: string) {
+    if (!this.containers.has(id)) throw new PlatformError('not-found', 'no such container');
+    this.containers.delete(id);
+  }
+
   async list(labels: Record<string, string>) {
     return [...this.containers.values()].map((c) => c.state).filter((s) => Object.entries(labels).every(([k, v]) => s.labels[k] === v));
   }

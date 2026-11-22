@@ -129,7 +129,9 @@ services:
       RUNNER_LOCAL_IMAGE: qa-runner:local
       RUNNER_IMAGE_REPOSITORY: qa-runner
       RUNNER_NETWORK: qa-platform-local
-      RUNNER_MAX_CONCURRENT: "2"
+      # Local trial: enough slots for reachability + an Execute batch (one container per work-item run).
+      # Finished / never-started runners are reclaimed before this check.
+      RUNNER_MAX_CONCURRENT: "8"
     volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
     read_only: true
     tmpfs: ["/tmp"]

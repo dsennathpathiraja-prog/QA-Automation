@@ -60,6 +60,11 @@ export class DockerEngine implements ContainerEngine {
     if (r.status !== 304 && r.status !== 404) this.ok(r, 'stop');
   }
 
+  async remove(id: string) {
+    const r = await this.call('DELETE', `/containers/${encodeURIComponent(id)}?force=true&v=true`);
+    if (r.status !== 404) this.ok(r, 'remove');
+  }
+
   async inspectImage(ref: string) {
     const r = await this.call('GET', `/images/${encodeURIComponent(ref)}/json`);
     if (r.status === 404) return undefined;
@@ -122,7 +127,7 @@ export class DockerEngine implements ContainerEngine {
     await this.dispatcher.close();
   }
 
-  private async call(method: 'GET' | 'POST', path: string, body?: unknown): Promise<{ status: number; json: unknown; text: string }> {
+  private async call(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<{ status: number; json: unknown; text: string }> {
     try {
       const res = await request(`${this.base}${path}`, {
         method,
