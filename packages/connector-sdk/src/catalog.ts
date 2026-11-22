@@ -149,6 +149,7 @@ export function defineCapabilities(): CapabilityDescriptor[] {
     c({ id: 'tm.suite.list', category: 'test-management', access: 'read', risk: 'low', constraints: ['scope'], input: z.object({ project: opt(str), ...page }), output: list(Named) }),
     c({ id: 'tm.campaign.list', category: 'test-management', access: 'read', risk: 'low', constraints: ['scope'], input: z.object({ project: opt(str), ...page }), output: list(Named) }),
     c({ id: 'tm.iteration.list', category: 'test-management', access: 'read', risk: 'low', constraints: ['scope'], input: z.object({ project: opt(str), campaign: opt(str), ...page }), output: list(Named) }),
+    c({ id: 'tm.iteration.testplan.list', category: 'test-management', access: 'read', risk: 'low', constraints: ['scope'], input: z.object({ project: opt(str), iteration: str, ...page }), output: list(z.object({ id: str, testCaseId: str, name: opt(str) })) }),
     c({ id: 'tm.tag.list', category: 'test-management', access: 'read', risk: 'low', constraints: ['scope'], input: z.object({ project: opt(str) }), output: list(Named) }),
     c({ id: 'tm.customfield.list', category: 'test-management', access: 'read', risk: 'low', constraints: ['scope'], input: z.object({ project: opt(str) }), output: list(Named) }),
     c({ id: 'tm.customfield.read', category: 'test-management', access: 'read', risk: 'low', constraints: ['scope'], input: z.object({ project: opt(str), entityId: str }), output: z.object({ values: z.record(str) }) }),

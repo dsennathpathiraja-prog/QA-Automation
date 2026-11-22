@@ -67,6 +67,7 @@ export const SQUASH_SUPPORTED_CAPABILITIES = [
   'tm.attachment.upload',
   'tm.campaign.list',
   'tm.iteration.list',
+  'tm.iteration.testplan.list',
 ] as const;
 
 const NOT_AVAILABLE: Record<string, string> = {
@@ -265,6 +266,12 @@ class SquashClient implements ConnectorClient {
         ? 'POST /executions/{id}/attachments (multipart) uploads run screenshots when the token is READ_WRITE'
         : 'The token does not show WRITE. Screenshots stay on the platform until the token is READ_WRITE.',
     });
+    // Campaign-scoped iteration reads still work when the global /iterations list is refused.
+    out.push({
+      capability: 'tm.iteration.testplan.list',
+      support: supported.has('tm.campaign.list') || supported.has('tm.iteration.list') ? 'supported' : 'unsupported',
+      reason: 'GET /iterations/{id}/test-plan (checked when first used for Regression campaign scope)',
+    });
     for (const [capability, reason] of Object.entries(NOT_AVAILABLE)) out.push({ capability, support: 'unsupported', reason });
     return out;
   }
@@ -342,6 +349,22 @@ class SquashClient implements ConnectorClient {
         return this.list(project ? `/projects/${project}/campaigns` : '/campaigns', 'campaigns', i, signal, (c) => ({ id: String(c.id), name: String(c.name) }));
       case 'tm.iteration.list':
         return this.list(i.campaign ? `/campaigns/${idOf(i.campaign, 'campaign')}/iterations` : '/iterations', 'iterations', i, signal, (c) => ({ id: String(c.id), name: String(c.name) }));
+      case 'tm.iteration.testplan.list':
+        return this.list(
+          `/iterations/${idOf(i.iteration ?? i.iterationId, 'iteration')}/test-plan`,
+          'test-plan',
+          i,
+          signal,
+          (item) => {
+            const tc = item.test_case ?? item.testCase;
+            const testCaseId = tc && typeof tc === 'object' ? String((tc as Json).id ?? '') : '';
+            return {
+              id: String(item.id ?? ''),
+              testCaseId,
+              ...(typeof item.name === 'string' ? { name: item.name } : typeof (tc as Json | undefined)?.name === 'string' ? { name: String((tc as Json).name) } : {}),
+            };
+          },
+        );
       default:
         throw new PlatformError('unsupported', NOT_AVAILABLE[cap.id] ?? `SquashTM does not provide ${cap.id}`);
     }

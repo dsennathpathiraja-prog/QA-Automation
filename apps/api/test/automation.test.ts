@@ -80,3 +80,47 @@ describe('automation resolve (Phase 9 E1)', () => {
     expect(res.statusCode).toBe(400);
   });
 });
+
+describe('automation scope (Phase 9 E3)', () => {
+  it('expands selected case ids for Regression prep', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/automation/scope',
+      headers: engineer,
+      payload: { kind: 'selected', caseIds: ['238', '238', '239'] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      caseIds: ['238', '239'],
+      kind: 'selected',
+      mode: 'selected',
+    });
+  });
+
+  it('expands collection when caseIds override is supplied (E4 stub path)', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/automation/scope',
+      headers: lead,
+      payload: { kind: 'collection', collectionKey: 'smoke', caseIds: ['238'] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      caseIds: ['238'],
+      kind: 'collection',
+      mode: 'regression-collection',
+      collectionKey: 'smoke',
+    });
+  });
+
+  it('errors clearly when suite/campaign needs Squash on the API without caseIds', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/automation/scope',
+      headers: engineer,
+      payload: { kind: 'suite', projectId: '1' },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.message).toMatch(/Squash suite\/campaign scope needs the test-management connector/i);
+  });
+});

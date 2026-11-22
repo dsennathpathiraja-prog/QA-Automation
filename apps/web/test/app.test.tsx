@@ -107,6 +107,14 @@ describe('route guard', () => {
             notAutomated: [{ squashCaseId: '239', reason: 'mapping-unapproved', status: 'draft' }],
           },
         },
+        '/api/v1/automation/scope': {
+          status: 200,
+          body: {
+            caseIds: ['238', '239'],
+            kind: 'selected',
+            mode: 'selected',
+          },
+        },
       },
     });
     expect(await screen.findByRole('heading', { name: 'Automation Mapping' })).toBeTruthy();
@@ -116,7 +124,13 @@ describe('route guard', () => {
     await userEvent.type(screen.getByLabelText('Squash case id'), '238');
     await userEvent.click(screen.getByRole('button', { name: 'Resolve' }));
     expect(await screen.findByText(/Squash 238 → asset/)).toBeTruthy();
-    await userEvent.type(screen.getByLabelText(/Squash case ids/i), '238, 239');
+    const scopeCaseField = screen.getByLabelText(/Squash case ids \(required\)/i);
+    await userEvent.clear(scopeCaseField);
+    await userEvent.type(scopeCaseField, '238, 239');
+    await userEvent.click(screen.getByRole('button', { name: 'Expand scope to case ids' }));
+    expect(await screen.findByText(/selected: 2 ids/i)).toBeTruthy();
+    await userEvent.clear(screen.getByLabelText(/Squash case ids \(comma/i));
+    await userEvent.type(screen.getByLabelText(/Squash case ids \(comma/i), '238, 239');
     await userEvent.click(screen.getByRole('button', { name: 'Preview Regression resolve' }));
     expect(await screen.findByText(/1 approved · 1 Not Automated/)).toBeTruthy();
     expect(screen.getByText(/239 — Draft \(not approved\)/)).toBeTruthy();

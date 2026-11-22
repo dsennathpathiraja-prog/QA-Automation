@@ -131,6 +131,19 @@ export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock>
     }
     if (path === '/campaigns' || /^\/projects\/\d+\/campaigns$/.test(path)) return { status: 200, body: page([{ _type: 'campaign', id: 10, name: 'Release 12' }], 'campaigns', url) };
     if (path === '/iterations' || /^\/campaigns\/\d+\/iterations$/.test(path)) return { status: 200, body: page([{ _type: 'iteration', id: 20, name: 'Iteration 1' }, { _type: 'iteration', id: 21, name: 'Iteration 2' }], 'iterations', url) };
+    // Regression campaign scope: GET /iterations/{id}/test-plan → ITPIs with linked test cases.
+    if ((m = path.match(/^\/iterations\/(\d+)\/test-plan$/))) {
+      const iterationId = Number(m[1]);
+      const plan = iterationId === 20
+        ? [
+          { _type: 'test-plan-item', id: 1001, name: 'Guest checkout with card', test_case: link(238, 'test-case', 'Guest checkout with card') },
+          { _type: 'test-plan-item', id: 1002, name: 'Log out', test_case: link(239, 'test-case', 'Log out') },
+        ]
+        : iterationId === 21
+          ? [{ _type: 'test-plan-item', id: 1003, name: 'Search by keyword', test_case: link(240, 'test-case', 'Search by keyword') }]
+          : [];
+      return { status: 200, body: page(plan, 'test-plan', url) };
+    }
     return { status: 404, body: { message: 'not found' } };
   };
 
