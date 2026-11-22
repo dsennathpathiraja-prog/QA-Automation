@@ -120,7 +120,7 @@ docker run --rm --network qa-platform-local \
 # Expect: RUNNER_MODE {"capture":"playwright",...} then RESULT_JSON ... then SCREENSHOT_JSON ...
 ```
 
-3. On Executions, prepare a work item and press **Run**. Expect per-case **Passed** / **Failed** with JPEG screenshots. Large sets (hundreds of cases) are passed via a `/tmp` file into the runner — not `QA_CASES_JSON` env — so you should not see “env QA_CASES_JSON is too long”.
+3. On Executions, prepare a work item and press **Run**. Expect per-case **Passed** / **Failed** with JPEG screenshots. Large sets (hundreds of cases) are passed as chunked `QA_CASES_P*` env vars (not one giant `QA_CASES_JSON`, and not Docker putFiles into `/tmp`). You should not see “env QA_CASES_JSON is too long” or “putFiles (400)”.
 
 4. If cases are **Blocked** with “runner-launcher is not available”, the launcher container is not on `qa-platform-local` — re-run step 1 (Docker socket must be available to Compose).
 

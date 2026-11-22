@@ -62,7 +62,7 @@ describe('runner launcher service', () => {
     expect([...engine.containers.values()][0]!.state.status).toBe('running');
   });
 
-  it('injects inlineFiles into the container before start', async () => {
+  it('materializes inlineFiles into chunked env (no putFiles) before create', async () => {
     const engine = new FakeContainerEngine();
     const app = buildLauncherApp(deps(engine));
     const cases = JSON.stringify([{ id: 'a', name: 'Login', steps: ['Open page', 'Capture evidence'] }]);
@@ -77,7 +77,11 @@ describe('runner launcher service', () => {
     });
     expect(r.statusCode).toBe(201);
     const id = r.json().id as string;
-    expect(engine.files.get(id)).toEqual([{ path: '/tmp/qa-cases.json', content: cases }]);
+    expect(engine.files.get(id)).toBeUndefined();
+    const env = (engine.created[0]!.body as { Env: string[] }).Env;
+    expect(env.some((e) => e.startsWith('QA_CASES_PARTS='))).toBe(true);
+    expect(env.some((e) => e.startsWith('QA_CASES_P0='))).toBe(true);
+    expect(env.some((e) => e.startsWith('QA_CASES_FILE='))).toBe(false);
     expect([...engine.containers.values()][0]!.state.status).toBe('running');
   });
 

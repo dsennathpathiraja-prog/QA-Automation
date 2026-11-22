@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { LABEL, PlatformError, containerName, requireConflict, stateOf, toDockerCreateBody, validateRunnerSpec, type ContainerEngine, type ContainerState, type RunnerSpec, type TranslateOptions } from '@qa/domain';
+import { LABEL, PlatformError, containerName, materializeInlineFilesToEnv, requireConflict, stateOf, toDockerCreateBody, validateRunnerSpec, type ContainerEngine, type ContainerState, type RunnerSpec, type TranslateOptions } from '@qa/domain';
 
 export interface LauncherDeps {
   engine: ContainerEngine;
@@ -72,9 +72,19 @@ export function buildLauncherApp(deps: LauncherDeps): FastifyInstance {
   });
 
   app.post('/v1/runners', async (req, reply) => {
-    const spec = req.body as RunnerSpec;
-    const problems = validateRunnerSpec(spec);
+    const raw = req.body as RunnerSpec;
+    const problems = validateRunnerSpec(raw);
     if (problems.length > 0) return reply.code(400).send(err('validation', 'invalid runner spec', { problems }));
+    // Convert inlineFiles → chunked env (avoid Docker put-archive 400 on ReadonlyRootfs /tmp before start).
+    let spec: RunnerSpec;
+    try {
+      spec = materializeInlineFilesToEnv(raw);
+    } catch (e) {
+      if (e instanceof PlatformError) return reply.code(400).send(err(e.errorClass, e.message));
+      throw e;
+    }
+    const after = validateRunnerSpec(spec);
+    if (after.length > 0) return reply.code(400).send(err('validation', 'invalid runner spec after materializing inlineFiles', { problems: after }));
     if (!deps.allowedImagePrefixes.some((p) => spec.image.startsWith(p))) {
       return reply.code(403).send(err('denied', 'image registry is not approved for runners'));
     }
@@ -97,10 +107,6 @@ export function buildLauncherApp(deps: LauncherDeps): FastifyInstance {
       const c = await deps.engine.inspect(name);
       if (!c) throw e;
       return reply.code(200).send({ id: c.id, runId: spec.runId, startedAt: (c.startedAt ?? new Date()).toISOString() });
-    }
-    if (spec.inlineFiles && spec.inlineFiles.length > 0) {
-      if (!deps.engine.putFiles) throw new PlatformError('internal', 'This launcher cannot inject runner input files.');
-      await deps.engine.putFiles(id, spec.inlineFiles);
     }
     await deps.engine.start(id);
     return reply.code(201).send({ id, runId: spec.runId, startedAt: new Date().toISOString() });
