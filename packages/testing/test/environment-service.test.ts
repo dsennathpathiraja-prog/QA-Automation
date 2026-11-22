@@ -59,4 +59,19 @@ describe('environments', () => {
     await s.service.remove(actor, created.id);
     await expect(s.service.get(created.id)).rejects.toMatchObject({ errorClass: 'not-found' });
   });
+
+  it('stores and clears an optional template preview URL on the same approved host rules', async () => {
+    const s = setup();
+    await s.hosts.add({ hostPattern: 'qa.shop.example', purpose: 'application', internal: false, allowHttp: false });
+    await s.hosts.add({ hostPattern: 'email-preview-fixture', purpose: 'application', internal: true, allowHttp: true });
+    const created = await s.service.create(actor, {
+      name: 'QA',
+      kind: 'qa',
+      applicationUrl: 'https://qa.shop.example/shop',
+      templatePreviewUrl: 'http://email-preview-fixture/',
+    });
+    expect(created.templatePreviewUrl).toBe('http://email-preview-fixture/');
+    const cleared = await s.service.update(actor, created.id, { templatePreviewUrl: '' });
+    expect(cleared.templatePreviewUrl).toBeUndefined();
+  });
 });

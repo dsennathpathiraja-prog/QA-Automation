@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Escrow notification email preview</title>
+  <style>
+    body { font-family: Georgia, serif; margin: 0; background: #f3f4f6; color: #111; }
+    .email-preview { max-width: 640px; margin: 2rem auto; background: #fff; padding: 1.5rem 2rem; border: 1px solid #d1d5db; }
+    h1 { font-size: 1.15rem; margin: 0 0 1rem; }
+    .subject { font-weight: 700; margin-bottom: 1rem; }
+    .greeting { margin-bottom: 0.75rem; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #e5e7eb; }
+    .cta { display: inline-block; margin: 1rem 0; padding: 0.6rem 1rem; background: #0f766e; color: #fff; text-decoration: none; }
+    footer { margin-top: 1.5rem; font-size: 0.85rem; color: #4b5563; }
+  </style>
+</head>
+<body>
+  <main class="email-preview" data-testid="email-preview">
+    <h1>Escrow notification template</h1>
+    <p class="subject" data-testid="email-subject">Your amount has been held in escrow.</p>
+    <p class="greeting" data-testid="email-greeting">Hi Alex Customer,</p>
+    <p class="main-message">Your payment is held in escrow until you confirm delivery.</p>
+    <table data-testid="order-details">
+      <thead>
+        <tr><th>Field</th><th>Value</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Order ID</td><td>ORD-2357</td></tr>
+        <tr><td>Merchant</td><td>Metro Mobile</td></tr>
+        <tr><td>Paid Amount</td><td>$42.00</td></tr>
+      </tbody>
+    </table>
+    <a class="cta" href="#confirm" data-testid="confirm-delivery">Confirm Delivery</a>
+    <footer>
+      <p>support@paynsure.com</p>
+      <p>© PayNSure Escrow</p>
+    </footer>
+  </main>
+</body>
+</html>

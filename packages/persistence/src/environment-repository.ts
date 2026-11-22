@@ -18,6 +18,7 @@ const toRecord = (r: Row): EnvironmentRecord => ({
   name: r.name,
   kind: r.kind as EnvironmentKind,
   applicationUrl: r.applicationUrl,
+  ...(r.templatePreviewUrl ? { templatePreviewUrl: r.templatePreviewUrl } : {}),
   browser: r.browserConfig as unknown as EnvironmentBrowser,
   restrictions: r.executionRestrictions as unknown as EnvironmentRestrictions,
   enabled: r.enabled,
@@ -50,6 +51,7 @@ export class PgEnvironmentRepository implements EnvironmentRepository {
           name: n.name,
           kind: n.kind,
           applicationUrl: n.applicationUrl,
+          templatePreviewUrl: n.templatePreviewUrl || null,
           browserConfig: n.browser as unknown as Record<string, unknown>,
           executionRestrictions: n.restrictions as unknown as Record<string, unknown>,
           enabled: n.enabled,
@@ -67,6 +69,11 @@ export class PgEnvironmentRepository implements EnvironmentRepository {
     if (patch.name !== undefined) set.name = patch.name;
     if (patch.kind !== undefined) set.kind = patch.kind;
     if (patch.applicationUrl !== undefined) set.applicationUrl = patch.applicationUrl;
+    if (patch.templatePreviewUrl !== undefined) {
+      set.templatePreviewUrl = patch.templatePreviewUrl && String(patch.templatePreviewUrl).trim()
+        ? String(patch.templatePreviewUrl).trim()
+        : null;
+    }
     if (patch.browser !== undefined) set.browserConfig = patch.browser as unknown as Record<string, unknown>;
     if (patch.restrictions !== undefined) set.executionRestrictions = patch.restrictions as unknown as Record<string, unknown>;
     if (patch.enabled !== undefined) set.enabled = patch.enabled;

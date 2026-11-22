@@ -224,6 +224,7 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         workItemTitle: input.workItemTitle,
         application: input.application,
         environmentUrl: input.url,
+        templatePreviewUrl: input.templatePreviewUrl,
         analysis,
       });
       const templateStory = analysis.notificationTemplate
@@ -234,7 +235,9 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         ? input.scenarios.map((s) => s.name)
         : templateStory
           ? [
-            'Explore: escrow notification template / email preview',
+            binding.primarySurfaceUrl
+              ? 'Explore: escrow notification template / email preview (configured)'
+              : 'Explore: escrow notification template / email preview',
             ...(analysis.surfaces.some((s) => /checkout|order placement/i.test(s))
               ? ['Explore: checkout order trigger (secondary)']
               : []),
@@ -243,7 +246,7 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
       const details: ExploreFinding[] = [];
       const probes: Array<DomProbeResult | undefined> = [];
       const probeErrors: Array<string | undefined> = [];
-      // Prefer a WI-bound primary URL when known; otherwise the environment app root.
+      // Prefer WI / configured template preview primary; otherwise the environment app root.
       const startUrl = binding.primarySurfaceUrl || input.url;
       // One primary capture is enough when we only have a single environment URL; avoid
       // repeating identical snapshots once per AC label on the same shop page.
@@ -475,9 +478,15 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
       let relevant = true;
       let blockingGap = false;
       if (templateStory && shopOnly && !templateMatch) {
-        warning = 'Blocking explore gap: only the shop/catalog surface was reachable; escrow notification email template / preview was not found. Do not treat catalog snapshots as email-field evidence — cases for those ACs must be Blocked (needs-surface), not Passed.';
+        warning = binding.templatePreviewUrl
+          ? `Blocking explore gap: configured template preview ${binding.templatePreviewUrl} was not reachable as a template surface; only shop/catalog was found. Cases for email ACs must be Blocked (needs-surface), not Passed.`
+          : 'Blocking explore gap: only the shop/catalog surface was reachable; escrow notification email template / preview was not found. Configure an environment Template preview URL (or QA_TEMPLATE_PREVIEW_URL). Do not treat catalog snapshots as email-field evidence — cases for those ACs must be Blocked (needs-surface), not Passed.';
         relevant = false;
         blockingGap = true;
+      } else if (templateStory && templateMatch) {
+        warning = '';
+        relevant = true;
+        blockingGap = false;
       } else if (duplicate && unique.length <= 1) {
         warning = 'Explore UI: near-duplicate same-URL snapshots across targets — counted as one surface, not distinct AC evidence.';
         relevant = !templateStory;
@@ -491,11 +500,15 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         findingsBody,
         `\n- Story surface binding: kind=${binding.surfaceKind}`
           + (primarySurfaceUrl ? `; primary=${primarySurfaceUrl}` : '; primary=(unbound)')
+          + (binding.templatePreviewUrl ? `; templatePreview=${binding.templatePreviewUrl}` : '')
           + (binding.candidateRoutes.length
             ? `; candidates=${binding.candidateRoutes.slice(0, 6).join(',')}`
             : ''),
         warning ? `\n- Explore coverage warning: ${warning}` : '',
         blockingGap ? '\n- Blocking explore gap: true (fail closed — no Passed on mismatched surface)' : '',
+        !blockingGap && templateMatch
+          ? '\n- Template preview surface reached: true (assert subject/greeting/table/CTA/Paid Amount from WI)'
+          : '',
         templateStory && analysis.searchTerms.length
           ? `\n- Story search terms (for template surfaces): ${analysis.searchTerms.slice(0, 8).join(', ')}`
           : '',
@@ -504,7 +517,9 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
       const urlList = (visitedUrls.length > 0 ? visitedUrls : [input.url]).join(', ');
       const summary = warning
         ? `Visited ${urlList} (${unique.length} distinct surface${unique.length === 1 ? '' : 's'}) for ${input.application} before planning. ${warning}`
-        : `Visited ${urlList} (${unique.length} page snapshot${unique.length === 1 ? '' : 's'}) for ${input.application} before planning.`;
+        : templateMatch
+          ? `Visited ${urlList} (${unique.length} page snapshot${unique.length === 1 ? '' : 's'}) for ${input.application} — notification/template preview surface reached.`
+          : `Visited ${urlList} (${unique.length} page snapshot${unique.length === 1 ? '' : 's'}) for ${input.application} before planning.`;
       return {
         summary,
         findings,
@@ -515,6 +530,7 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         blockingGap,
         surfaceKind: binding.surfaceKind,
         primarySurfaceUrl,
+        ...(binding.templatePreviewUrl ? { templatePreviewUrl: binding.templatePreviewUrl } : {}),
         candidateRoutes: binding.candidateRoutes,
       };
     },

@@ -81,6 +81,53 @@ describe('browser explorer', () => {
     expect(calls).toEqual(['open', 'nav:https://shop.example.com/pay', 'close']);
   });
 
+  it('targets configured template preview URL and clears blockingGap when template DOM is reached', async () => {
+    const navigated: string[] = [];
+    const previewTree = `
+### Page state
+- Page URL: http://email-preview-fixture/
+- Page Title: Escrow notification email preview
+- Page Snapshot:
+\`\`\`yaml
+- heading "Escrow notification template" [ref=e1]
+- text: "Your amount has been held in escrow."
+- text: "Hi Alex Customer,"
+- table [ref=e2]:
+  - row "Paid Amount $42.00"
+- link "Confirm Delivery" [ref=e3]
+\`\`\`
+`;
+    const browser: BrowserAutomationPort = {
+      async openSession() {},
+      async navigate(url) {
+        navigated.push(url);
+        return { finalUrl: url, accessibilityTree: previewTree, title: 'Escrow notification email preview' };
+      },
+      async snapshot() {
+        return { accessibilityTree: previewTree, url: navigated[navigated.length - 1] || 'http://email-preview-fixture/', title: 'Escrow notification email preview' };
+      },
+      async screenshot() { return { artifactBase64: '' }; },
+      async closeSession() {},
+    };
+    const out = await createBrowserExplorer(browser).explore({
+      application: 'PayNSure',
+      url: 'http://sdk.paynsure.internal/shop',
+      templatePreviewUrl: 'http://email-preview-fixture/',
+      workItemTitle: 'Order Amount Placement in Escrow Notification Template',
+      story: '2357\nOrder Amount Placement in Escrow Notification Template\nEmail subject: held in escrow\nGreeting: Hi [Customer Name],\nPaid Amount',
+      criteria: ['Greeting', 'Paid Amount'],
+      scenarios: [],
+      maxPages: 2,
+    });
+    expect(navigated[0]).toBe('http://email-preview-fixture/');
+    expect(out.surfaceKind).toBe('template');
+    expect(out.blockingGap).toBe(false);
+    expect(out.relevant).toBe(true);
+    expect(out.primarySurfaceUrl).toBe('http://email-preview-fixture/');
+    expect(out.summary).toMatch(/template preview surface reached/i);
+    expect(out.findings).toMatch(/Template preview surface reached|templatePreview=/i);
+  });
+
   it('marks blockingGap when a notification-template WI only reaches shop/catalog', async () => {
     const navigated: string[] = [];
     const shopTree = `

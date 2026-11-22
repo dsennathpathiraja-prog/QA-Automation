@@ -355,16 +355,25 @@ export function planHeuristically(input: PlanRequest): PlanResult {
     workItemTitle,
     application: input.application,
     environmentUrl: input.environmentUrl,
+    templatePreviewUrl: input.templatePreviewUrl,
   });
+  // Preview configured + explore already matched template → not a blocking gap.
+  const templateReached = Boolean(
+    coverage.primarySurfaceUrl
+    || (binding.primarySurfaceUrl && !coverage.shopSurface && coverage.kind === 'strong')
+    || /Template preview surface reached|templatePreview=/i.test(input.findings || ''),
+  );
   const blockingGap = coverage.blockingGap
-    || (coverage.templateWorkItem && coverage.shopSurface);
+    || (coverage.templateWorkItem && coverage.shopSurface && !templateReached);
   const exploreWarning = [
     coverage.warning,
     blockingGap
-      ? 'Template/email scenarios will be Blocked (needs-surface) until a matching preview/template URL is reachable — shop catalog is not successful coverage.'
-      : weakExplore && storySeeds.length > 0
-        ? 'Scenarios grounded in work item story/AC; weak shop explore was not used to invent catalog cases.'
-        : '',
+      ? 'Template/email scenarios will be Blocked (needs-surface) until a matching preview/template URL is reachable — shop catalog is not successful coverage. Set environment Template preview URL or QA_TEMPLATE_PREVIEW_URL.'
+      : templateReached && coverage.templateWorkItem
+        ? 'Notification/template preview surface reached — scenarios assert subject/greeting/table/CTA/Paid Amount from the WI.'
+        : weakExplore && storySeeds.length > 0
+          ? 'Scenarios grounded in work item story/AC; weak shop explore was not used to invent catalog cases.'
+          : '',
   ].filter(Boolean).join(' ');
   const planMarkdown = renderPlanMarkdown(sliced, {
     workItem: input.workItem,
@@ -414,9 +423,15 @@ export function generateHeuristically(input: GenerateRequest): GenerateResult {
     criteria: input.scenarios.map((s) => s.criterion),
     application: input.application,
     environmentUrl: input.environmentUrl,
+    templatePreviewUrl: input.templatePreviewUrl,
   });
+  const templateReached = Boolean(
+    coverage.primarySurfaceUrl
+    || (binding.primarySurfaceUrl && coverage.kind === 'strong' && !coverage.shopSurface)
+    || /Template preview surface reached|templatePreview=/i.test(input.findings || ''),
+  );
   const blockingGap = coverage.blockingGap
-    || (coverage.templateWorkItem && coverage.shopSurface);
+    || (coverage.templateWorkItem && coverage.shopSurface && !templateReached);
   const cases: GeneratedPlaywrightCase[] = input.scenarios.slice(0, MAX_GENERATED_CASES).map((scenario, index) => {
     const testId = `${work}-${scenario.kind}-${index + 1}`;
     const file = `tests/${application}/${work}.spec.js`;

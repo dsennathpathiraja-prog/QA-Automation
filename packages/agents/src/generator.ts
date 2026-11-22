@@ -84,9 +84,15 @@ export function createLlmTestGenerator(gateway: LlmGateway | undefined): TestGen
         criteria: scenarios.map((s) => s.criterion),
         application: input.application,
         environmentUrl: input.environmentUrl,
+        templatePreviewUrl: input.templatePreviewUrl,
       });
+      const templateReached = Boolean(
+        coverage.primarySurfaceUrl
+        || (binding.primarySurfaceUrl && coverage.kind === 'strong' && !coverage.shopSurface)
+        || /Template preview surface reached|templatePreview=/i.test(input.findings || ''),
+      );
       const blockingGap = coverage.blockingGap
-        || (coverage.templateWorkItem && coverage.shopSurface);
+        || (coverage.templateWorkItem && coverage.shopSurface && !templateReached);
       const planText = input.planMarkdown?.trim()
         || scenarios.map((s, i) => `${i + 1}. [${s.kind}/${s.priority}] ${s.name}\n   criterion: ${s.criterion}\n   steps: ${s.steps}\n   expected: ${s.expected}`).join('\n');
       const result = await gateway.generateStructured(

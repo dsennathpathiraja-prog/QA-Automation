@@ -51,6 +51,8 @@ export interface PlanRequest {
   findings?: string;
   /** Environment application URL used during Explore (for surface binding). */
   environmentUrl?: string;
+  /** Optional notification/email template preview URL from environment settings. */
+  templatePreviewUrl?: string;
   executionId?: string;
   stepId?: string;
 }
@@ -84,6 +86,8 @@ export interface GenerateRequest {
   /** Full story blob for surface binding when findings are weak. */
   story?: string;
   environmentUrl?: string;
+  /** Optional notification/email template preview URL from environment settings. */
+  templatePreviewUrl?: string;
   executionId?: string;
   stepId?: string;
 }
@@ -123,6 +127,11 @@ export interface ExploreRequest {
   /** Absolute URL the browser may open (must be on the connector allowlist). */
   url?: string;
   environment?: string;
+  /**
+   * Optional notification/email template preview URL (environment setting or
+   * `QA_TEMPLATE_PREVIEW_URL`). When set for template WIs, Explore starts here.
+   */
+  templatePreviewUrl?: string;
   /** Work item title — used with story to decide template vs shop surfaces. */
   workItemTitle?: string;
   /** Full story blob for story-driven explore targets. */
@@ -163,8 +172,10 @@ export interface ExploreResult {
   /** True when only a mismatched surface was reached (e.g. shop for email template WI). */
   blockingGap?: boolean;
   surfaceKind?: SurfaceKind;
-  /** Primary validation URL when known from WI or a matching explore hit. */
+  /** Primary validation URL when known from WI, env preview, or a matching explore hit. */
   primarySurfaceUrl?: string;
+  /** Configured template preview URL when present. */
+  templatePreviewUrl?: string;
   /** Candidate routes tried / suggested beyond the environment root. */
   candidateRoutes?: string[];
 }

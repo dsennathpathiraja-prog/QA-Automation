@@ -1,0 +1,32 @@
+# Optional local fixture host for Phase 8 E2 (notification/email template preview).
+# Serves deploy/compose/local/fixtures/email-preview at http://email-preview-fixture/
+#
+# PowerShell:
+#   $env:QA_TEMPLATE_PREVIEW_URL = "http://email-preview-fixture/"
+#   docker compose -f deploy/compose/local/docker-compose.local.yml `
+#     -f deploy/compose/local/docker-compose.email-preview.yml `
+#     --profile email-preview up -d --build
+#
+# Then set the environment Template preview URL (or leave QA_TEMPLATE_PREVIEW_URL on the worker)
+# and approve host `email-preview-fixture` for plain http on the Playwright connector allowlist.
+services:
+  email-preview-fixture:
+    profiles: [email-preview]
+    image: nginx:1.27-alpine
+    hostname: email-preview-fixture
+    networks:
+      default:
+        aliases: [email-preview-fixture]
+    volumes:
+      - ./fixtures/email-preview:/usr/share/nginx/html:ro
+    expose: ["80"]
+    ports: ["127.0.0.1:${EMAIL_PREVIEW_HOST_PORT:-8099}:80"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    environment:
+      QA_TEMPLATE_PREVIEW_URL: ${QA_TEMPLATE_PREVIEW_URL:-http://email-preview-fixture/}

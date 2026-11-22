@@ -261,6 +261,17 @@ const loop = new WorkerLoop({
                 return row?.applicationUrl;
               }
               : undefined,
+            resolveTemplatePreviewUrl: environments
+              ? async (id) => {
+                const row = await environments.get(id);
+                const fromEnv = typeof row?.templatePreviewUrl === 'string' ? row.templatePreviewUrl.trim() : '';
+                const fromProcess = (process.env.QA_TEMPLATE_PREVIEW_URL || '').trim();
+                return fromEnv || fromProcess || undefined;
+              }
+              : async () => {
+                const fromProcess = (process.env.QA_TEMPLATE_PREVIEW_URL || '').trim();
+                return fromProcess || undefined;
+              },
           },
         );
         if (step.type !== 'rv.publish-testcases' || !testCases) return result;

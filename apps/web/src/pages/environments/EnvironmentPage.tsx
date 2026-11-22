@@ -102,8 +102,13 @@ function General({ env }: { env: EnvironmentDetail }) {
   const qc = useQueryClient();
   const [name, setName] = useState(env.name);
   const [applicationUrl, setApplicationUrl] = useState(env.applicationUrl);
+  const [templatePreviewUrl, setTemplatePreviewUrl] = useState(env.templatePreviewUrl ?? '');
   const save = useMutation({
-    mutationFn: () => api.patch(`/api/v1/environments/${env.id}`, { name, applicationUrl }, EnvironmentDetailSchema),
+    mutationFn: () => api.patch(
+      `/api/v1/environments/${env.id}`,
+      { name, applicationUrl, templatePreviewUrl: templatePreviewUrl.trim() || '' },
+      EnvironmentDetailSchema,
+    ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['environment', env.id] }),
   });
   const toggle = useMutation({
@@ -116,10 +121,27 @@ function General({ env }: { env: EnvironmentDetail }) {
   return (
     <Card label="General">
       <p className="font-mono text-sm">{env.applicationUrl}</p>
+      {env.templatePreviewUrl && (
+        <p className="mt-1 font-mono text-xs text-slate-600 dark:text-slate-300">Template preview: {env.templatePreviewUrl}</p>
+      )}
       {manage ? (
         <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
           <Field id="g-name" label="Name"><input id="g-name" required className={fieldClass} value={name} onChange={(e) => setName(e.target.value)} /></Field>
           <Field id="g-url" label="Application URL"><input id="g-url" required type="url" className={fieldClass} value={applicationUrl} onChange={(e) => setApplicationUrl(e.target.value)} /></Field>
+          <Field id="g-preview" label="Template preview URL (optional)">
+            <input
+              id="g-preview"
+              type="url"
+              className={fieldClass}
+              value={templatePreviewUrl}
+              placeholder="https://…/email-preview (escrow/notification stories)"
+              onChange={(e) => setTemplatePreviewUrl(e.target.value)}
+            />
+          </Field>
+          <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+            For email/notification template work items. Leave blank to keep Explore fail-closed on shop-only hosts.
+            Local override: <span className="font-mono">QA_TEMPLATE_PREVIEW_URL</span>.
+          </p>
           <div className="mt-3 flex gap-2">
             <button type="submit" className={primaryButtonClass}>Save general settings</button>
             <button type="button" className={buttonClass} onClick={() => toggle.mutate()}>{env.enabled ? 'Disable' : 'Enable'}</button>
