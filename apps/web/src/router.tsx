@@ -17,6 +17,7 @@ import { TestCasePage, TestCases, TestCollectionPage } from './pages/TestCases';
 import { Workflows } from './pages/Workflows';
 import { WorkflowPage } from './pages/workflows/WorkflowPage';
 import { IdentityMapping } from './pages/IdentityMapping';
+import { AutomationMapping } from './pages/AutomationMapping';
 import { SignInError } from './pages/SignInError';
 
 function Guarded({ item, children }: { item: NavItem; children?: ReactNode }) {
@@ -34,7 +35,7 @@ const NotFound = () => (
   </>
 );
 
-const real: Record<string, () => ReactNode> = { dashboard: () => <Dashboard />, workflows: () => <Workflows />, executions: () => <Executions />, 'test-cases': () => <TestCases />, connectors: () => <Connectors />, environments: () => <Environments />, identity: () => <IdentityMapping />, hosts: () => <ApprovedHosts />, models: () => <AiModels /> };
+const real: Record<string, () => ReactNode> = { dashboard: () => <Dashboard />, workflows: () => <Workflows />, executions: () => <Executions />, 'test-cases': () => <TestCases />, automation: () => <AutomationMapping />, connectors: () => <Connectors />, environments: () => <Environments />, identity: () => <IdentityMapping />, hosts: () => <ApprovedHosts />, models: () => <AiModels /> };
 
 export interface RouterOptions {
   history?: Parameters<typeof createRouter>[0]['history'];

@@ -59,8 +59,52 @@ describe('route guard', () => {
     expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeTruthy();
   });
 
-  it('placeholder pages say which phase delivers them', async () => {
-    renderApp('/automation', { me: { status: 200, body: meFor('qa_lead') } });
+  it('Automation Mapping lists Squash↔script rows and can resolve a case id', async () => {
+    renderApp('/automation', {
+      me: { status: 200, body: meFor('qa_lead') },
+      routes: {
+        '/api/v1/automation/mappings': {
+          status: 200,
+          body: {
+            items: [{
+              id: 'm1',
+              squashCaseId: '238',
+              squashReference: 'QAP-7259-1',
+              assetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+              assetKey: 'QAP-7259-1',
+              assetName: 'Positive: checkout',
+              scriptPath: 'tests/app/7259.spec.js',
+              status: 'draft',
+              updatedAt: '2026-11-22T10:00:00.000Z',
+            }],
+          },
+        },
+        '/api/v1/automation/resolve?squashCaseId=238': {
+          status: 200,
+          body: {
+            squashCaseId: '238',
+            squashReference: 'QAP-7259-1',
+            assetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            assetKey: 'QAP-7259-1',
+            assetName: 'Positive: checkout',
+            scriptPath: 'tests/app/7259.spec.js',
+            status: 'draft',
+            approved: false,
+          },
+        },
+      },
+    });
+    expect(await screen.findByRole('heading', { name: 'Automation Mapping' })).toBeTruthy();
+    expect(await screen.findByText('238')).toBeTruthy();
+    expect(screen.getByText('tests/app/7259.spec.js')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy();
+    await userEvent.type(screen.getByLabelText('Squash case id'), '238');
+    await userEvent.click(screen.getByRole('button', { name: 'Resolve' }));
+    expect(await screen.findByText(/Squash 238 → asset/)).toBeTruthy();
+  });
+
+  it('Evidence placeholder still names Phase 8', async () => {
+    renderApp('/evidence', { me: { status: 200, body: meFor('qa_lead') } });
     expect(await screen.findByText(/Phase 8/)).toBeTruthy();
   });
 

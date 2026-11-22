@@ -11,7 +11,7 @@ import {
   type ValidationStep,
 } from '@qa/agents';
 import { PlatformError } from '@qa/domain';
-import type { TestCaseService } from '@qa/application';
+import type { AutomationService, TestCaseService } from '@qa/application';
 
 /** Generated case shape after publish mapping (matches the case template). */
 export interface GeneratedCase {
@@ -47,6 +47,8 @@ export async function publishGeneratedCases(input: {
   cases: GeneratedCase[];
   testCases: TestCaseService;
   squash?: (item: GeneratedCase, upsert: ReturnType<typeof toSquashUpsertInput>) => Promise<SquashResult>;
+  /** When set, each Squash-stored case seeds a draft automation asset + Squash↔script mapping (Phase 8 E6). */
+  automation?: AutomationService;
   /** Acceptance criteria for AC coverage warnings (from Read story / plan). */
   criteria?: string[];
   scenarios?: PlannerScenario[];
@@ -67,6 +69,7 @@ export async function publishGeneratedCases(input: {
   let projectId = '';
   let squashError = '';
   let needsSurfaceCount = 0;
+  let mapped = 0;
   for (const item of input.cases) {
     let squashId = '';
     const needsSurface = item.runStatus === 'Blocked'
@@ -104,7 +107,7 @@ export async function publishGeneratedCases(input: {
       ? `[${NEEDS_SURFACE_TAG}] Blocked — explore surface gap${item.surfaceKind ? ` (expected ${item.surfaceKind})` : ''}${item.primarySurfaceUrl ? `; primary ${item.primarySurfaceUrl}` : ''}`
       : '';
     const baseSummary = squashId ? `Squash ${squashId}` : item.reference;
-    await input.testCases.fileUnderWorkItem(
+    const filed = await input.testCases.fileUnderWorkItem(
       { id: 'worker' },
       {
         name: upsert.name,
@@ -117,6 +120,25 @@ export async function publishGeneratedCases(input: {
         priority: item.priority,
       },
     );
+    if (input.automation && squashId) {
+      try {
+        await input.automation.seedFromPublish(
+          { id: 'worker' },
+          {
+            key: item.reference,
+            name: upsert.name,
+            scriptPath: item.file || `tests/generated/${item.reference}.spec.js`,
+            scriptBody: item.steps,
+            testCaseId: filed.id,
+            squashCaseId: squashId,
+            squashReference: item.reference,
+          },
+        );
+        mapped += 1;
+      } catch {
+        // Mapping seed must not fail publish; resolve stays empty until register/approve via API.
+      }
+    }
   }
   const count = input.cases.length;
   const noun = `test case${count === 1 ? '' : 's'}`;
@@ -127,7 +149,8 @@ export async function publishGeneratedCases(input: {
   const coverageNote = acGaps > 0
     ? ` Quality gate: ${acGaps} AC coverage gap${acGaps === 1 ? '' : 's'} flagged (publish allowed).`
     : ' Quality gate: ok.';
-  const kept = `Stored ${count} ${noun} for ${workItem} under that work item${gapNote}${coverageNote}`;
+  const mapNote = mapped > 0 ? ` Seeded ${mapped} draft automation mapping${mapped === 1 ? '' : 's'}.` : '';
+  const kept = `Stored ${count} ${noun} for ${workItem} under that work item${gapNote}${coverageNote}${mapNote}`;
   if (!input.squash) return { summary: `${kept} in Test Cases. No Squash connector is selected on this workflow.`, quality };
   if (squashError && squashIds.length === 0) return { summary: `${kept} in Test Cases. Squash did not store them: ${squashError}`, quality };
   if (squashError) return { summary: `${kept} in Test Cases. Squash stored ${squashIds.length} and then stopped: ${squashError}`, quality };

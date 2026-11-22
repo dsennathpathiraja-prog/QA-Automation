@@ -538,6 +538,46 @@ export const testCollectionCase = pgTable(
   (t) => [primaryKey({ columns: [t.collectionId, t.testCaseId] })],
 );
 
+/* ---------- automation assets (Phase 8 E6 regression seed) ---------- */
+
+export const automationAsset = pgTable(
+  'automation_asset',
+  {
+    id: id(),
+    key: text('key').notNull(),
+    name: text('name').notNull(),
+    scriptPath: text('script_path').notNull(),
+    scriptBody: text('script_body').notNull().default(''),
+    status: text('status').notNull().default('draft'),
+    testCaseId: uuid('test_case_id'),
+    approvedBy: text('approved_by'),
+    approvedAt: ts('approved_at'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('automation_asset_key_uq').on(t.key),
+    index('automation_asset_status_idx').on(t.status),
+    check('automation_asset_status_ck', sql`${t.status} in ('draft','approved')`),
+  ],
+);
+
+export const automationMapping = pgTable(
+  'automation_mapping',
+  {
+    id: id(),
+    squashCaseId: text('squash_case_id').notNull(),
+    squashReference: text('squash_reference').notNull().default(''),
+    assetId: uuid('asset_id').notNull(),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('automation_mapping_squash_uq').on(t.squashCaseId),
+    index('automation_mapping_asset_idx').on(t.assetId),
+  ],
+);
+
 /* ---------- governance ---------- */
 
 /** Append-only hash chain. Writers serialise through an advisory lock so seq and prev_hash never fork. */
