@@ -386,3 +386,56 @@ export const ValidateEnvironmentRequest = z.object({
   parallelism: z.number().optional(),
   prodSafe: z.boolean().optional(),
 });
+
+/** Phase 8 E6 — draft→approved automation assets + Squash ↔ platform script mapping. */
+export const AutomationAssetStatusSchema = z.enum(['draft', 'approved']);
+export const AutomationAssetSchema = z.object({
+  id: z.string(),
+  key: z.string(),
+  name: z.string(),
+  scriptPath: z.string(),
+  scriptBody: z.string(),
+  status: AutomationAssetStatusSchema,
+  testCaseId: z.string().optional(),
+  approvedBy: z.string().optional(),
+  approvedAt: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export const AutomationAssetListResponse = z.object({ items: z.array(AutomationAssetSchema) });
+export const RegisterAutomationAssetRequest = z.object({
+  key: z.string().min(1),
+  name: z.string().min(1),
+  scriptPath: z.string().min(1),
+  scriptBody: z.string().optional(),
+  testCaseId: z.string().optional(),
+  squashCaseId: z.string().optional(),
+  squashReference: z.string().optional(),
+});
+export const AutomationMappingSchema = z.object({
+  id: z.string(),
+  squashCaseId: z.string(),
+  squashReference: z.string(),
+  assetId: z.string(),
+  assetKey: z.string(),
+  assetName: z.string(),
+  scriptPath: z.string(),
+  status: AutomationAssetStatusSchema,
+  updatedAt: z.string(),
+});
+export const AutomationMappingListResponse = z.object({ items: z.array(AutomationMappingSchema) });
+export const CreateAutomationMappingRequest = z.object({
+  squashCaseId: z.string().min(1),
+  squashReference: z.string().optional(),
+  assetId: z.string().min(1),
+});
+export const AutomationResolveResponse = z.object({
+  squashCaseId: z.string(),
+  squashReference: z.string(),
+  assetId: z.string(),
+  assetKey: z.string(),
+  assetName: z.string(),
+  scriptPath: z.string(),
+  status: AutomationAssetStatusSchema,
+  approved: z.boolean(),
+});

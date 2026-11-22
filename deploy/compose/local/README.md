@@ -206,6 +206,18 @@ Local default `RUNNER_MAX_CONCURRENT` is **8** (never treat `0` as a valid limit
 
 Optional browser MCP (Explore UI / connector Test connection) still uses `--profile browser` — that is separate from Executions screenshots.
 
+## Automation Mapping (Phase 8 E6 Regression seed)
+
+After cases are published to Squash, the worker seeds a **draft** automation asset and Squash↔script mapping. Open **Automation Mapping** (QA Lead / Engineer), **Approve** a draft, then **Resolve** a Squash case id — or call `GET /api/v1/automation/resolve?squashCaseId=<id>`. Details: [`docs/phase8-e6-regression-seed.md`](../../../docs/phase8-e6-regression-seed.md).
+
+PowerShell-safe check:
+
+```powershell
+pnpm check
+docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
+# Sign in as trial-lead → Automation Mapping → Approve → Resolve
+```
+
 ## Stop or reset
 
 ```

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { TestCaseService } from '@qa/application';
-import { InMemoryAuditSink, InMemoryTestCaseRepository } from '@qa/testing';
+import { AutomationService, TestCaseService } from '@qa/application';
+import { InMemoryAuditSink, InMemoryAutomationRepository, InMemoryTestCaseRepository } from '@qa/testing';
 import { publishGeneratedCases } from '../src/publish-cases';
 
 const cases = [{
@@ -141,5 +141,26 @@ describe('publishGeneratedCases', () => {
     expect(out.summary).toMatch(/Quality gate/);
     expect(out.quality?.needsSurfaceCount).toBe(1);
     expect(out.quality?.ok).toBe(true);
+  });
+
+  it('seeds a draft automation mapping when Squash stores a case', async () => {
+    const testCases = new TestCaseService({ cases: new InMemoryTestCaseRepository(), audit: new InMemoryAuditSink() });
+    const automation = new AutomationService({ automation: new InMemoryAutomationRepository(), audit: new InMemoryAuditSink() });
+    const out = await publishGeneratedCases({
+      workItem: '7259',
+      cases,
+      testCases,
+      automation,
+      squash: async () => ({ id: '42', created: true, projectId: '7' }),
+    });
+    expect(out.summary).toMatch(/Seeded 1 draft automation mapping/);
+    const resolved = await automation.resolveBySquashCaseId('42');
+    expect(resolved).toMatchObject({
+      squashCaseId: '42',
+      assetKey: 'QAP-7259-1',
+      scriptPath: 'tests/app/7259.spec.js',
+      status: 'draft',
+      approved: false,
+    });
   });
 });

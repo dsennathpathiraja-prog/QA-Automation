@@ -366,7 +366,7 @@ export class TestCaseService {
     reference?: string;
     kind?: TestCaseKind;
     priority?: TestCasePriority;
-  }): Promise<void> {
+  }): Promise<{ id: string }> {
     const workItem = this.summary(input.workItem ?? '');
     if (!workItem) throw new PlatformError('validation', 'A generated case needs a work item.');
     const name = this.name(input.name);
@@ -410,6 +410,7 @@ export class TestCaseService {
     }
     const collection = await this.ensureWorkItemCollection(actor, workItem.slice(0, 120));
     await this.d.cases.addCase(collection.id, id);
+    return { id };
   }
 
   async executionBoard() {

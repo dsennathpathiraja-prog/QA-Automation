@@ -18,8 +18,8 @@ import { EgressPolicy, HardenedHttpClient, OllamaAdapter, OpenAiCompatibleAdapte
 import { LlmGateway, StaticAssignmentResolver, StaticProviderRegistry, type DataClass, type LlmPort, type ProviderEntry } from '@qa/llm';
 import { SecretRedactor } from '@qa/security';
 import { tick as engineTick } from '@qa/workflow-engine';
-import { TestCaseService } from '@qa/application';
-import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgConnectorRepository, PgEnvironmentRepository, PgExecutionRepository, PgInstanceResolver, PgLlmAuditSink, PgOperationLogSink, PgRunPolicyStore, PgTestCaseRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
+import { AutomationService, TestCaseService } from '@qa/application';
+import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgAutomationRepository, PgConnectorRepository, PgEnvironmentRepository, PgExecutionRepository, PgInstanceResolver, PgLlmAuditSink, PgOperationLogSink, PgRunPolicyStore, PgTestCaseRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
 import { publishGeneratedCases, type GeneratedCase } from './publish-cases';
 import { buildWorkerApp } from './app';
 import { ConnectorTester } from './connector-tester';
@@ -111,6 +111,9 @@ function squashWriteAllowed(method: string, path: string): boolean {
 }
 const executions = conn ? new PgExecutionRepository(conn.db) : undefined;
 const testCases = conn ? new TestCaseService({ cases: new PgTestCaseRepository(conn.db), audit: new PgAuditSink(new PgAuditLog(conn.db)) }) : undefined;
+const automation = conn
+  ? new AutomationService({ automation: new PgAutomationRepository(conn.db), audit: new PgAuditSink(new PgAuditLog(conn.db)) })
+  : undefined;
 const environments = conn ? new PgEnvironmentRepository(conn.db) : undefined;
 
 const ALL_DATA_CLASSES: DataClass[] = ['story', 'code', 'page', 'screenshot', 'test-data', 'evidence'];
@@ -328,6 +331,7 @@ const loop = new WorkerLoop({
           workItem: typeof result.outputs.workItem === 'string' ? result.outputs.workItem : '',
           cases,
           testCases,
+          automation,
           criteria,
           scenarios: scenarios as PlannerScenario[] | undefined,
           planMarkdown,
