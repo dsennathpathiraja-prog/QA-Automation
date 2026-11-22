@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   findEvidenceExecutionId,
   findRegressionReport,
+  resolveReportTallies,
   talliesFromCaseResults,
   workflowRunIdFromWorkItem,
 } from '../src/pages/run-detail/helpers';
@@ -50,5 +51,15 @@ describe('run-detail helpers', () => {
       { status: 'Skipped', message: 'Not Automated: draft' },
       { status: 'Failed' },
     ])).toEqual({ passed: 1, failed: 1, blocked: 0, skipped: 1, notAutomated: 1 });
+  });
+
+  it('falls back to board counts when case results are absent', () => {
+    expect(resolveReportTallies({
+      counts: { passed: 130, failed: 0, blocked: 0, skipped: 0 },
+    })).toEqual({ passed: 130, failed: 0, blocked: 0, skipped: 0, notAutomated: 0 });
+    expect(resolveReportTallies({
+      results: [{ status: 'Failed', message: 'x' }],
+      counts: { passed: 130, failed: 0, blocked: 0, skipped: 0 },
+    })).toEqual({ passed: 0, failed: 1, blocked: 0, skipped: 0, notAutomated: 0 });
   });
 });

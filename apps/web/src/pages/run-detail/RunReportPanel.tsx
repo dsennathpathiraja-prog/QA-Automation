@@ -4,7 +4,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../../api/context';
 import { ErrorNotice } from '../common';
 import { StepArtifact } from '../StepArtifact';
-import { findRegressionReport, talliesFromCaseResults, workflowRunIdFromWorkItem, type WorkItemRun } from './helpers';
+import { ReportCharts } from './ReportCharts';
+import { findRegressionReport, resolveReportTallies, workflowRunIdFromWorkItem, type WorkItemRun } from './helpers';
 
 export function RunReportPanel({ shown }: { shown: WorkItemRun }) {
   const api = useApi();
@@ -15,7 +16,11 @@ export function RunReportPanel({ shown }: { shown: WorkItemRun }) {
     enabled: Boolean(workflowRunId),
   });
   const artifact = findRegressionReport(events.data?.items);
-  const tallies = artifact?.tallies ?? talliesFromCaseResults(shown.results);
+  const tallies = resolveReportTallies({
+    results: shown.results,
+    counts: shown.counts,
+    artifactTallies: artifact?.tallies,
+  });
   const finished = shown.status === 'completed' || shown.status === 'failed' || shown.status === 'cancelled';
 
   return (
@@ -38,6 +43,7 @@ export function RunReportPanel({ shown }: { shown: WorkItemRun }) {
           <Chip size="small" label={`${tallies.skipped} skipped`} />
           <Chip size="small" variant="outlined" label={`${tallies.notAutomated} not automated`} />
         </Stack>
+        <ReportCharts tallies={tallies} />
         {(artifact?.syncSummary || shown.squashSync) && (
           <Alert sx={{ mt: 2 }} severity="info" aria-label="Squash sync line">
             {artifact?.syncSummary ?? shown.squashSync}

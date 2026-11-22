@@ -135,14 +135,16 @@ export function findEvidenceExecutionId(events: ExecutionEventRow[] | undefined)
   return null;
 }
 
-export function talliesFromCaseResults(results: Array<{ status: string; message?: string }> | undefined): {
+export type OutcomeTallies = {
   passed: number;
   failed: number;
   blocked: number;
   skipped: number;
   notAutomated: number;
-} {
-  const tallies = { passed: 0, failed: 0, blocked: 0, skipped: 0, notAutomated: 0 };
+};
+
+export function talliesFromCaseResults(results: Array<{ status: string; message?: string }> | undefined): OutcomeTallies {
+  const tallies: OutcomeTallies = { passed: 0, failed: 0, blocked: 0, skipped: 0, notAutomated: 0 };
   for (const row of results ?? []) {
     if (row.status === 'Skipped' && /Not Automated/i.test(row.message ?? '')) {
       tallies.notAutomated += 1;
@@ -154,6 +156,28 @@ export function talliesFromCaseResults(results: Array<{ status: string; message?
     else if (row.status === 'Skipped') tallies.skipped += 1;
   }
   return tallies;
+}
+
+/** Prefer per-case rows; fall back to board/detail `counts` when results are not embedded. */
+export function resolveReportTallies(input: {
+  results?: Array<{ status: string; message?: string }>;
+  counts?: { passed: number; failed: number; blocked: number; skipped: number };
+  artifactTallies?: OutcomeTallies;
+}): OutcomeTallies {
+  if (input.artifactTallies) return input.artifactTallies;
+  const fromResults = talliesFromCaseResults(input.results);
+  const resultTotal = fromResults.passed + fromResults.failed + fromResults.blocked + fromResults.skipped + fromResults.notAutomated;
+  if (resultTotal > 0) return fromResults;
+  if (input.counts) {
+    return {
+      passed: input.counts.passed,
+      failed: input.counts.failed,
+      blocked: input.counts.blocked,
+      skipped: input.counts.skipped,
+      notAutomated: 0,
+    };
+  }
+  return fromResults;
 }
 
 /** Sync line: info when Squash accepted status/attachments; warning when status or screenshots degraded. */
