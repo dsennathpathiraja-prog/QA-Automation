@@ -98,11 +98,34 @@ docker compose -f deploy/compose/local/docker-compose.local.yml --profile browse
 
 ### Run a prepared work item (Executions)
 
-1. Rebuild runners (Playwright-capable `qa-runner:local`):  
+Screenshots need the **runners** profile (Playwright image + launcher). Without it the worker probes over HTTP and cases show **Passed** with “answered 200” but no evidence.
+
+1. Rebuild runners (Playwright-capable `qa-runner:local`) and start the launcher:  
    `docker compose -f deploy/compose/local/docker-compose.local.yml --profile runners up --build -d`
-2. Confirm the environment Check reachability still ends with “The runner finished.”
-3. On Executions, prepare work item **7259** (or your PayNSure item) and press **Run**.
-4. Expect per-case **Passed** / **Failed** (not all Blocked) with screenshots. Squash sync needs a **READ_WRITE** personal API token on the switched-on Squash connector (project name e.g. ToolKit-AgenFlow): Test Connection → Switch on → **restart the worker** after replacing the token.
+2. Confirm the image and launcher:
+
+```
+docker image inspect qa-runner:local --format '{{.Id}} {{.Created}}'
+docker compose -f deploy/compose/local/docker-compose.local.yml --profile runners ps
+# runner-launcher = running; runner-image = Exited (0) after build — that is expected
+```
+
+3. Smoke the capture path inside the image (should print `capture":"playwright"` and a `SCREENSHOT_JSON` line):
+
+```
+docker run --rm --network qa-platform-local \
+  -e QA_TARGET_URL=http://web \
+  -e QA_ALLOWED_HOSTS=web \
+  -e QA_CASES_JSON='[{"id":"smoke","name":"Smoke","steps":["Open page","Capture evidence"]}]' \
+  qa-runner:local
+# Expect: RUNNER_MODE {"capture":"playwright",...} then RESULT_JSON ... then SCREENSHOT_JSON ...
+```
+
+4. Confirm environment Check reachability ends with “The runner finished.”
+5. On Executions, prepare a work item and press **Run**. Expect per-case **Passed** / **Failed** with JPEG screenshots (not the blue “No screenshot” info box).
+6. Squash sync needs a **READ_WRITE** personal API token on the switched-on Squash connector (project name e.g. ToolKit-AgenFlow): Test Connection → Switch on → **restart the worker** after replacing the token.
+
+If cases still say “answered 200” with no screenshot, check worker logs for `runner-launcher` resolve errors (profile not up) or re-run the `docker run` smoke above — `capture":"http"` means the image lacks Playwright and must be rebuilt with `--build`.
 
 ## Stop or reset
 

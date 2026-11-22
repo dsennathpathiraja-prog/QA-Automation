@@ -663,7 +663,7 @@ function WorkItemRunDetail({ shown }: { shown: {
                   ? <CaseScreenshot executionId={shown.id} testCaseId={row.testCaseId} name={row.name} />
                   : (
                     <Alert sx={{ mt: 1 }} severity="info" aria-label={`No screenshot for ${row.name}`}>
-                      No screenshot was captured for this case. Rebuild the Playwright runner image if capture should be available.
+                      {screenshotEmptyHint(row.message)}
                     </Alert>
                   )
               )}
@@ -676,6 +676,17 @@ function WorkItemRunDetail({ shown }: { shown: {
       )}
     </Paper>
   );
+}
+
+function screenshotEmptyHint(message: string | undefined): string {
+  const m = message ?? '';
+  if (/HTTP probe|runner-launcher unavailable|runner returned no RESULT_JSON/i.test(m)) {
+    return 'No screenshot: this case used an HTTP probe (Playwright capture was not available). Start the runners profile and rebuild qa-runner:local, then re-run.';
+  }
+  if (/no screenshot/i.test(m)) {
+    return m.includes('·') ? m.slice(m.indexOf('·') + 1).trim() : 'No screenshot was captured for this case.';
+  }
+  return 'No screenshot was captured for this case. With the runners profile up, re-run after rebuilding qa-runner:local so Playwright can capture evidence.';
 }
 
 function CaseScreenshot({ executionId, testCaseId, name }: { executionId: string; testCaseId: string; name: string }) {

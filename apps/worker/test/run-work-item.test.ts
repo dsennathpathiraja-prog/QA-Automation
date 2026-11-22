@@ -17,14 +17,15 @@ describe('screenshot evidence helpers', () => {
 });
 
 describe('work-item Playwright run', () => {
-  it('merges PROGRESS_JSON and RESULT_JSON into live case progress', () => {
+  it('merges PROGRESS_JSON, RESULT_JSON, and SCREENSHOT_JSON into live case progress', () => {
     const seeded = [
       { testCaseId: 'a', name: 'Login', status: 'Queued' as const, message: 'Waiting to run', steps: [{ name: 'Open page', status: 'Queued' as const }, { name: 'Capture evidence', status: 'Queued' as const }] },
       { testCaseId: 'b', name: 'Bad', status: 'Queued' as const, message: 'Waiting to run', steps: [{ name: 'Open page', status: 'Queued' as const }] },
     ];
     const text = [
       'PROGRESS_JSON {"testCaseId":"a","name":"Login","status":"Running","message":"Opening page","steps":[{"name":"Open page","status":"Running"},{"name":"Capture evidence","status":"Queued"}]}',
-      `RESULT_JSON ${JSON.stringify({ testCaseId: 'a', name: 'Login', status: 'Passed', message: 'answered 200', screenshotPng: shot, steps: [{ name: 'Open page', status: 'Passed' }, { name: 'Capture evidence', status: 'Passed' }] })}`,
+      `RESULT_JSON ${JSON.stringify({ testCaseId: 'a', name: 'Login', status: 'Passed', message: 'answered 200', steps: [{ name: 'Open page', status: 'Passed' }, { name: 'Capture evidence', status: 'Passed' }] })}`,
+      `SCREENSHOT_JSON ${JSON.stringify({ testCaseId: 'a', screenshotPng: shot })}`,
     ].join('\n');
     const out = mergeLiveProgress(text, seeded);
     expect(out[0]).toMatchObject({ status: 'Passed', message: 'answered 200', screenshotPng: shot });
@@ -32,11 +33,13 @@ describe('work-item Playwright run', () => {
     expect(out[1]?.status).toBe('Queued');
   });
 
-  it('parses RESULT_JSON lines from the runner and drops placeholder screenshots', () => {
+  it('parses RESULT_JSON lines and attaches SCREENSHOT_JSON; drops placeholder screenshots', () => {
     const text = [
-      `RESULT_JSON ${JSON.stringify({ testCaseId: 'a', name: 'Login', status: 'Passed', message: 'answered 200', screenshotPng: shot })}`,
+      `RESULT_JSON ${JSON.stringify({ testCaseId: 'a', name: 'Login', status: 'Passed', message: 'answered 200' })}`,
+      `SCREENSHOT_JSON ${JSON.stringify({ testCaseId: 'a', screenshotPng: shot })}`,
       'noise',
-      'RESULT_JSON {"testCaseId":"b","name":"Bad","status":"Failed","message":"answered 500","screenshotPng":"y"}',
+      'RESULT_JSON {"testCaseId":"b","name":"Bad","status":"Failed","message":"answered 500"}',
+      'SCREENSHOT_JSON {"testCaseId":"b","screenshotPng":"y"}',
     ].join('\n');
     expect(parseCaseResults(text, [])).toEqual([
       { testCaseId: 'a', name: 'Login', status: 'Passed', message: 'answered 200', screenshotPng: shot },
@@ -44,8 +47,13 @@ describe('work-item Playwright run', () => {
     ]);
   });
 
+  it('still accepts RESULT_JSON that inlines screenshotPng (older images)', () => {
+    const text = `RESULT_JSON ${JSON.stringify({ testCaseId: 'a', name: 'Login', status: 'Passed', message: 'answered 200', screenshotPng: shot })}\n`;
+    expect(parseCaseResults(text, [])[0]).toMatchObject({ testCaseId: 'a', status: 'Passed', screenshotPng: shot });
+  });
+
   it('finds RESULT_JSON after docker noise on the same line', () => {
-    const text = `\x01noise RESULT_JSON ${JSON.stringify({ testCaseId: 'a', name: 'Login', status: 'Passed', message: 'answered 200', screenshotPng: shot })}\n`;
+    const text = `\x01noise RESULT_JSON ${JSON.stringify({ testCaseId: 'a', name: 'Login', status: 'Passed', message: 'answered 200' })}\nSCREENSHOT_JSON ${JSON.stringify({ testCaseId: 'a', screenshotPng: shot })}\n`;
     expect(parseCaseResults(text, [])[0]).toMatchObject({ testCaseId: 'a', status: 'Passed', screenshotPng: shot });
   });
 
@@ -57,11 +65,53 @@ describe('work-item Playwright run', () => {
     ]);
   });
 
+  it('does not treat truncated RESULT_JSON fragments as legacy answered-200', () => {
+    const truncated = `RESULT_JSON {"testCaseId":"a","name":"Login","screenshotPng":"${shot.slice(0, 80)}`;
+    const out = parseCaseResults(truncated, [{ id: 'a', name: 'Login' }]);
+    expect(out[0]?.status).toBe('Blocked');
+    expect(out[0]?.message).toMatch(/could not be parsed/);
+  });
+
   it('explains a rebuild when the runner log has no results', () => {
     const out = parseCaseResults('chromium spawn failed\n', [{ id: 'a', name: 'Login' }]);
     expect(out[0]?.status).toBe('Blocked');
     expect(out[0]?.message).toMatch(/without case results/);
     expect(out[0]?.message).toMatch(/Rebuild qa-runner:local/);
+  });
+
+  it('keeps Blocked (no HTTP probe) when RESULT_JSON markers were truncated', async () => {
+    const launcher = new FakeRunnerLauncher();
+    const realLaunch = launcher.launch.bind(launcher);
+    launcher.launch = async (spec, opts) => {
+      const handle = await realLaunch(spec, opts);
+      launcher.finish(handle.id, 0);
+      return handle;
+    };
+    const run = {
+      id: '11111111-1111-4111-8111-111111111111',
+      workItem: '7259',
+      environmentId: '22222222-2222-4222-8222-222222222222',
+      environmentName: 'QA',
+      caseCount: 1,
+      status: 'running' as const,
+      createdAt: new Date(),
+    };
+    const out = await runWorkItemCases({
+      run,
+      cases: [{ id: '33333333-3333-4333-8333-333333333333', name: 'Login' }],
+      url: 'https://qa.shop.example/app',
+      launcher: {
+        launcher,
+        image,
+        logs: async () => `RESULT_JSON {"testCaseId":"33333333-3333-4333-8333-333333333333","name":"Login","screenshotPng":"${'/9j/'}${'A'.repeat(80)}\n`,
+      },
+      probe: async () => ({ status: 200 }),
+      now: 1,
+    });
+    expect(out.viaRunner).toBe(true);
+    expect(out.results[0]?.status).toBe('Blocked');
+    expect(out.results[0]?.message).toMatch(/could not be parsed/);
+    expect(out.results[0]?.message).not.toMatch(/^answered 200/);
   });
 
   it('runs through the launcher with bundleRef work-item', async () => {
@@ -129,7 +179,11 @@ describe('work-item Playwright run', () => {
       now: 1,
     });
     expect(out.viaRunner).toBe(true);
-    expect(out.results[0]).toMatchObject({ status: 'Passed', message: 'answered 200', name: 'Positive PayNSure' });
+    expect(out.results[0]?.status).toBe('Passed');
+    expect(out.results[0]?.name).toBe('Positive PayNSure');
+    expect(out.results[0]?.message).toMatch(/^answered 200/);
+    expect(out.results[0]?.message).toMatch(/no screenshot/);
+    expect(out.results[0]?.screenshotPng).toBeUndefined();
   });
 
   it('queues, claims, completes a prepared work item with per-case status', async () => {
