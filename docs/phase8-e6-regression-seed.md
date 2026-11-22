@@ -28,11 +28,11 @@ Migration: `packages/persistence/migrations/0017_automation_assets.sql`.
 
 1. **Automatic (preferred):** publishing generated cases with a writable Squash connector seeds a **draft** asset + mapping per stored Squash id.
 2. **Manual:** `POST /api/v1/automation/assets` with `squashCaseId` (and optional `squashReference`).
-3. **Approve:** QA Lead / Administrator uses Automation Mapping → **Approve**, or `POST …/assets/:id/approve`. Regression runners require approved assets via Phase 9 E1 (`POST /api/v1/automation/resolve-regression` / `rg.resolve-automation`) — see [`phase9-e1-approved-resolve.md`](./phase9-e1-approved-resolve.md).
+3. **Approve:** QA Lead / Administrator `POST …/assets/:id/approve`. Regression runners require approved assets via Phase 9 E1 (`POST /api/v1/automation/resolve-regression` / `rg.resolve-automation`) — see [`phase9-e1-approved-resolve.md`](./phase9-e1-approved-resolve.md).
 
 ## Thin UI
 
-**Automation Mapping** (`/automation`) lists mappings, approve drafts, and resolve a Squash case id. It is not a full Regression workspace.
+Operator **Automation Mapping** UI was removed from product nav; approve/resolve remain available via the APIs below (and worker seed/resolve). It is not a full Regression workspace.
 
 ## Verify (PowerShell-safe)
 
@@ -46,9 +46,9 @@ docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
 After migrate-on-start, either publish a case to Squash or register via API, then:
 
 ```powershell
-# Example: resolve Squash case 238 (replace id). Use a session cookie from the signed-in browser, or call from Automation Mapping → Resolve.
+# Example: resolve Squash case 238 (replace id). Use a session cookie from the signed-in browser.
 # GET /api/v1/automation/resolve?squashCaseId=238
 # Expect JSON with assetId, scriptPath, and status draft|approved.
 ```
 
-In the UI: sign in as `trial-lead` → **Automation Mapping** → confirm the row → **Approve** → **Resolve** shows the platform asset id.
+Via API: sign in as `trial-lead`, `POST …/assets/:id/approve`, then `GET /api/v1/automation/resolve?squashCaseId=` shows the platform asset id.

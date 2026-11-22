@@ -11,30 +11,30 @@ afterEach(cleanup);
 const nav = () => within(screen.getByRole('navigation', { name: 'Primary' }));
 const labels = () => nav().getAllByRole('link').map((a) => a.textContent);
 
-const ALL_MAIN = ['Dashboard', 'Workflows', 'Executions', 'Test Cases', 'Automation Mapping', 'Evidence', 'Reports & Analytics'];
+const ALL_MAIN = ['Dashboard', 'Workflows', 'Executions', 'Test Cases', 'Evidence', 'Reports & Analytics'];
 
 describe('role-based navigation (ui-design.md section 1)', () => {
   it('Administrator sees every item', async () => {
     renderApp('/', { me: { status: 200, body: meFor('administrator') } });
     await screen.findByRole('navigation', { name: 'Primary' });
     expect(labels()).toEqual([
-      ...ALL_MAIN, 'Connectors', 'Environments', 'AI Agents', 'AI Models', 'Users & Identity mapping', 'Approved hosts', 'Security & Approvals', 'Audit Log', 'System Settings',
+      ...ALL_MAIN, 'Connectors', 'Environments', 'Users & Identity mapping', 'Approved hosts', 'Security & Approvals', 'Audit Log', 'System Settings',
     ]);
   });
 
   it('QA Lead: no identity/settings administration, only the audit log', async () => {
     renderApp('/', { me: { status: 200, body: meFor('qa_lead') } });
     await screen.findByRole('navigation', { name: 'Primary' });
-    expect(labels()).toEqual([...ALL_MAIN, 'Connectors', 'Environments', 'AI Agents', 'AI Models', 'Audit Log']);
+    expect(labels()).toEqual([...ALL_MAIN, 'Connectors', 'Environments', 'Audit Log']);
   });
 
-  it('QA Engineer: no agents, models or administration', async () => {
+  it('QA Engineer: no administration', async () => {
     renderApp('/', { me: { status: 200, body: meFor('qa_engineer') } });
     await screen.findByRole('navigation', { name: 'Primary' });
     expect(labels()).toEqual([...ALL_MAIN, 'Connectors', 'Environments']);
   });
 
-  it('Business User: no mapping, connectors, environments or configuration', async () => {
+  it('Business User: no connectors, environments or configuration', async () => {
     renderApp('/', { me: { status: 200, body: meFor('business_user') } });
     await screen.findByRole('navigation', { name: 'Primary' });
     expect(labels()).toEqual(['Dashboard', 'Workflows', 'Executions', 'Test Cases', 'Evidence', 'Reports & Analytics']);
@@ -57,109 +57,6 @@ describe('route guard', () => {
   it('shows a helpful page for unknown addresses', async () => {
     renderApp('/nope', { me: { status: 200, body: meFor('administrator') } });
     expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeTruthy();
-  });
-
-  it('Automation Mapping lists Squash↔script rows, resolves a case id, and previews Regression Not Automated', async () => {
-    renderApp('/automation', {
-      me: { status: 200, body: meFor('qa_lead') },
-      routes: {
-        '/api/v1/automation/mappings': {
-          status: 200,
-          body: {
-            items: [{
-              id: 'm1',
-              squashCaseId: '238',
-              squashReference: 'QAP-7259-1',
-              assetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-              assetKey: 'QAP-7259-1',
-              assetName: 'Positive: checkout',
-              scriptPath: 'tests/app/7259.spec.js',
-              status: 'draft',
-              updatedAt: '2026-11-22T10:00:00.000Z',
-            }],
-          },
-        },
-        '/api/v1/automation/resolve?squashCaseId=238': {
-          status: 200,
-          body: {
-            squashCaseId: '238',
-            squashReference: 'QAP-7259-1',
-            assetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-            assetKey: 'QAP-7259-1',
-            assetName: 'Positive: checkout',
-            scriptPath: 'tests/app/7259.spec.js',
-            status: 'draft',
-            approved: false,
-          },
-        },
-        '/api/v1/automation/resolve-regression': {
-          status: 200,
-          body: {
-            resolved: [{
-              squashCaseId: '238',
-              squashReference: 'QAP-7259-1',
-              assetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-              assetKey: 'QAP-7259-1',
-              assetName: 'Positive: checkout',
-              scriptPath: 'tests/app/7259.spec.js',
-              status: 'approved',
-            }],
-            notAutomated: [{ squashCaseId: '239', reason: 'mapping-unapproved', status: 'draft' }],
-          },
-        },
-        '/api/v1/automation/scope': {
-          status: 200,
-          body: {
-            caseIds: ['238', '239'],
-            kind: 'selected',
-            mode: 'selected',
-          },
-        },
-        '/api/v1/automation/collections/smoke': {
-          status: 200,
-          body: {
-            id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-            key: 'smoke',
-            name: 'Smoke',
-            description: 'Curated smoke',
-            squashCaseIds: ['238'],
-            size: 1,
-            updatedAt: '2026-11-22T10:00:00.000Z',
-          },
-        },
-        '/api/v1/automation/collections/smoke/sync-approved': {
-          status: 200,
-          body: {
-            id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-            key: 'smoke',
-            name: 'Smoke',
-            description: 'Curated smoke',
-            squashCaseIds: ['238'],
-            size: 1,
-            updatedAt: '2026-11-22T10:05:00.000Z',
-          },
-        },
-      },
-    });
-    expect(await screen.findByRole('heading', { name: 'Automation Mapping' })).toBeTruthy();
-    expect(await screen.findByText('238')).toBeTruthy();
-    expect(screen.getByText('tests/app/7259.spec.js')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy();
-    expect(await screen.findByText(/smoke: 1 member/i)).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Sync approved mappings into smoke' })).toBeTruthy();
-    await userEvent.type(screen.getByLabelText('Squash case id'), '238');
-    await userEvent.click(screen.getByRole('button', { name: 'Resolve' }));
-    expect(await screen.findByText(/Squash 238 → asset/)).toBeTruthy();
-    const scopeCaseField = screen.getByLabelText(/Squash case ids \(required\)/i);
-    await userEvent.clear(scopeCaseField);
-    await userEvent.type(scopeCaseField, '238, 239');
-    await userEvent.click(screen.getByRole('button', { name: 'Expand scope to case ids' }));
-    expect(await screen.findByText(/selected: 2 ids/i)).toBeTruthy();
-    await userEvent.clear(screen.getByLabelText(/Squash case ids \(comma/i));
-    await userEvent.type(screen.getByLabelText(/Squash case ids \(comma/i), '238, 239');
-    await userEvent.click(screen.getByRole('button', { name: 'Preview Regression resolve' }));
-    expect(await screen.findByText(/1 approved · 1 Not Automated/)).toBeTruthy();
-    expect(screen.getByText(/239 — Draft \(not approved\)/)).toBeTruthy();
   });
 
   it('Evidence Open evidence navigates to the dedicated run detail page', async () => {
@@ -412,7 +309,8 @@ describe('route guard', () => {
     expect(await screen.findByRole('tab', { name: 'Execution' })).toBeTruthy();
     expect(await screen.findByRole('region', { name: 'Regression' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Open Workflows' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Automation Mapping' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Reports' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Evidence' })).toBeTruthy();
     expect(await screen.findByRole('button', { name: 'Prepare execution' })).toBeTruthy();
     expect(screen.getByText(/soft-deleted cases are excluded/i)).toBeTruthy();
     expect(await screen.findByRole('region', { name: 'Setup ready to run' })).toBeTruthy();
@@ -454,43 +352,6 @@ describe('data pages', () => {
     renderApp('/connectors', { me: { status: 200, body: meFor('qa_lead') }, routes: { '/api/v1/connectors': { status: 500, body: { error: { class: 'internal', message: 'Internal error' } } } } });
     expect(await screen.findByRole('alert')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
-  });
-});
-
-describe('AI Models page', () => {
-  it('shows provider health and what each model supports, in plain language', async () => {
-    renderApp('/models', {
-      me: { status: 200, body: meFor('qa_lead') },
-      routes: {
-        '/api/v1/llm/providers': {
-          status: 200,
-          body: { items: [{ id: 'ollama', kind: 'local', adapter: 'ollama', enabled: true, health: { ok: true, latencyMs: 42 }, models: [{ name: 'qwen2.5:7b', contextTokens: 32768, supportsToolCalling: true, supportsStructuredOutput: true, supportsVision: false }] }] },
-        },
-      },
-    });
-    expect(await screen.findByText('Reachable (42 ms)')).toBeTruthy();
-    expect(screen.getByText(/runs in your network/)).toBeTruthy();
-    const row = within(screen.getByRole('table')).getByText('qwen2.5:7b').closest('tr')!;
-    expect(within(row).getByText('32,768 tokens')).toBeTruthy();
-    expect(within(row).getAllByText('Yes')).toHaveLength(2);
-    expect(within(row).getByText('No')).toBeTruthy();
-  });
-
-  it('explains an unreachable provider and an empty configuration', async () => {
-    const down = renderApp('/models', {
-      me: { status: 200, body: meFor('administrator') },
-      routes: { '/api/v1/llm/providers': { status: 200, body: { items: [{ id: 'ollama', kind: 'local', adapter: 'ollama', enabled: true, health: { ok: false, latencyMs: 4000, detail: 'unreachable' }, models: [] }] } } },
-    });
-    expect(await screen.findByText('Unreachable: unreachable')).toBeTruthy();
-    expect(screen.getByText(/cannot be listed while the provider is unreachable/)).toBeTruthy();
-    down.unmount();
-    renderApp('/models', { me: { status: 200, body: meFor('administrator') }, routes: { '/api/v1/llm/providers': { status: 200, body: { items: [] } } } });
-    expect(await screen.findByText('No model provider is configured yet.')).toBeTruthy();
-  });
-
-  it('is hidden from QA Engineers and explains why on a direct visit', async () => {
-    renderApp('/models', { me: { status: 200, body: meFor('qa_engineer') } });
-    expect(await screen.findByRole('heading', { name: 'You do not have access to this page' })).toBeTruthy();
   });
 });
 

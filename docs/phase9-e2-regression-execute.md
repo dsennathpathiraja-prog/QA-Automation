@@ -24,7 +24,7 @@ pnpm check
 docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
 ```
 
-1. Seed/approve one mapping (Automation Mapping) — leave a sibling draft.
+1. Seed/approve one mapping (API or publish seed) — leave a sibling draft.
 2. Ensure runner-launcher is up (same as Executions screenshots).
 3. Start a Regression workflow with `squashCaseIds` / scope covering both ids and an environment with an application URL — or after resolve, confirm execute step summary lists Passed (approved) and Skipped (Not Automated).
 4. Open **Executions** → work item `rg:<runId>` for live progress and screenshots.

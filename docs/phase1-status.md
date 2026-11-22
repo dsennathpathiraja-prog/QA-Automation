@@ -47,7 +47,7 @@ Not blocking sign-off, tracked for the target Ubuntu host: run the full `deploy/
 3. Start it: `docker compose -f deploy/compose/local/docker-compose.local.yml up --build`. The first run takes several minutes (it builds three images and downloads Postgres and Keycloak). Leave this window open.
 4. When the messages stop scrolling, open http://localhost:8088 in a browser (the page should say QA Platform; if you see a different application, another program owns that port: stop the stack with `down`, then start again with `WEB_PORT=9000` in front, PowerShell: `$env:WEB_PORT=9000` first, and open that port). You should be sent to a Keycloak sign-in page.
 5. Sign in as `trial-lead` with password `Trial-Pass-1`. You should land on the Dashboard with a menu on the left.
-6. Sign out, then try `trial-admin` (Administrator: the menu also shows Identity mapping and AI Models) and `trial-user` (Business User: a shorter menu, no Identity mapping or AI Models). Password for all four: `Trial-Pass-1`. Others: `trial-engineer`.
+6. Sign out, then try `trial-admin` (Administrator: the menu also shows Identity mapping and other Administration items) and `trial-user` (Business User: a shorter menu, no Identity mapping or Administration). Password for all four: `Trial-Pass-1`. Others: `trial-engineer`.
 7. In a second terminal run: `docker compose -f deploy/compose/local/docker-compose.local.yml ps`. Healthy looks like: `api` shows "healthy", `worker` and `web` and `postgres` and `keycloak` show "running".
 8. Stop when finished: `docker compose -f deploy/compose/local/docker-compose.local.yml down` (add `-v` to also delete the trial database).
 

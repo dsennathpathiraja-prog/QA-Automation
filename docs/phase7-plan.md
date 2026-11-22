@@ -5,7 +5,7 @@ Started 19 Nov 2026, after Phase 6 (store cases, prepare by work item). Product 
 ## Status (19 Nov 2026)
 Code for the execute path is in place. From Executions, a prepared work item can be **Run** against its environment. The worker uses the existing `runner-launcher` / `qa-runner` profile when available (`bundleRef: work-item`), otherwise probes the application from the worker. Each case gets Passed / Failed / Blocked / Skipped plus a screenshot. When a Squash connector is switched on with a READ_WRITE token (project name such as ToolKit-AgenFlow), the run writes execution status back to Squash.
 
-Regression stays out of scope. Automation Mapping remains a later screen (nav placeholder).
+Regression stays out of scope. Operator Automation Mapping / AI Agents / AI Models screens are out of product scope (API/worker mapping remains for Regression).
 
 ## Slices
 1. **Queue and run.** Prepare stays as Phase 6. **Run** sets the row to queued; the worker claims it and runs the cases.

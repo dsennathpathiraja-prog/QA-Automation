@@ -315,11 +315,6 @@ export function Executions() {
                   <Button>Evidence</Button>
                 </Link>
               )}
-              {session.can('automation.view') && (
-                <Link to="/automation">
-                  <Button>Automation Mapping</Button>
-                </Link>
-              )}
             </Stack>
           </Paper>
           <Paper sx={{ p: 2 }} aria-label="Work item">
