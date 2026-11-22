@@ -1,6 +1,7 @@
 import { PlatformError } from '@qa/domain';
 import type {
   CaseRunStatus,
+  CaseStepProgress,
   TestCaseInsert,
   TestCaseKind,
   TestCasePriority,
@@ -222,7 +223,7 @@ export class InMemoryTestCaseRepository implements TestCaseRepository {
     return structuredClone(row);
   }
 
-  async replaceCaseResults(executionId: string, results: Array<{ id: string; testCaseId: string; name: string; status: CaseRunStatus; message: string; screenshotPng?: string; squashExecutionId?: string }>) {
+  async replaceCaseResults(executionId: string, results: Array<{ id: string; testCaseId: string; name: string; status: CaseRunStatus; message: string; screenshotPng?: string; squashExecutionId?: string; steps?: CaseStepProgress[] }>) {
     this.caseResults.set(executionId, results.map((r) => structuredClone(r)));
   }
 

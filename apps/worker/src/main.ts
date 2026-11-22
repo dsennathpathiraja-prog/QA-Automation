@@ -326,11 +326,12 @@ const loop = new WorkerLoop({
         if (!row?.applicationUrl) throw new PlatformError('not-found', 'That environment was not found.');
         return row.applicationUrl;
       },
-      run: async ({ run, cases, url }) => {
+      run: async ({ run, cases, url, onProgress }) => {
         const direct = async () => runWorkItemCases({
           run,
           cases,
           url,
+          onProgress,
           probe: async (target) => {
             const rules: EgressRule[] = (await hosts.list('application')).map((h) => ({ hostPattern: h.hostPattern, purpose: 'application', internal: h.internal, allowHttp: h.allowHttp }));
             const http = new HardenedHttpClient({ egress: new EgressPolicy({ rules, profile, platformEnv }), allowedMethods: ['GET', 'HEAD'], timeoutMs: 10_000, maxBodyBytes: 64 * 1024 });
@@ -360,6 +361,7 @@ const loop = new WorkerLoop({
             run,
             cases,
             url,
+            onProgress,
             launcher: { launcher, image, logs: (id) => launcher.logs(id) },
             probe: async (target) => {
               const rules: EgressRule[] = (await hosts.list('application')).map((h) => ({ hostPattern: h.hostPattern, purpose: 'application', internal: h.internal, allowHttp: h.allowHttp }));

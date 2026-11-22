@@ -5,7 +5,7 @@ import {
   azureFieldString,
   azureWorkItemFields,
   azureWorkItemTitle,
-} from '@qa/infrastructure';
+} from './azure-work-item-fields';
 
 /** Useful Azure Boards / work-item fields for planner + story MD (from expand=All). */
 export interface WorkItemDetails {

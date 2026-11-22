@@ -1,13 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import { FakeRunnerLauncher, InMemoryAuditSink, InMemoryTestCaseRepository } from '@qa/testing';
 import { TestCaseService } from '@qa/application';
-import { parseCaseResults, processWorkItemExecutions, runWorkItemCases } from '../src/run-work-item';
+import { mergeLiveProgress, parseCaseResults, processWorkItemExecutions, runWorkItemCases } from '../src/run-work-item';
 import { squashIdFromSummary, syncCaseResultsToSquash } from '../src/sync-execution';
 
 const image = `qa-runner@sha256:${'a'.repeat(64)}`;
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
 describe('work-item Playwright run', () => {
+  it('merges PROGRESS_JSON and RESULT_JSON into live case progress', () => {
+    const seeded = [
+      { testCaseId: 'a', name: 'Login', status: 'Queued' as const, message: 'Waiting to run', steps: [{ name: 'Open page', status: 'Queued' as const }, { name: 'Capture evidence', status: 'Queued' as const }] },
+      { testCaseId: 'b', name: 'Bad', status: 'Queued' as const, message: 'Waiting to run', steps: [{ name: 'Open page', status: 'Queued' as const }] },
+    ];
+    const text = [
+      'PROGRESS_JSON {"testCaseId":"a","name":"Login","status":"Running","message":"Opening page","steps":[{"name":"Open page","status":"Running"},{"name":"Capture evidence","status":"Queued"}]}',
+      `RESULT_JSON ${JSON.stringify({ testCaseId: 'a', name: 'Login', status: 'Passed', message: 'answered 200', screenshotPng: 'x', steps: [{ name: 'Open page', status: 'Passed' }, { name: 'Capture evidence', status: 'Passed' }] })}`,
+    ].join('\n');
+    const out = mergeLiveProgress(text, seeded);
+    expect(out[0]).toMatchObject({ status: 'Passed', message: 'answered 200', screenshotPng: 'x' });
+    expect(out[0]?.steps?.[0]?.status).toBe('Passed');
+    expect(out[1]?.status).toBe('Queued');
+  });
+
   it('parses RESULT_JSON lines from the runner', () => {
     const text = [
       'RESULT_JSON {"testCaseId":"a","name":"Login","status":"Passed","message":"answered 200","screenshotPng":"x"}',
@@ -28,8 +43,8 @@ describe('work-item Playwright run', () => {
   it('maps legacy answered N logs to per-case Passed when RESULT_JSON is missing', () => {
     const out = parseCaseResults('answered 200\n', [{ id: 'a', name: 'Positive PayNSure' }, { id: 'b', name: 'Edge ToolKit-AgenFlow' }]);
     expect(out).toEqual([
-      { testCaseId: 'a', name: 'Positive PayNSure', status: 'Passed', message: 'answered 200', screenshotPng: expect.any(String) },
-      { testCaseId: 'b', name: 'Edge ToolKit-AgenFlow', status: 'Passed', message: 'answered 200', screenshotPng: expect.any(String) },
+      { testCaseId: 'a', name: 'Positive PayNSure', status: 'Passed', message: 'answered 200', screenshotPng: expect.any(String), steps: expect.any(Array) },
+      { testCaseId: 'b', name: 'Edge ToolKit-AgenFlow', status: 'Passed', message: 'answered 200', screenshotPng: expect.any(String), steps: expect.any(Array) },
     ]);
   });
 
@@ -113,23 +128,33 @@ describe('work-item Playwright run', () => {
     const cases = new TestCaseService({ cases: repo, audit: new InMemoryAuditSink() });
     await cases.fileUnderWorkItem({ id: 'worker' }, { name: 'Login', steps: 'Open', expected: 'Form', workItem: 'QA-1', summary: 'Squash 42' });
     const prepared = await cases.startWorkItemExecution({ id: 'eng' }, { workItem: 'QA-1', environmentId: '22222222-2222-4222-8222-222222222222', environmentName: 'QA' });
-    await cases.queueWorkItemExecution({ id: 'eng' }, prepared.id);
+    const queued = await cases.queueWorkItemExecution({ id: 'eng' }, prepared.id);
+    expect(queued.results?.[0]).toMatchObject({ status: 'Queued' });
+    expect(queued.counts).toMatchObject({ queued: 1, completed: 0, total: 1 });
+    const progress: string[] = [];
     const busy = await processWorkItemExecutions({
       testCases: cases,
       resolveUrl: async () => 'https://qa.shop.example',
-      run: async ({ cases: listed }) => ({
-        viaRunner: false,
-        results: listed.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Passed' as const, message: 'answered 200', screenshotPng: png })),
-      }),
+      run: async ({ cases: listed, onProgress }) => {
+        await onProgress?.(listed.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Running' as const, message: 'Opening page', steps: [{ name: 'Open', status: 'Running' as const }] })));
+        progress.push('running');
+        return {
+          viaRunner: false,
+          results: listed.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Passed' as const, message: 'answered 200', screenshotPng: png, steps: [{ name: 'Open', status: 'Passed' as const }] })),
+        };
+      },
       syncSquash: async (results) => ({
         results: results.map((r) => ({ ...r, squashExecutionId: '9' })),
         summary: 'Cases ran for QA-1. Squash recorded 1 execution status.',
       }),
     });
     expect(busy).toBe('busy');
+    expect(progress).toEqual(['running']);
     const done = await cases.getWorkItemExecution(prepared.id);
     expect(done.status).toBe('completed');
     expect(done.results?.[0]).toMatchObject({ status: 'Passed', hasScreenshot: true, squashExecutionId: '9' });
+    expect(done.results?.[0]?.steps?.[0]).toMatchObject({ name: 'Open', status: 'Passed' });
+    expect(done.counts).toMatchObject({ passed: 1, completed: 1, total: 1 });
     expect(done.squashSync).toMatch(/Squash recorded/);
   });
 });

@@ -1,7 +1,7 @@
 /**
  * Runs prepared work-item cases against QA_TARGET_URL.
  * Prefers Playwright when installed; otherwise opens the URL over HTTP (same allowlist as reachability).
- * Prints one RESULT_JSON line per case for the worker to parse.
+ * Prints PROGRESS_JSON while a case runs and one RESULT_JSON line per case for the worker to parse.
  * Screenshots are kept small (JPEG viewport) so Docker log tail/JSON transport cannot drop results.
  */
 import { request as httpRequest } from 'node:http';
@@ -40,12 +40,12 @@ let url;
 try {
   url = new URL(target);
 } catch {
-  for (const item of cases) emit({ testCaseId: item.id, name: item.name, status: 'Blocked', message: 'did not answer', screenshotPng: STUB_PNG });
+  for (const item of cases) emitResult(blocked(item, 'did not answer'));
   finish(1);
 }
 
 if (!hostAllowed(url.hostname, url.port)) {
-  for (const item of cases) emit({ testCaseId: item.id, name: item.name, status: 'Blocked', message: 'host not allowed', screenshotPng: STUB_PNG });
+  for (const item of cases) emitResult(blocked(item, 'host not allowed'));
   finish(1);
 }
 
@@ -60,15 +60,33 @@ for (const item of cases) {
     const result = playwright
       ? await runWithPlaywright(playwright, url, item)
       : await runWithHttp(url, item);
-    emit(result);
+    emitResult(result);
   } catch (e) {
     const message = e instanceof Error ? e.message : 'did not answer';
-    emit({ testCaseId: item.id, name: item.name, status: 'Blocked', message, screenshotPng: STUB_PNG });
+    emitResult(blocked(item, message));
   }
 }
 finish(0);
 
-function emit(row) {
+function stepNames(item) {
+  if (Array.isArray(item.steps) && item.steps.length > 0) {
+    return item.steps.map((s) => (typeof s === 'string' ? s : String(s?.name ?? ''))).filter(Boolean).slice(0, 12);
+  }
+  return ['Open page', 'Capture evidence'];
+}
+
+function stepsAt(names, activeIndex, fillBefore = 'Passed', active = 'Running', fillAfter = 'Queued') {
+  return names.map((name, i) => ({
+    name,
+    status: i < activeIndex ? fillBefore : i === activeIndex ? active : fillAfter,
+  }));
+}
+
+function emitProgress(item, status, message, steps) {
+  console.log(`PROGRESS_JSON ${JSON.stringify({ testCaseId: item.id, name: item.name, status, message, steps })}`);
+}
+
+function emitResult(row) {
   const screenshotPng = shrinkScreenshot(typeof row.screenshotPng === 'string' ? row.screenshotPng : STUB_PNG);
   console.log(`RESULT_JSON ${JSON.stringify({ ...row, screenshotPng })}`);
 }
@@ -76,6 +94,18 @@ function emit(row) {
 function shrinkScreenshot(b64) {
   if (!b64 || b64.length <= MAX_SCREENSHOT_B64) return b64 || STUB_PNG;
   return STUB_PNG;
+}
+
+function blocked(item, message) {
+  const names = stepNames(item);
+  return {
+    testCaseId: item.id,
+    name: item.name,
+    status: 'Blocked',
+    message,
+    screenshotPng: STUB_PNG,
+    steps: names.map((name) => ({ name, status: 'Blocked' })),
+  };
 }
 
 async function loadPlaywright() {
@@ -87,39 +117,54 @@ async function loadPlaywright() {
 }
 
 async function runWithPlaywright(pw, u, item) {
+  const names = stepNames(item);
+  emitProgress(item, 'Running', 'Opening browser', stepsAt(names, 0));
   const browser = await pw.chromium.launch({
     headless: true,
     args: ['--disable-dev-shm-usage', '--no-sandbox'],
   });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    emitProgress(item, 'Running', 'Opening page', stepsAt(names, 0));
     const res = await page.goto(u.href, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    emitProgress(item, 'Running', 'Capturing screenshot', stepsAt(names, Math.min(1, names.length - 1), 'Passed', 'Running', 'Queued'));
     const path = `/tmp/case-${String(item.id).replace(/[^a-zA-Z0-9_-]/g, '')}.jpg`;
     await page.screenshot({ path, type: 'jpeg', quality: 42, fullPage: false });
     const png = Buffer.from(await readFile(path)).toString('base64');
     const statusCode = res?.status() ?? 0;
-    if (!res) return { testCaseId: item.id, name: item.name, status: 'Blocked', message: 'did not answer', screenshotPng: png };
-    if (statusCode >= 500) return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${statusCode}`, screenshotPng: png };
-    if (statusCode >= 200) return { testCaseId: item.id, name: item.name, status: 'Passed', message: `answered ${statusCode}`, screenshotPng: png };
-    return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${statusCode}`, screenshotPng: png };
+    const doneSteps = (fill) => names.map((name) => ({ name, status: fill }));
+    if (!res) {
+      return { testCaseId: item.id, name: item.name, status: 'Blocked', message: 'did not answer', screenshotPng: png, steps: doneSteps('Blocked') };
+    }
+    if (statusCode >= 500) {
+      return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${statusCode}`, screenshotPng: png, steps: doneSteps('Failed') };
+    }
+    if (statusCode >= 200) {
+      return { testCaseId: item.id, name: item.name, status: 'Passed', message: `answered ${statusCode}`, screenshotPng: png, steps: doneSteps('Passed') };
+    }
+    return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${statusCode}`, screenshotPng: png, steps: doneSteps('Failed') };
   } catch (e) {
     const message = e instanceof Error ? e.message : 'did not answer';
-    return { testCaseId: item.id, name: item.name, status: 'Blocked', message, screenshotPng: STUB_PNG };
+    return blocked(item, message);
   } finally {
     await browser.close().catch(() => undefined);
   }
 }
 
 async function runWithHttp(u, item) {
+  const names = stepNames(item);
+  emitProgress(item, 'Running', 'Opening page', stepsAt(names, 0));
   try {
     const status = proxy ? await throughProxy(u, proxy) : await direct(u);
+    emitProgress(item, 'Running', 'Recording result', stepsAt(names, Math.min(1, names.length - 1), 'Passed', 'Running', 'Queued'));
     const screenshotPng = STUB_PNG;
     await writeFile(`/tmp/case-${String(item.id).replace(/[^a-zA-Z0-9_-]/g, '')}.png`, Buffer.from(STUB_PNG, 'base64')).catch(() => undefined);
-    if (status >= 500) return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${status}`, screenshotPng };
-    if (status >= 200) return { testCaseId: item.id, name: item.name, status: 'Passed', message: `answered ${status}`, screenshotPng };
-    return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${status}`, screenshotPng };
+    const done = (fill) => names.map((name) => ({ name, status: fill }));
+    if (status >= 500) return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${status}`, screenshotPng, steps: done('Failed') };
+    if (status >= 200) return { testCaseId: item.id, name: item.name, status: 'Passed', message: `answered ${status}`, screenshotPng, steps: done('Passed') };
+    return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${status}`, screenshotPng, steps: done('Failed') };
   } catch {
-    return { testCaseId: item.id, name: item.name, status: 'Blocked', message: 'did not answer', screenshotPng: STUB_PNG };
+    return blocked(item, 'did not answer');
   }
 }
 
