@@ -345,7 +345,10 @@ export class WorkflowService {
     if (!current) throw new PlatformError('not-found', 'Run not found');
     const next = commandOf(current, command);
     if (next.status === current.status && next.control === current.control) return runOf(current, await this.workflowName(current.workflowId));
-    const saved = await repo.apply(id, next.status === 'running'
+    // Keep the worker lease when signalling cancel on a running execution so the owner
+    // (or the next claim after expiry) can stop runners before clearing leaseOwner.
+    const keepLease = next.status === 'running' && (next.control === 'pause' || next.control === 'cancel');
+    const saved = await repo.apply(id, keepLease
       ? { status: next.status, control: next.control }
       : { status: next.status, control: next.control, leaseOwner: null, leaseUntil: null });
     await this.d.audit.append({ actorId: actor.id, action: `execution.${command}`, subjectType: 'workflow_execution', subjectId: id });
@@ -449,7 +452,12 @@ export class WorkflowService {
 
 function commandOf(run: ExecutionRecord, command: 'pause' | 'resume' | 'cancel'): { status: ExecutionStatus; control: ExecutionRecord['control'] } {
   if (run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled') return { status: run.status, control: null };
-  if (command === 'cancel') return { status: 'cancelled', control: null };
+  if (command === 'cancel') {
+    // Queued / paused: finalize immediately and clear the lease.
+    // Running: set control so the worker stops runners, then clears the lease on the cancel tick.
+    if (run.status === 'queued' || run.status === 'paused') return { status: 'cancelled', control: null };
+    return { status: 'running', control: 'cancel' };
+  }
   if (command === 'resume') return run.status === 'paused' ? { status: 'queued', control: null } : { status: run.status, control: run.control };
   if (run.status === 'paused') return { status: 'paused', control: null };
   if (run.status === 'queued') return { status: 'paused', control: null };

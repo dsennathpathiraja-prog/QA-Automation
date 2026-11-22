@@ -1,12 +1,22 @@
 import { isNeedsSurfaceCase, NEEDS_SURFACE_TAG } from '@qa/agents';
-import { PlatformError, RUNNER_INLINE_FILES_MAX_BYTES, RUNNER_MAX, chunkEnvValue, type RunnerLauncher, type RunnerSpec } from '@qa/domain';
+import {
+  PlatformError,
+  RUNNER_CANCELLED,
+  RUNNER_INLINE_FILES_MAX_BYTES,
+  RUNNER_LAUNCHER_REQUIRED,
+  RUNNER_MAX,
+  RUNNER_POOL_STAYED_FULL,
+  RUNNER_REBUILD_PS,
+  chunkEnvValue,
+  type RunnerLauncher,
+  type RunnerSpec,
+} from '@qa/domain';
 import { isPlaceholderScreenshot, type CaseRunStatus, type CaseStepProgress, type TestCaseService, type WorkItemRunRecord } from '@qa/application';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const NO_RESULTS = 'The runner finished without case results.';
 /** Shown when Executions cannot use Playwright (no silent HTTP “Passed” without evidence). */
-export const RUNNER_REQUIRED =
-  'Playwright runner-launcher is not available. Start the local stack so runner-launcher and qa-runner:local are up (`docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d`), then re-run.';
+export const RUNNER_REQUIRED = RUNNER_LAUNCHER_REQUIRED;
 
 export const NEEDS_SURFACE_BLOCKED =
   `Blocked (${NEEDS_SURFACE_TAG}): Explore did not reach the required notification/template surface. Do not treat shop/catalog as successful coverage.`;
@@ -65,6 +75,7 @@ export async function runWorkItemCases(o: {
   launcher?: { launcher: RunnerLauncher; image: string; logs(id: string): Promise<string> };
   now?: number;
   onProgress?: (results: CaseOutcome[]) => Promise<void> | void;
+  isCancelled?: () => Promise<boolean> | boolean;
 }): Promise<{ viaRunner: boolean; results: CaseOutcome[] }> {
   if (o.cases.length === 0) return { viaRunner: false, results: [] };
   const gapCases = o.cases.filter((c) => isNeedsSurfaceCase({
@@ -101,6 +112,7 @@ export async function runWorkItemCases(o: {
     if (o.onProgress) await o.onProgress(results);
     return { viaRunner: true, results };
   } catch (e) {
+    if (e instanceof PlatformError && e.errorClass === 'cancelled') throw e;
     if (!launcherDown(e)) throw e;
     const results = [...gapResults, ...blockedRunnerRequired(runnable)];
     if (o.onProgress) await o.onProgress(results);
@@ -116,10 +128,10 @@ export function parseCaseResults(text: string, fallback: WorkItemCaseInput[]): C
   // clean legacy reachability log — that hid missing screenshots behind a probe fallback.
   if (/\bRESULT_JSON\b|\bSCREENSHOT_JSON\b|\bRUNNER_MODE\b|\bPROGRESS_JSON\b/.test(text)) {
     const excerpt = text.replace(/\s+/g, ' ').trim().slice(0, 240);
-    const rebuild = 'Rebuild qa-runner:local with: docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d';
+    const rebuild = `Rebuild qa-runner:local in PowerShell:\n${RUNNER_REBUILD_PS}`;
     const message = excerpt
-      ? `${NO_RESULTS} Runner log markers were present but RESULT_JSON could not be parsed (often a truncated log line). ${rebuild}. Log: ${excerpt}`
-      : `${NO_RESULTS} Runner log markers were present but RESULT_JSON could not be parsed. ${rebuild}.`;
+      ? `${NO_RESULTS} Runner log markers were present but RESULT_JSON could not be parsed (often a truncated log line). ${rebuild}\nLog: ${excerpt}`
+      : `${NO_RESULTS} Runner log markers were present but RESULT_JSON could not be parsed. ${rebuild}`;
     return fallback.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message, steps: defaultSteps(c.steps, 'Blocked') }));
   }
 
@@ -137,10 +149,10 @@ export function parseCaseResults(text: string, fallback: WorkItemCaseInput[]): C
   }
 
   const excerpt = text.replace(/\s+/g, ' ').trim().slice(0, 240);
-  const rebuild = 'Rebuild qa-runner:local with: docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d';
+  const rebuild = `Rebuild qa-runner:local in PowerShell if the image predates work-item execute:\n${RUNNER_REBUILD_PS}`;
   const message = excerpt
-    ? `${NO_RESULTS} ${rebuild} if the image predates work-item execute. Log: ${excerpt}`
-    : `${NO_RESULTS} ${rebuild} if the image predates work-item execute.`;
+    ? `${NO_RESULTS} ${rebuild}\nLog: ${excerpt}`
+    : `${NO_RESULTS} ${rebuild}`;
   return fallback.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message, steps: defaultSteps(c.steps, 'Blocked') }));
 }
 
@@ -260,10 +272,7 @@ export async function launchWhenPoolFree(
       const full = e instanceof PlatformError && e.errorClass === 'transient' && POOL_FULL.test(e.message);
       if (!full) throw e;
       if (now() >= deadline) {
-        throw new PlatformError(
-          'transient',
-          'The runner pool stayed full after waiting. Reclaim leftover qa-runner containers (`docker ps -a --filter label=qa.platform/managed=true`) or raise RUNNER_MAX_CONCURRENT, then re-run.',
-        );
+        throw new PlatformError('transient', RUNNER_POOL_STAYED_FULL);
       }
       attempt += 1;
       await pause(Math.min(8_000, 400 * 2 ** Math.min(attempt, 4)));
@@ -278,6 +287,8 @@ async function viaRunner(o: {
   launcher?: { launcher: RunnerLauncher; image: string; logs(id: string): Promise<string> };
   now?: number;
   onProgress?: (results: CaseOutcome[]) => Promise<void> | void;
+  /** Returns true when the operator cancelled this work-item run. */
+  isCancelled?: () => Promise<boolean> | boolean;
 }): Promise<CaseOutcome[]> {
   const launcher = o.launcher!;
   const target = new URL(o.url);
@@ -307,9 +318,10 @@ async function viaRunner(o: {
   }
   // Per-case Playwright open+shot; scale wall clock for large prepared sets (hundreds of cases).
   const timeoutSeconds = Math.min(RUNNER_MAX.timeoutSeconds, Math.max(180, 90 + o.cases.length * 25));
+  const executionId = o.run.id.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 128) || 'workitem';
   const spec: RunnerSpec = {
     runId: `wi-${o.run.id.replace(/[^A-Za-z0-9]/g, '')}-${o.now ?? Date.now()}`,
-    executionId: o.run.id.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 128) || 'workitem',
+    executionId,
     image: launcher.image,
     bundleRef: 'work-item',
     environmentId: o.run.environmentId.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 128) || 'environment',
@@ -324,11 +336,18 @@ async function viaRunner(o: {
   if (o.onProgress) {
     await o.onProgress(seeded.map((row) => ({ ...row, status: 'Queued' as const, message: 'Waiting for a runner slot' })));
   }
+  if (o.isCancelled && (await o.isCancelled())) {
+    throw new PlatformError('cancelled', RUNNER_CANCELLED);
+  }
   const handle = await launchWhenPoolFree(launcher.launcher, spec);
   const deadline = Date.now() + (spec.limits.timeoutSeconds + 10) * 1000;
   let state = await launcher.launcher.status(handle.id);
   let lastFingerprint = '';
   while (state.state === 'starting' || state.state === 'running') {
+    if (o.isCancelled && (await o.isCancelled())) {
+      await launcher.launcher.cancelByExecution(executionId, 'work-item run cancelled');
+      throw new PlatformError('cancelled', RUNNER_CANCELLED);
+    }
     if (Date.now() > deadline) {
       await launcher.launcher.stop(handle.id, 'the work-item run took too long');
       throw new PlatformError('internal', 'The runner did not finish in time.');
@@ -498,6 +517,7 @@ export async function processWorkItemExecutions(o: {
     cases: Array<{ id: string; name: string; steps?: string }>;
     url: string;
     onProgress?: (results: CaseOutcome[]) => Promise<void> | void;
+    isCancelled?: () => Promise<boolean> | boolean;
   }) => Promise<{ viaRunner: boolean; results: CaseOutcome[] }>;
   syncSquash?: (results: CaseOutcome[], workItem: string) => Promise<{ results: CaseOutcome[]; summary: string }>;
 }): Promise<'busy' | 'idle'> {
@@ -523,6 +543,10 @@ export async function processWorkItemExecutions(o: {
       onProgress: async (results) => {
         await o.testCases.reportWorkItemProgress(claimed.id, results);
       },
+      isCancelled: async () => {
+        const row = await o.testCases.getWorkItemExecution(claimed.id);
+        return row.status === 'cancelled';
+      },
     });
     let results = ran.results;
     let squashSync: string | undefined;
@@ -540,12 +564,18 @@ export async function processWorkItemExecutions(o: {
       results,
     });
   } catch (e) {
+    const cancelled = e instanceof PlatformError && e.errorClass === 'cancelled';
     const message = e instanceof PlatformError ? e.message : 'The work item run failed.';
     const cases = await o.testCases.casesForWorkItem(claimed.workItem);
     await o.testCases.completeWorkItemExecution(claimed.id, {
-      status: 'failed',
+      status: cancelled ? 'cancelled' : 'failed',
       squashSync: message,
-      results: cases.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message })),
+      results: cases.map((c) => ({
+        testCaseId: c.id,
+        name: c.name,
+        status: cancelled ? ('Skipped' as const) : ('Blocked' as const),
+        message,
+      })),
     });
   }
   return 'busy';

@@ -106,6 +106,11 @@ export interface RunnerLauncher {
   stop(runnerId: string, reason: string): Promise<void>;
   /** Finds runners by label, for the reaper that cleans up after a crashed worker. */
   list(labels: Record<string, string>): Promise<RunnerStatus[]>;
+  /**
+   * Stops and removes every managed runner for an execution id (workflow run or work-item run).
+   * Frees pool slots immediately so Cancel does not leave orphans until the reclaim sweep.
+   */
+  cancelByExecution(executionId: string, reason?: string): Promise<{ stopped: number }>;
 }
 
 export const RUNNER_MAX = { cpus: 8, memoryMb: 16_384, timeoutSeconds: 4 * 3600, pids: 4096 } as const;

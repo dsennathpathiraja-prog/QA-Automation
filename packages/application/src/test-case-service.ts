@@ -3,7 +3,7 @@ import { PlatformError } from '@qa/domain';
 import type { ActorRef } from './connector-service';
 import type { AuditSink } from './ports';
 
-export type WorkItemRunStatus = 'prepared' | 'queued' | 'running' | 'completed' | 'failed';
+export type WorkItemRunStatus = 'prepared' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type CaseRunStatus = 'Queued' | 'Running' | 'Passed' | 'Failed' | 'Blocked' | 'Skipped';
 export type CaseStepStatus = 'Queued' | 'Running' | 'Passed' | 'Failed' | 'Blocked' | 'Skipped';
 
@@ -458,6 +458,55 @@ export class TestCaseService {
     return runOf(updated, await this.d.cases.listCaseResults(id));
   }
 
+  /**
+   * Requests cancel for a queued/running work-item run. The worker stops the runner
+   * container (frees the pool) and finalizes case rows as Skipped.
+   */
+  async cancelWorkItemExecution(actor: ActorRef, id: string) {
+    const row = await this.d.cases.getWorkItemRun(id);
+    if (!row) throw new PlatformError('not-found', 'Work item execution not found');
+    if (row.status === 'cancelled' || row.status === 'completed' || row.status === 'failed') {
+      return runOf(row, await this.d.cases.listCaseResults(id));
+    }
+    if (row.status !== 'queued' && row.status !== 'running') {
+      throw new PlatformError('conflict', 'Only a queued or running work-item execution can be cancelled.');
+    }
+    const prior = await this.d.cases.listCaseResults(id);
+    const cases = prior.length > 0
+      ? prior
+      : (await this.casesForWorkItem(row.workItem)).map((c) => ({
+          id: randomUUID(),
+          testCaseId: c.id,
+          name: c.name,
+          status: 'Queued' as const,
+          message: 'Waiting to run',
+          steps: stepLabelsFromText(c.steps),
+        }));
+    const message = 'Cancelled — runner stopped and pool slot freed.';
+    await this.d.cases.replaceCaseResults(id, cases.map((c) => ({
+      id: randomUUID(),
+      testCaseId: c.testCaseId,
+      name: c.name,
+      status: c.status === 'Passed' || c.status === 'Failed' || c.status === 'Blocked' || c.status === 'Skipped'
+        ? c.status
+        : 'Skipped' as const,
+      message: c.status === 'Passed' || c.status === 'Failed' || c.status === 'Blocked' || c.status === 'Skipped' ? c.message : message,
+      screenshotPng: 'screenshotPng' in c ? c.screenshotPng : undefined,
+      squashExecutionId: 'squashExecutionId' in c ? c.squashExecutionId : undefined,
+      steps: c.steps?.map((s) => ({
+        ...s,
+        status: s.status === 'Passed' || s.status === 'Failed' || s.status === 'Blocked' || s.status === 'Skipped' ? s.status : 'Skipped' as const,
+      })),
+    })));
+    const updated = await this.d.cases.updateWorkItemRun(id, {
+      status: 'cancelled',
+      squashSync: 'Cancelled — stopping the runner and freeing the pool slot.',
+      finishedAt: new Date(),
+    });
+    await this.d.audit.append({ actorId: actor.id, action: 'workitem.execution.cancel', subjectType: 'work_item_execution', subjectId: id, detail: { workItem: row.workItem } });
+    return runOf(updated, await this.d.cases.listCaseResults(id));
+  }
+
   async claimQueuedWorkItemExecution() {
     return this.d.cases.claimQueuedWorkItemRun();
   }
@@ -493,12 +542,19 @@ export class TestCaseService {
   }
 
   async completeWorkItemExecution(id: string, input: {
-    status: 'completed' | 'failed';
+    status: 'completed' | 'failed' | 'cancelled';
     squashSync?: string;
     results: Array<{ testCaseId: string; name: string; status: CaseRunStatus; message: string; screenshotPng?: string; squashExecutionId?: string; steps?: CaseStepProgress[] }>;
   }) {
+    const current = await this.d.cases.getWorkItemRun(id);
+    // Cancel wins if the operator already requested it while the worker was finishing.
+    const status = current?.status === 'cancelled' ? 'cancelled' : input.status;
     await this.d.cases.replaceCaseResults(id, input.results.map((r) => ({ id: randomUUID(), ...r })));
-    const updated = await this.d.cases.updateWorkItemRun(id, { status: input.status, squashSync: input.squashSync, finishedAt: new Date() });
+    const updated = await this.d.cases.updateWorkItemRun(id, {
+      status,
+      squashSync: input.squashSync,
+      finishedAt: new Date(),
+    });
     return runOf(updated, await this.d.cases.listCaseResults(id));
   }
 

@@ -39,6 +39,21 @@ export class FakeRunnerLauncher implements RunnerLauncher {
     if (r.state === 'running' || r.state === 'starting') Object.assign(r, { state: 'stopped', finishedAt: this.clock.now(), reason });
   }
 
+  async cancelByExecution(executionId: string, reason = 'cancelled'): Promise<{ stopped: number }> {
+    let stopped = 0;
+    for (const r of this.byId.values()) {
+      if (r.spec.executionId !== executionId) continue;
+      if (r.state === 'running' || r.state === 'starting') {
+        Object.assign(r, { state: 'stopped', finishedAt: this.clock.now(), reason });
+        stopped += 1;
+      } else if (r.state !== 'stopped') {
+        Object.assign(r, { state: 'stopped', finishedAt: this.clock.now(), reason });
+        stopped += 1;
+      }
+    }
+    return { stopped };
+  }
+
   async list(labels: Record<string, string>): Promise<RunnerStatus[]> {
     return [...this.byId.values()].filter((r) => Object.entries(labels).every(([k, v]) => r.spec.labels?.[k] === v)).map((r) => this.toStatus(r));
   }

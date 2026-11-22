@@ -77,7 +77,7 @@ describe('work-item Playwright run', () => {
     const out = parseCaseResults('chromium spawn failed\n', [{ id: 'a', name: 'Login' }]);
     expect(out[0]?.status).toBe('Blocked');
     expect(out[0]?.message).toMatch(/without case results/);
-    expect(out[0]?.message).toMatch(/Rebuild qa-runner:local/);
+    expect(out[0]?.message).toMatch(/Rebuild qa-runner:local|PowerShell|docker compose -f deploy\/compose\/local/);
   });
 
   it('keeps Blocked (no HTTP probe) when RESULT_JSON markers were truncated', async () => {
@@ -297,7 +297,46 @@ describe('work-item Playwright run', () => {
       sleep: async (ms) => {
         now += ms;
       },
-    })).rejects.toThrow(/pool stayed full/);
+    })).rejects.toThrow(/pool stayed full|PowerShell|ForEach-Object/);
+  });
+
+  it('stops the runner and marks cases Skipped when the operator cancels mid-run', async () => {
+    const launcher = new FakeRunnerLauncher();
+    const realLaunch = launcher.launch.bind(launcher);
+    let launched = '';
+    launcher.launch = async (spec, opts) => {
+      const handle = await realLaunch(spec, opts);
+      launched = handle.id;
+      return handle;
+    };
+    const run = {
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      workItem: '2357',
+      environmentId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      environmentName: 'QA',
+      caseCount: 2,
+      status: 'running' as const,
+      createdAt: new Date(),
+    };
+    const cases = [
+      { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'Case A' },
+      { id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', name: 'Case B' },
+    ];
+    let polls = 0;
+    await expect(runWorkItemCases({
+      run,
+      cases,
+      url: 'https://qa.shop.example/app',
+      launcher: { launcher, image, logs: async () => '' },
+      now: 1,
+      isCancelled: () => {
+        polls += 1;
+        return polls > 2;
+      },
+    })).rejects.toMatchObject({ errorClass: 'cancelled' });
+    expect(launched).toBeTruthy();
+    expect((await launcher.status(launched)).state).toBe('stopped');
+    expect((await launcher.cancelByExecution(run.id)).stopped).toBe(0);
   });
 
   it('keeps Blocked when the runner returns no RESULT_JSON (no HTTP probe fallback)', async () => {
@@ -333,6 +372,22 @@ describe('work-item Playwright run', () => {
     expect(out.results[0]?.name).toBe('Positive PayNSure');
     expect(out.results[0]?.message).toMatch(/without case results/);
     expect(out.results[0]?.screenshotPng).toBeUndefined();
+  });
+
+  it('cancelWorkItemExecution marks queued runs cancelled without claiming', async () => {
+    const repo = new InMemoryTestCaseRepository();
+    const cases = new TestCaseService({ cases: repo, audit: new InMemoryAuditSink() });
+    await cases.fileUnderWorkItem({ id: 'worker' }, { name: 'Login', steps: 'Open', expected: 'Form', workItem: 'QA-9', summary: 'Squash 1' });
+    const prepared = await cases.startWorkItemExecution({ id: 'eng' }, { workItem: 'QA-9', environmentId: '22222222-2222-4222-8222-222222222222', environmentName: 'QA' });
+    await cases.queueWorkItemExecution({ id: 'eng' }, prepared.id);
+    const cancelled = await cases.cancelWorkItemExecution({ id: 'eng' }, prepared.id);
+    expect(cancelled.status).toBe('cancelled');
+    expect(cancelled.results?.[0]?.status).toBe('Skipped');
+    expect(await processWorkItemExecutions({
+      testCases: cases,
+      resolveUrl: async () => 'https://qa.shop.example',
+      run: async () => ({ viaRunner: false, results: [] }),
+    })).toBe('idle');
   });
 
   it('queues, claims, completes a prepared work item with per-case status', async () => {

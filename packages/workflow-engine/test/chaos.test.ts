@@ -100,8 +100,10 @@ describe('workflow engine chaos', () => {
     store.runs[0]!.status = 'queued';
     expect(await tick(store, { owner: 'w1', now: at })).toBe('busy');
     store.runs[0]!.control = 'cancel';
-    expect(await tick(store, { owner: 'w1', now: new Date(at.getTime() + 1000) })).toBe('busy');
+    const cleaned: string[] = [];
+    expect(await tick(store, { owner: 'w1', now: new Date(at.getTime() + 1000), onCancel: (id) => { cleaned.push(id); } })).toBe('busy');
     expect(store.runs[0]?.status).toBe('cancelled');
+    expect(cleaned).toEqual(['run-1']);
     expect(store.effects.map((e) => e.stepId)).toEqual(['a']);
   });
 

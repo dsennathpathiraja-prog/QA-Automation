@@ -22,6 +22,10 @@ export class RemoteRunnerLauncher implements RunnerLauncher {
     await this.send('POST', `/v1/runners/${encodeURIComponent(runnerId)}/stop`, { reason });
   }
 
+  async cancelByExecution(executionId: string, reason = 'cancelled'): Promise<{ stopped: number }> {
+    return this.send<{ stopped: number }>('POST', '/v1/runners/cancel', { executionId, reason });
+  }
+
   async image(): Promise<string> {
     const r = await this.send<{ image?: string }>('GET', '/v1/runner-image');
     if (!r.image) throw new PlatformError('internal', 'The runner launcher did not name an image.');

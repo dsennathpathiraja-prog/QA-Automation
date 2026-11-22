@@ -70,6 +70,7 @@ const WI_STATUS: Record<string, string> = {
   running: 'Running',
   completed: 'Completed',
   failed: 'Failed',
+  cancelled: 'Cancelled',
 };
 
 const CASE_CHIP: Record<string, 'default' | 'success' | 'error' | 'warning' | 'info'> = {
@@ -163,6 +164,14 @@ export function Executions() {
       await qc.invalidateQueries({ queryKey: ['work-item-execution', row.id] });
     },
   });
+  const cancelWorkItem = useMutation({
+    mutationFn: (id: string) => api.post(`/api/v1/work-item-executions/${id}/cancel`, {}, WorkItemExecutionSchema),
+    onSuccess: async (row) => {
+      setOpenRun(row.id);
+      await qc.invalidateQueries({ queryKey: ['work-item-executions'] });
+      await qc.invalidateQueries({ queryKey: ['work-item-execution', row.id] });
+    },
+  });
   const runs = useQuery({
     queryKey: key,
     queryFn: () => api.get('/api/v1/executions', ExecutionListResponse),
@@ -216,7 +225,7 @@ export function Executions() {
   };
   const activeRuns = useMemo(() => {
     const rows = board.data?.items ?? [];
-    return rows.filter((item) => WI_LIVE.has(item.status) || item.status === 'completed' || item.status === 'failed').slice(0, 20);
+    return rows.filter((item) => WI_LIVE.has(item.status) || item.status === 'completed' || item.status === 'failed' || item.status === 'cancelled').slice(0, 20);
   }, [board.data?.items]);
   const stepEvents = (events.data?.items ?? []).filter((event) => event.kind === 'step.completed' || event.kind === 'step.failed');
 
@@ -401,6 +410,11 @@ export function Executions() {
                       />
                     </ListItemButton>
                     <Chip size="small" label={WI_STATUS[item.status] ?? item.status} sx={{ flexShrink: 0 }} />
+                    {WI_LIVE.has(item.status) && session.can('execution.control') && (
+                      <Button size="small" color="error" disabled={cancelWorkItem.isPending} onClick={() => cancelWorkItem.mutate(item.id)} sx={{ flexShrink: 0 }}>
+                        Cancel
+                      </Button>
+                    )}
                     {item.status === 'failed' && (
                       <Button size="small" variant="contained" disabled={run.isPending} onClick={() => run.mutate(item.id)} sx={{ flexShrink: 0 }}>
                         Run again
@@ -411,9 +425,14 @@ export function Executions() {
               </List>
             </Paper>
           )}
+          {cancelWorkItem.isError && <ErrorNotice message={errorText(cancelWorkItem.error, 'That work-item run could not be cancelled.')} />}
 
           {shown && shown.status !== 'prepared' && (
-            <WorkItemRunDetail shown={shown} />
+            <WorkItemRunDetail
+              shown={shown}
+              onCancel={session.can('execution.control') && WI_LIVE.has(shown.status) ? () => cancelWorkItem.mutate(shown.id) : undefined}
+              cancelPending={cancelWorkItem.isPending}
+            />
           )}
         </Stack>
       )}
@@ -587,7 +606,8 @@ function countsLabel(item: { caseCount: number; counts?: { completed: number; pa
   return `${completed}/${item.caseCount} done · ${passed} passed · ${failed} failed${running ? ` · ${running} running` : ''}${queued ? ` · ${queued} queued` : ''}`;
 }
 
-function WorkItemRunDetail({ shown }: { shown: {
+function WorkItemRunDetail({ shown, onCancel, cancelPending }: {
+  shown: {
   id: string;
   workItem: string;
   environmentName: string;
@@ -614,7 +634,10 @@ function WorkItemRunDetail({ shown }: { shown: {
     squashExecutionId?: string;
     steps?: Array<{ name: string; status: string }>;
   }>;
-} }) {
+  };
+  onCancel?: () => void;
+  cancelPending?: boolean;
+}) {
   const live = WI_LIVE.has(shown.status);
   return (
     <Paper sx={{ p: 2 }} aria-label="Work item run">
@@ -622,6 +645,11 @@ function WorkItemRunDetail({ shown }: { shown: {
       <Typography>
         {shown.workItem} on {shown.environmentName} is {WI_STATUS[shown.status]?.toLowerCase() ?? shown.status}.
       </Typography>
+      {onCancel && (
+        <Box sx={{ mt: 2 }}>
+          <Button color="error" disabled={cancelPending} onClick={onCancel}>Cancel run</Button>
+        </Box>
+      )}
       {shown.counts && (
         <Stack direction="row" spacing={1} useFlexGap sx={{ mt: 2, flexWrap: 'wrap' }} aria-label="Run counts">
           <Chip size="small" label={`${shown.counts.completed}/${shown.counts.total} completed`} />
@@ -681,10 +709,10 @@ function WorkItemRunDetail({ shown }: { shown: {
 function screenshotEmptyHint(message: string | undefined): string {
   const m = message ?? '';
   if (/pool is full|pool stayed full/i.test(m)) {
-    return 'No screenshot: the runner pool was full. Wait for other runs to finish, reclaim leftover qa-runner containers, or raise RUNNER_MAX_CONCURRENT, then re-run.';
+    return 'No screenshot: the runner pool was full. In PowerShell, reclaim leftovers with docker ps -a --filter "label=qa.platform/managed=true" then docker rm -f on those ids, or raise RUNNER_MAX_CONCURRENT, then re-run.';
   }
-  if (/runner-launcher is not available|Playwright runner/i.test(m)) {
-    return 'No screenshot: the Playwright runner was not available. Start the local stack (`docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d`) so runner-launcher and qa-runner:local are up, then re-run.';
+  if (/runner-launcher is not available|Playwright runner|runner image qa-runner/i.test(m)) {
+    return 'No screenshot: the Playwright runner was not available. In PowerShell from the repo root: docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d, then re-run.';
   }
   if (/HTTP probe|runner-launcher unavailable|runner returned no RESULT_JSON/i.test(m)) {
     return 'No screenshot: this case did not run through Playwright. Rebuild and start the local runner stack, then re-run.';
