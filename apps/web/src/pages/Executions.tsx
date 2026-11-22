@@ -478,7 +478,7 @@ export function Executions() {
               <Typography>
                 {shown.workItem} on {shown.environmentName} · {shown.caseCount} {shown.caseCount === 1 ? 'case' : 'cases'}.
               </Typography>
-              <Alert sx={{ mt: 2 }} severity="info">Not run yet. Press Run to execute these cases through the Playwright runner. Live per-case and per-step progress appears on the Execution tab.</Alert>
+              <Alert sx={{ mt: 2 }} severity="info">Not run yet. Press Run to execute these cases through the Playwright runner (requires runner-launcher / qa-runner:local from the local compose stack). Live per-case and per-step progress appears on the Execution tab.</Alert>
               <Box sx={{ mt: 2 }}>
                 <Button variant="contained" disabled={run.isPending} onClick={() => run.mutate(shown.id)}>Run</Button>
               </Box>
@@ -680,13 +680,16 @@ function WorkItemRunDetail({ shown }: { shown: {
 
 function screenshotEmptyHint(message: string | undefined): string {
   const m = message ?? '';
+  if (/runner-launcher is not available|Playwright runner/i.test(m)) {
+    return 'No screenshot: the Playwright runner was not available. Start the local stack (`docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d`) so runner-launcher and qa-runner:local are up, then re-run.';
+  }
   if (/HTTP probe|runner-launcher unavailable|runner returned no RESULT_JSON/i.test(m)) {
-    return 'No screenshot: this case used an HTTP probe (Playwright capture was not available). Start the runners profile and rebuild qa-runner:local, then re-run.';
+    return 'No screenshot: this case did not run through Playwright. Rebuild and start the local runner stack, then re-run.';
   }
   if (/no screenshot/i.test(m)) {
     return m.includes('·') ? m.slice(m.indexOf('·') + 1).trim() : 'No screenshot was captured for this case.';
   }
-  return 'No screenshot was captured for this case. With the runners profile up, re-run after rebuilding qa-runner:local so Playwright can capture evidence.';
+  return 'No screenshot was captured for this case. Rebuild qa-runner:local with the local compose stack, then re-run so Playwright can capture evidence.';
 }
 
 function CaseScreenshot({ executionId, testCaseId, name }: { executionId: string; testCaseId: string; name: string }) {

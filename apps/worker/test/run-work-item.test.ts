@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FakeRunnerLauncher, InMemoryAuditSink, InMemoryTestCaseRepository } from '@qa/testing';
 import { isPlaceholderScreenshot, PLACEHOLDER_SCREENSHOT_B64, screenshotContentType, TestCaseService } from '@qa/application';
-import { mergeLiveProgress, parseCaseResults, processWorkItemExecutions, runWorkItemCases } from '../src/run-work-item';
+import { mergeLiveProgress, parseCaseResults, processWorkItemExecutions, RUNNER_REQUIRED, runWorkItemCases } from '../src/run-work-item';
 import { squashIdFromSummary, syncCaseResultsToSquash } from '../src/sync-execution';
 
 const image = `qa-runner@sha256:${'a'.repeat(64)}`;
@@ -105,13 +105,34 @@ describe('work-item Playwright run', () => {
         image,
         logs: async () => `RESULT_JSON {"testCaseId":"33333333-3333-4333-8333-333333333333","name":"Login","screenshotPng":"${'/9j/'}${'A'.repeat(80)}\n`,
       },
-      probe: async () => ({ status: 200 }),
       now: 1,
     });
     expect(out.viaRunner).toBe(true);
     expect(out.results[0]?.status).toBe('Blocked');
     expect(out.results[0]?.message).toMatch(/could not be parsed/);
     expect(out.results[0]?.message).not.toMatch(/^answered 200/);
+  });
+
+  it('blocks clearly when runner-launcher is missing (no HTTP probe Passed)', async () => {
+    const run = {
+      id: '11111111-1111-4111-8111-111111111111',
+      workItem: '7259',
+      environmentId: '22222222-2222-4222-8222-222222222222',
+      environmentName: 'QA',
+      caseCount: 1,
+      status: 'running' as const,
+      createdAt: new Date(),
+    };
+    const out = await runWorkItemCases({
+      run,
+      cases: [{ id: '33333333-3333-4333-8333-333333333333', name: 'Login' }],
+      url: 'https://qa.shop.example/app',
+      now: 1,
+    });
+    expect(out.viaRunner).toBe(false);
+    expect(out.results[0]?.status).toBe('Blocked');
+    expect(out.results[0]?.message).toBe(RUNNER_REQUIRED);
+    expect(out.results[0]?.screenshotPng).toBeUndefined();
   });
 
   it('runs through the launcher with bundleRef work-item', async () => {
@@ -149,7 +170,7 @@ describe('work-item Playwright run', () => {
     expect(launcher.specOf('runner-1').limits.pids).toBeGreaterThanOrEqual(512);
   });
 
-  it('falls back to a direct probe when the runner returns no RESULT_JSON', async () => {
+  it('keeps Blocked when the runner returns no RESULT_JSON (no HTTP probe fallback)', async () => {
     const launcher = new FakeRunnerLauncher();
     const realLaunch = launcher.launch.bind(launcher);
     launcher.launch = async (spec, opts) => {
@@ -175,14 +196,12 @@ describe('work-item Playwright run', () => {
         image,
         logs: async () => 'no useful output\n',
       },
-      probe: async () => ({ status: 200 }),
       now: 1,
     });
     expect(out.viaRunner).toBe(true);
-    expect(out.results[0]?.status).toBe('Passed');
+    expect(out.results[0]?.status).toBe('Blocked');
     expect(out.results[0]?.name).toBe('Positive PayNSure');
-    expect(out.results[0]?.message).toMatch(/^answered 200/);
-    expect(out.results[0]?.message).toMatch(/no screenshot/);
+    expect(out.results[0]?.message).toMatch(/without case results/);
     expect(out.results[0]?.screenshotPng).toBeUndefined();
   });
 

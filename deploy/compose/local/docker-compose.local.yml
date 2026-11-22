@@ -2,6 +2,7 @@
 # Never use this file on a shared or production host; use ../docker-compose.yml for that.
 # Start:  docker compose -f deploy/compose/local/docker-compose.local.yml up --build
 # Open:   http://localhost:8088   (change the port with WEB_PORT, e.g. WEB_PORT=9000 before the command)
+# Includes Playwright runner-launcher + qa-runner:local by default (needed for Executions screenshots).
 name: qa-platform-local
 
 services:
@@ -58,7 +59,7 @@ services:
       DATABASE_PASSWORD: local-trial-db-password
       SECRET_STORE: db-envelope
       SECRET_MASTER_KEY: bG9jYWwtdHJpYWwtbWFzdGVyLWtleS0zMi1ieXRlcyE=
-      # Used when the runners profile is up. If that service is not running, the worker keeps checking the address itself.
+      # Playwright runner for Executions screenshots (runner-launcher is part of the default local stack).
       RUNNER_LAUNCHER_URL: http://runner-launcher:3002
       RUNNER_LAUNCHER_TOKEN: local-trial-launcher-token-32chars
       # Browser MCP as seen from this container (Compose DNS on qa-platform-local). Not localhost.
@@ -67,6 +68,7 @@ services:
     networks: [default]
     depends_on:
       api: { condition: service_healthy }
+      runner-launcher: { condition: service_healthy }
 
   # Managed Playwright MCP browser (required for Connectors → Playwright → Test connection).
   # Start / rebuild: docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d playwright-mcp
@@ -103,22 +105,22 @@ services:
       start_period: 60s
 
 
-  # Builds the Playwright runner image and exits. The launcher starts a fresh container from qa-runner:local for each check/run.
-  # Required for Executions screenshots. Start with:
-  #   docker compose -f deploy/compose/local/docker-compose.local.yml --profile runners up --build -d
-  # After changing apps/runner/, always pass --build so SCREENSHOT_JSON / capture:playwright land in qa-runner:local.
+  # Builds the Playwright runner image and exits. Part of the default local stack (Executions screenshots).
+  # After changing apps/runner/, rebuild with: docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
   runner-image:
-    profiles: [runners]
     image: qa-runner:local
     build: { context: ../../.., dockerfile: deploy/images/runner.Dockerfile }
     entrypoint: ["node", "-e", "process.exit(0)"]
     restart: "no"
 
   # The only local service that sees the container socket. It is root here so Docker Desktop's socket is usable.
+  # Starts by default with the local stack (no compose profile). Launches qa-runner:local per check/run.
   runner-launcher:
-    profiles: [runners]
     build: { context: ../../.., dockerfile: deploy/images/runner-launcher.Dockerfile }
     user: "0:0"
+    depends_on:
+      runner-image:
+        condition: service_completed_successfully
     environment:
       HOST: 0.0.0.0
       PORT: "3002"
@@ -131,6 +133,12 @@ services:
     volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
     read_only: true
     tmpfs: ["/tmp"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   postgres:
     image: postgres:16-alpine

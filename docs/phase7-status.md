@@ -19,7 +19,7 @@ Last updated: 19 Nov 2026. Plan: [`phase7-plan.md`](phase7-plan.md). Split: [`re
 
 1. Rebuild Docker (include runners profile if you want the launcher path):
    ```
-   docker compose -f deploy/compose/local/docker-compose.local.yml --profile runners up --build
+   docker compose -f deploy/compose/local/docker-compose.local.yml up --build
    ```
 2. Squash READ_WRITE with project name **ToolKit-AgenFlow** (or your project), Switch on.
 3. Have cases under a work item (Phase 6). On **Executions**, prepare that work item against an environment, then press **Run**.
