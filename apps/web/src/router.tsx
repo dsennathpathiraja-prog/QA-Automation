@@ -17,6 +17,7 @@ import { Workflows } from './pages/Workflows';
 import { WorkflowPage } from './pages/workflows/WorkflowPage';
 import { IdentityMapping } from './pages/IdentityMapping';
 import { ReportEvidence } from './pages/ReportEvidence';
+import { RunDetailPage } from './pages/RunDetailPage';
 import { SignInError } from './pages/SignInError';
 
 function Guarded({ item, children }: { item: NavItem; children?: ReactNode }) {
@@ -114,6 +115,16 @@ export function buildRouter(opts: RouterOptions = {}): AnyRouter {
     validateSearch: reportEvidenceSearch,
     component: () => <Guarded item={reportsItem}><ReportEvidence mode="report" /></Guarded>,
   });
+  const runDetail = createRoute({
+    getParentRoute: () => shell,
+    path: '/runs/$id',
+    validateSearch: (s: Record<string, unknown>) => ({
+      view: s.view === 'summary' || s.view === 'report' || s.view === 'evidence' ? (s.view as 'summary' | 'report' | 'evidence') : undefined,
+      case: typeof s.case === 'string' && s.case.trim() ? s.case.trim() : undefined,
+      from: s.from === 'reports' || s.from === 'evidence' || s.from === 'executions' ? (s.from as 'reports' | 'evidence' | 'executions') : undefined,
+    }),
+    component: () => <RunDetailPage />,
+  });
 
   const connectorItem = NAV_ITEMS.find((i) => i.id === 'connectors')!;
   const manageItem: NavItem = { ...connectorItem, anyOf: ['connector.manage'] };
@@ -127,7 +138,7 @@ export function buildRouter(opts: RouterOptions = {}): AnyRouter {
   const testCaseDetail = createRoute({ getParentRoute: () => shell, path: '/test-cases/$id', component: () => <Guarded item={testCaseItem}><TestCasePage /></Guarded> });
   const testCollectionDetail = createRoute({ getParentRoute: () => shell, path: '/test-collections/$id', component: () => <Guarded item={testCaseItem}><TestCollectionPage /></Guarded> });
 
-  return createRouter({ routeTree: root.addChildren([signInError, shell.addChildren([...pages, executions, evidence, reports, connectorNew, connectorDetail, environmentDetail, workflowDetail, testCaseDetail, testCollectionDetail])]), history: opts.history, defaultPreload: false });
+  return createRouter({ routeTree: root.addChildren([signInError, shell.addChildren([...pages, executions, evidence, reports, runDetail, connectorNew, connectorDetail, environmentDetail, workflowDetail, testCaseDetail, testCollectionDetail])]), history: opts.history, defaultPreload: false });
 }
 
 declare module '@tanstack/react-router' {

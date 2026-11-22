@@ -59,7 +59,7 @@ describe('route guard', () => {
     expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeTruthy();
   });
 
-  it('Evidence page lists finished runs and opens the Evidence tab', async () => {
+  it('Evidence Open evidence navigates to the dedicated run detail page', async () => {
     const user = userEvent.setup();
     const runId = '44444444-4444-4444-8444-444444444444';
     const caseId = '55555555-5555-4555-8555-555555555555';
@@ -131,13 +131,15 @@ describe('route guard', () => {
     });
     expect(await screen.findByText(/Browse screenshots/i)).toBeTruthy();
     expect(await screen.findByRole('region', { name: 'Runs with evidence' })).toBeTruthy();
-    await user.click(await screen.findByRole('link', { name: 'Open evidence' }));
+    await user.click(await screen.findByRole('button', { name: 'Open evidence' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Run detail' })).toBeTruthy();
+    expect(await screen.findByRole('link', { name: /Back to Evidence/i })).toBeTruthy();
     expect(await screen.findByRole('tab', { name: 'Evidence' })).toBeTruthy();
     expect(await screen.findByRole('region', { name: 'Run evidence' })).toBeTruthy();
     expect(await screen.findByAltText(/Screenshot evidence for Login smoke/)).toBeTruthy();
   });
 
-  it('Reports Open report button opens the run detail with outcome charts', async () => {
+  it('Reports Open report navigates to the dedicated run detail page with charts', async () => {
     const user = userEvent.setup();
     const runId = '77777777-7777-4777-8777-777777777777';
     renderApp('/reports', {
@@ -185,43 +187,22 @@ describe('route guard', () => {
         },
       },
     });
-    await user.click(await screen.findByRole('link', { name: 'Open report' }));
+    await user.click(await screen.findByRole('button', { name: 'Open report' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Run detail' })).toBeTruthy();
+    expect(await screen.findByRole('link', { name: /Back to Reports/i })).toBeTruthy();
     const report = await screen.findByRole('region', { name: 'Run report' });
     expect(within(report).getByText('130 passed')).toBeTruthy();
     expect(within(report).getByRole('img', { name: /Stacked bar/i })).toBeTruthy();
     expect(within(report).getByRole('img', { name: /Donut chart of 130 cases/i })).toBeTruthy();
   });
 
-  it('Reports page shows tallies and regression-report.md for a focused run', async () => {
+  it('Run detail page shows tallies and regression-report.md', async () => {
     const runId = '66666666-6666-4666-8666-666666666666';
     const workflowRunId = '1436518e-0000-4000-8000-000000000099';
     const eventsPath = `/api/v1/executions/${workflowRunId}/events`;
-    const { calls } = renderApp(`/reports?focus=${runId}`, {
+    const { calls } = renderApp(`/runs/${runId}?view=report&from=reports`, {
       me: { status: 200, body: meFor('qa_engineer') },
       routes: {
-        '/api/v1/work-item-executions': {
-          status: 200,
-          body: {
-            workItems: [],
-            environments: [],
-            items: [{
-              id: runId,
-              workItem: `rg:${workflowRunId}`,
-              environmentId: '33333333-3333-4333-8333-333333333333',
-              environmentName: 'QA',
-              caseCount: 2,
-              status: 'completed',
-              createdAt: '2026-11-22T11:00:00.000Z',
-              finishedAt: '2026-11-22T11:05:00.000Z',
-              squashSync: 'Squash recorded 1 execution status.',
-              counts: { total: 2, queued: 0, running: 0, passed: 1, failed: 0, blocked: 0, skipped: 1, completed: 2 },
-              results: [
-                { id: 'r1', testCaseId: 'c1', name: 'Login', status: 'Passed', message: 'ok', hasScreenshot: true },
-                { id: 'r2', testCaseId: 'c2', name: 'Draft', status: 'Skipped', message: 'Not Automated: draft', hasScreenshot: false },
-              ],
-            }],
-          },
-        },
         [`/api/v1/work-item-executions/${runId}`]: {
           status: 200,
           body: {
@@ -264,6 +245,7 @@ describe('route guard', () => {
         },
       },
     });
+    expect(await screen.findByRole('heading', { level: 1, name: 'Run detail' })).toBeTruthy();
     const report = await screen.findByRole('region', { name: 'Run report' });
     expect(within(report).getByText('1 passed')).toBeTruthy();
     expect(within(report).getByText('1 not automated')).toBeTruthy();
