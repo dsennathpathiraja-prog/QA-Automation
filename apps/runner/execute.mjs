@@ -2,18 +2,15 @@
  * Runs prepared work-item cases against QA_TARGET_URL.
  * Prefers Playwright when installed; otherwise opens the URL over HTTP (same allowlist as reachability).
  * Prints PROGRESS_JSON while a case runs and one RESULT_JSON line per case for the worker to parse.
- * Screenshots are kept small (JPEG viewport) so Docker log tail/JSON transport cannot drop results.
+ * Screenshots are compact JPEG viewports; never emit the historic 1×1 red stub as evidence.
  */
 import { request as httpRequest } from 'node:http';
 import { connect as tlsConnect } from 'node:tls';
-import { readFile, writeFile } from 'node:fs/promises';
 
 const timeoutMs = 15_000;
 const target = process.env.QA_TARGET_URL ?? '';
 const allowed = (process.env.QA_ALLOWED_HOSTS ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy || '';
-/** Tiny 1×1 PNG used when a real screenshot cannot be taken. */
-const STUB_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 /** Keep RESULT_JSON lines well under Docker/HTTP limits. */
 const MAX_SCREENSHOT_B64 = 120_000;
 
@@ -87,13 +84,20 @@ function emitProgress(item, status, message, steps) {
 }
 
 function emitResult(row) {
-  const screenshotPng = shrinkScreenshot(typeof row.screenshotPng === 'string' ? row.screenshotPng : STUB_PNG);
-  console.log(`RESULT_JSON ${JSON.stringify({ ...row, screenshotPng })}`);
+  const shot = typeof row.screenshotPng === 'string' && row.screenshotPng.length >= 200
+    ? shrinkScreenshot(row.screenshotPng)
+    : undefined;
+  const payload = { ...row };
+  if (shot) payload.screenshotPng = shot;
+  else delete payload.screenshotPng;
+  console.log(`RESULT_JSON ${JSON.stringify(payload)}`);
 }
 
+/** Prefer a smaller JPEG over dropping evidence entirely. */
 function shrinkScreenshot(b64) {
-  if (!b64 || b64.length <= MAX_SCREENSHOT_B64) return b64 || STUB_PNG;
-  return STUB_PNG;
+  if (!b64) return undefined;
+  if (b64.length <= MAX_SCREENSHOT_B64) return b64;
+  return undefined;
 }
 
 function blocked(item, message) {
@@ -103,7 +107,6 @@ function blocked(item, message) {
     name: item.name,
     status: 'Blocked',
     message,
-    screenshotPng: STUB_PNG,
     steps: names.map((name) => ({ name, status: 'Blocked' })),
   };
 }
@@ -114,6 +117,23 @@ async function loadPlaywright() {
   } catch {
     return undefined;
   }
+}
+
+/** Capture a viewport JPEG, retrying at lower quality / crop so we stay under the log size cap. */
+async function captureViewport(page) {
+  for (const quality of [40, 28, 18, 12]) {
+    const buf = await page.screenshot({ type: 'jpeg', quality, fullPage: false });
+    const b64 = buf.toString('base64');
+    if (b64.length <= MAX_SCREENSHOT_B64) return b64;
+  }
+  const clipped = await page.screenshot({
+    type: 'jpeg',
+    quality: 12,
+    fullPage: false,
+    clip: { x: 0, y: 0, width: 640, height: 360 },
+  });
+  const b64 = clipped.toString('base64');
+  return b64.length <= MAX_SCREENSHOT_B64 ? b64 : undefined;
 }
 
 async function runWithPlaywright(pw, u, item) {
@@ -128,21 +148,14 @@ async function runWithPlaywright(pw, u, item) {
     emitProgress(item, 'Running', 'Opening page', stepsAt(names, 0));
     const res = await page.goto(u.href, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
     emitProgress(item, 'Running', 'Capturing screenshot', stepsAt(names, Math.min(1, names.length - 1), 'Passed', 'Running', 'Queued'));
-    const path = `/tmp/case-${String(item.id).replace(/[^a-zA-Z0-9_-]/g, '')}.jpg`;
-    await page.screenshot({ path, type: 'jpeg', quality: 42, fullPage: false });
-    const png = Buffer.from(await readFile(path)).toString('base64');
+    const screenshotPng = await captureViewport(page).catch(() => undefined);
     const statusCode = res?.status() ?? 0;
     const doneSteps = (fill) => names.map((name) => ({ name, status: fill }));
-    if (!res) {
-      return { testCaseId: item.id, name: item.name, status: 'Blocked', message: 'did not answer', screenshotPng: png, steps: doneSteps('Blocked') };
-    }
-    if (statusCode >= 500) {
-      return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${statusCode}`, screenshotPng: png, steps: doneSteps('Failed') };
-    }
-    if (statusCode >= 200) {
-      return { testCaseId: item.id, name: item.name, status: 'Passed', message: `answered ${statusCode}`, screenshotPng: png, steps: doneSteps('Passed') };
-    }
-    return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${statusCode}`, screenshotPng: png, steps: doneSteps('Failed') };
+    const base = { testCaseId: item.id, name: item.name, ...(screenshotPng ? { screenshotPng } : {}), steps: doneSteps(!res ? 'Blocked' : statusCode >= 500 || statusCode < 200 ? 'Failed' : 'Passed') };
+    if (!res) return { ...base, status: 'Blocked', message: 'did not answer', steps: doneSteps('Blocked') };
+    if (statusCode >= 500) return { ...base, status: 'Failed', message: `answered ${statusCode}`, steps: doneSteps('Failed') };
+    if (statusCode >= 200) return { ...base, status: 'Passed', message: `answered ${statusCode}`, steps: doneSteps('Passed') };
+    return { ...base, status: 'Failed', message: `answered ${statusCode}`, steps: doneSteps('Failed') };
   } catch (e) {
     const message = e instanceof Error ? e.message : 'did not answer';
     return blocked(item, message);
@@ -157,12 +170,11 @@ async function runWithHttp(u, item) {
   try {
     const status = proxy ? await throughProxy(u, proxy) : await direct(u);
     emitProgress(item, 'Running', 'Recording result', stepsAt(names, Math.min(1, names.length - 1), 'Passed', 'Running', 'Queued'));
-    const screenshotPng = STUB_PNG;
-    await writeFile(`/tmp/case-${String(item.id).replace(/[^a-zA-Z0-9_-]/g, '')}.png`, Buffer.from(STUB_PNG, 'base64')).catch(() => undefined);
+    // HTTP probe cannot capture a page image — omit screenshot (UI shows empty state, not a red stub).
     const done = (fill) => names.map((name) => ({ name, status: fill }));
-    if (status >= 500) return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${status}`, screenshotPng, steps: done('Failed') };
-    if (status >= 200) return { testCaseId: item.id, name: item.name, status: 'Passed', message: `answered ${status}`, screenshotPng, steps: done('Passed') };
-    return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${status}`, screenshotPng, steps: done('Failed') };
+    if (status >= 500) return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${status}`, steps: done('Failed') };
+    if (status >= 200) return { testCaseId: item.id, name: item.name, status: 'Passed', message: `answered ${status}`, steps: done('Passed') };
+    return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${status}`, steps: done('Failed') };
   } catch {
     return blocked(item, 'did not answer');
   }

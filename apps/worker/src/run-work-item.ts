@@ -1,9 +1,12 @@
 import { PlatformError, type RunnerLauncher, type RunnerSpec } from '@qa/domain';
-import type { CaseRunStatus, CaseStepProgress, TestCaseService, WorkItemRunRecord } from '@qa/application';
+import { isPlaceholderScreenshot, type CaseRunStatus, type CaseStepProgress, type TestCaseService, type WorkItemRunRecord } from '@qa/application';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const STUB_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const NO_RESULTS = 'The runner finished without case results.';
+
+function realScreenshot(b64: string | undefined): string | undefined {
+  return b64 && !isPlaceholderScreenshot(b64) ? b64 : undefined;
+}
 
 export interface CaseOutcome {
   testCaseId: string;
@@ -62,7 +65,6 @@ export function parseCaseResults(text: string, fallback: WorkItemCaseInput[]): C
       name: c.name,
       status,
       message: `answered ${answered}`,
-      screenshotPng: STUB_PNG,
       steps: defaultSteps(c.steps, status === 'Passed' ? 'Passed' : 'Failed'),
     }));
   }
@@ -71,7 +73,7 @@ export function parseCaseResults(text: string, fallback: WorkItemCaseInput[]): C
   const message = excerpt
     ? `${NO_RESULTS} Rebuild qa-runner:local with the runners compose profile if the image predates work-item execute. Log: ${excerpt}`
     : `${NO_RESULTS} Rebuild qa-runner:local with the runners compose profile if the image predates work-item execute.`;
-  return fallback.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message, screenshotPng: STUB_PNG, steps: defaultSteps(c.steps, 'Blocked') }));
+  return fallback.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message, steps: defaultSteps(c.steps, 'Blocked') }));
 }
 
 /** Merge seeded placeholders with PROGRESS_JSON / RESULT_JSON lines for live UI updates. */
@@ -102,7 +104,7 @@ export function mergeLiveProgress(text: string, seeded: CaseOutcome[]): CaseOutc
           status,
           message: typeof row.message === 'string' ? row.message : current.message,
           steps: steps ?? current.steps,
-          screenshotPng: typeof row.screenshotPng === 'string' ? row.screenshotPng : current.screenshotPng,
+          screenshotPng: realScreenshot(typeof row.screenshotPng === 'string' ? row.screenshotPng : current.screenshotPng),
         });
       } catch {
         /* ignore bad progress lines */
@@ -124,7 +126,7 @@ export function mergeLiveProgress(text: string, seeded: CaseOutcome[]): CaseOutc
         name: row.name,
         status,
         message: typeof row.message === 'string' ? row.message : '',
-        screenshotPng: typeof row.screenshotPng === 'string' ? row.screenshotPng : STUB_PNG,
+        screenshotPng: realScreenshot(typeof row.screenshotPng === 'string' ? row.screenshotPng : prior?.screenshotPng),
         steps: Array.isArray(row.steps) ? parseSteps(row.steps) : markStepsDone(prior?.steps, status),
         squashExecutionId: prior?.squashExecutionId,
       });
@@ -231,16 +233,17 @@ async function viaDirect(o: {
   }));
   if (o.onProgress) await o.onProgress(seeded);
   if (!o.probe) {
-    return o.cases.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message: 'No probe was configured for a direct run.', screenshotPng: STUB_PNG, steps: defaultSteps(c.steps, 'Blocked') }));
+    return o.cases.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message: 'No probe was configured for a direct run.', steps: defaultSteps(c.steps, 'Blocked') }));
   }
   try {
     const res = await o.probe(o.url);
     const status: CaseRunStatus = res.status >= 500 ? 'Failed' : res.status >= 200 ? 'Passed' : 'Failed';
     const message = `answered ${res.status}`;
-    return o.cases.map((c) => ({ testCaseId: c.id, name: c.name, status, message, screenshotPng: STUB_PNG, steps: defaultSteps(c.steps, status) }));
+    // Probe has no browser — omit screenshot so the UI shows an empty state instead of a red stub.
+    return o.cases.map((c) => ({ testCaseId: c.id, name: c.name, status, message, steps: defaultSteps(c.steps, status) }));
   } catch (e) {
     const message = e instanceof PlatformError ? e.message : 'did not answer';
-    return o.cases.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked', message, screenshotPng: STUB_PNG, steps: defaultSteps(c.steps, 'Blocked') }));
+    return o.cases.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked', message, steps: defaultSteps(c.steps, 'Blocked') }));
   }
 }
 
@@ -261,7 +264,7 @@ function parseResultLines(text: string): CaseOutcome[] {
         name: row.name,
         status,
         message: typeof row.message === 'string' ? row.message : '',
-        screenshotPng: typeof row.screenshotPng === 'string' ? row.screenshotPng : STUB_PNG,
+        screenshotPng: realScreenshot(typeof row.screenshotPng === 'string' ? row.screenshotPng : undefined),
         steps: Array.isArray(row.steps) ? parseSteps(row.steps) : undefined,
       });
     } catch {
@@ -369,7 +372,7 @@ export async function processWorkItemExecutions(o: {
     await o.testCases.completeWorkItemExecution(claimed.id, {
       status: 'failed',
       squashSync: message,
-      results: cases.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message, screenshotPng: STUB_PNG })),
+      results: cases.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message })),
     });
   }
   return 'busy';
