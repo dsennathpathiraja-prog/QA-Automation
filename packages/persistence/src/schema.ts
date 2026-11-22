@@ -578,6 +578,34 @@ export const automationMapping = pgTable(
   ],
 );
 
+/* ---------- regression collections (Phase 9 E4 curated smoke) ---------- */
+
+export const regressionCollection = pgTable(
+  'regression_collection',
+  {
+    id: id(),
+    key: text('key').notNull(),
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('regression_collection_key_uq').on(t.key)],
+);
+
+export const regressionCollectionMember = pgTable(
+  'regression_collection_member',
+  {
+    collectionId: uuid('collection_id').notNull(),
+    squashCaseId: text('squash_case_id').notNull(),
+    position: integer('position').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.collectionId, t.squashCaseId], name: 'regression_collection_member_pk' }),
+    index('regression_collection_member_collection_idx').on(t.collectionId),
+  ],
+);
+
 /* ---------- governance ---------- */
 
 /** Append-only hash chain. Writers serialise through an advisory lock so seq and prev_hash never fork. */

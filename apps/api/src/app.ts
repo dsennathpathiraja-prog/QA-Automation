@@ -17,6 +17,7 @@ import {
   RegressionScopeService,
   type AutomationService,
   type EnvironmentService,
+  type RegressionCollectionService,
   type TestCaseService,
   type WorkflowService,
 } from '@qa/application';
@@ -46,6 +47,8 @@ export interface AppDeps {
   workflows?: WorkflowService;
   testCases?: TestCaseService;
   automation?: AutomationService;
+  /** Phase 9 E4 — curated smoke / platform regression collections. */
+  regressionCollections?: RegressionCollectionService;
 }
 
 const CLIENT_ERRORS: Partial<Record<string, number>> = { validation: 400, 'not-found': 404, conflict: 409, unsupported: 400, denied: 403 };
@@ -133,20 +136,27 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   if (deps.automation) {
     const scope = new RegressionScopeService({
-      collections: deps.testCases
+      collections: deps.regressionCollections || deps.testCases
         ? {
-          caseIdsForCollectionKey: async (key) => caseIdsFromPlatformCollection({
-            collectionKey: key,
-            listCollections: () => deps.testCases!.collections(),
-            getCollection: (id) => deps.testCases!.collection(id).then((c) => ({ cases: c.cases })).catch(() => undefined),
-            listAssets: () => deps.automation!.listAssets(),
-            listMappings: () => deps.automation!.listMappings(),
-          }),
+          caseIdsForCollectionKey: async (key) => {
+            if (deps.regressionCollections) {
+              const curated = await deps.regressionCollections.caseIdsForKey(key);
+              if (curated !== undefined) return curated;
+            }
+            if (!deps.testCases) return undefined;
+            return caseIdsFromPlatformCollection({
+              collectionKey: key,
+              listCollections: () => deps.testCases!.collections(),
+              getCollection: (id) => deps.testCases!.collection(id).then((c) => ({ cases: c.cases })).catch(() => undefined),
+              listAssets: () => deps.automation!.listAssets(),
+              listMappings: () => deps.automation!.listMappings(),
+            });
+          },
         }
         : undefined,
       // Suite/campaign Squash expansion runs on the worker; prep API still accepts caseIds overrides.
     });
-    registerAutomationRoutes(app, deps.automation, scope);
+    registerAutomationRoutes(app, deps.automation, scope, deps.regressionCollections);
   } else {
     app.get('/api/v1/automation/assets', { config: { access: requires('automation.view') } }, async () => ({ items: [] }));
     app.get('/api/v1/automation/mappings', { config: { access: requires('automation.view') } }, async () => ({ items: [] }));

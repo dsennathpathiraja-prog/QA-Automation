@@ -48,7 +48,7 @@ export interface RegressionScopeSquashPort {
   listCampaignCaseIds(input: { projectId: string; campaignId: string; iterationId?: string }): Promise<string[]>;
 }
 
-/** Platform collection key → Squash case ids (stub until E4 curated smoke). */
+/** Platform collection key → Squash case ids (Phase 9 E4 curated regression collections). */
 export interface RegressionScopeCollectionPort {
   caseIdsForCollectionKey(key: string): Promise<string[] | undefined>;
 }
@@ -190,7 +190,7 @@ export class RegressionScopeService {
     const key = text(input.collectionKey);
     if (!key) throw new PlatformError('validation', 'A platform collectionKey is required (for example smoke).');
 
-    // Explicit ids win (operator override / tests); E4 will own curated membership.
+    // Explicit ids win (operator override / tests).
     const override = uniqueCaseIds(input.caseIds ?? []);
     if (override.length > 0) {
       return {
@@ -205,19 +205,19 @@ export class RegressionScopeService {
     if (!this.deps.collections) {
       throw new PlatformError(
         'denied',
-        `Platform collection "${key}" lookup is not wired on this process (E4 curated smoke). Pass caseIds to preview, or run configure-scope on the worker.`,
+        `Platform collection "${key}" lookup is not wired on this process. Pass caseIds to preview, seed the smoke collection, or run configure-scope on the worker.`,
       );
     }
     const found = await this.deps.collections.caseIdsForCollectionKey(key);
     if (found === undefined) {
       throw new PlatformError(
         'not-found',
-        `Platform collection "${key}" was not found. Create it under Test Cases or wait for E4 curated smoke.`,
+        `Platform regression collection "${key}" was not found. Ensure smoke is seeded, or sync approved mappings into the collection.`,
       );
     }
     const caseIds = uniqueCaseIds(found);
     if (caseIds.length === 0) {
-      emptyScopeError(`Platform collection "${key}" has no Squash-mapped members`);
+      emptyScopeError(`Platform regression collection "${key}" has no Squash case id members`);
     }
     return {
       caseIds,

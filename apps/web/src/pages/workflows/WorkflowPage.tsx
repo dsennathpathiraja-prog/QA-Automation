@@ -399,6 +399,12 @@ export function WorkflowPage() {
                       Regression expands squashScope / selection into Squash case ids (<code>rg.configure-scope</code>), then approved-only resolve and execute.
                       Example squashScope JSON: {'{"projectId":"1"}'} or {'{"projectId":"1","campaignId":"10","iterationId":"20"}'}.
                       Selected mode selection: {'{"mode":"selected","caseIds":["238","239"]}'}.
+                      {(def?.spec?.parameters ?? []).some((p) => {
+                        const pinned = p.pinned && typeof p.pinned === 'object' ? p.pinned as { collectionKey?: string } : undefined;
+                        return p.name === 'selection' && pinned?.collectionKey === 'smoke';
+                      })
+                        ? ' Smoke Regression pins collectionKey smoke — curated platform members, no Squash tags.'
+                        : ''}
                     </Alert>
                   )}
                   {runParams.map((p) => (
@@ -448,7 +454,7 @@ export function WorkflowPage() {
                         key={p.name}
                         id={`param-${p.name}`}
                         label="Case selection (JSON)"
-                        helperText='Selected: {"mode":"selected","caseIds":["238"]}. Collection uses pinned smoke when the template sets it.'
+                        helperText='Selected: {"mode":"selected","caseIds":["238"]}. Smoke template pins {"mode":"regression-collection","collectionKey":"smoke"}.'
                         multiline
                         minRows={3}
                         value={params[p.name] ?? ''}

@@ -18,8 +18,8 @@ import { EgressPolicy, HardenedHttpClient, OllamaAdapter, OpenAiCompatibleAdapte
 import { LlmGateway, StaticAssignmentResolver, StaticProviderRegistry, type DataClass, type LlmPort, type ProviderEntry } from '@qa/llm';
 import { SecretRedactor } from '@qa/security';
 import { tick as engineTick } from '@qa/workflow-engine';
-import { AutomationService, caseIdsFromPlatformCollection, TestCaseService } from '@qa/application';
-import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgAutomationRepository, PgConnectorRepository, PgEnvironmentRepository, PgExecutionRepository, PgInstanceResolver, PgLlmAuditSink, PgOperationLogSink, PgRunPolicyStore, PgTestCaseRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
+import { AutomationService, caseIdsFromPlatformCollection, RegressionCollectionService, TestCaseService } from '@qa/application';
+import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgAutomationRepository, PgConnectorRepository, PgEnvironmentRepository, PgExecutionRepository, PgInstanceResolver, PgLlmAuditSink, PgOperationLogSink, PgRegressionCollectionRepository, PgRunPolicyStore, PgTestCaseRepository, PgTestRequestQueue, pingDb, seedRegressionCollections } from '@qa/persistence';
 import { publishGeneratedCases, type GeneratedCase } from './publish-cases';
 import { buildWorkerApp } from './app';
 import { ConnectorTester } from './connector-tester';
@@ -122,6 +122,15 @@ const testCases = conn ? new TestCaseService({ cases: new PgTestCaseRepository(c
 const automation = conn
   ? new AutomationService({ automation: new PgAutomationRepository(conn.db), audit: new PgAuditSink(new PgAuditLog(conn.db)) })
   : undefined;
+const regressionCollections = conn
+  ? new RegressionCollectionService({
+    collections: new PgRegressionCollectionRepository(conn.db),
+    audit: new PgAuditSink(new PgAuditLog(conn.db)),
+  })
+  : undefined;
+if (conn) {
+  void seedRegressionCollections(conn.db).catch((err) => log('regression collection seed failed', { error: String(err) }));
+}
 const environments = conn ? new PgEnvironmentRepository(conn.db) : undefined;
 
 const ALL_DATA_CLASSES: DataClass[] = ['story', 'code', 'page', 'screenshot', 'test-data', 'evidence'];
@@ -226,15 +235,22 @@ const loop = new WorkerLoop({
               actor,
             }))
             : undefined;
-          const collections = testCases && automation
+          const collections = regressionCollections || (testCases && automation)
             ? {
-              caseIdsForCollectionKey: async (key: string) => caseIdsFromPlatformCollection({
-                collectionKey: key,
-                listCollections: () => testCases.collections(),
-                getCollection: (id) => testCases.collection(id).then((c) => c ? { cases: c.cases } : undefined).catch(() => undefined),
-                listAssets: () => automation.listAssets(),
-                listMappings: () => automation.listMappings(),
-              }),
+              caseIdsForCollectionKey: async (key: string) => {
+                if (regressionCollections) {
+                  const curated = await regressionCollections.caseIdsForKey(key);
+                  if (curated !== undefined) return curated;
+                }
+                if (!testCases || !automation) return undefined;
+                return caseIdsFromPlatformCollection({
+                  collectionKey: key,
+                  listCollections: () => testCases.collections(),
+                  getCollection: (id) => testCases.collection(id).then((c) => c ? { cases: c.cases } : undefined).catch(() => undefined),
+                  listAssets: () => automation.listAssets(),
+                  listMappings: () => automation.listMappings(),
+                });
+              },
             }
             : undefined;
           return performConfigureScope(step, { squash: squashPort, collections });

@@ -2,6 +2,7 @@ import {
   AutomationAssetSchema,
   AutomationMappingListResponse,
   AutomationResolveResponse,
+  RegressionCollectionSchema,
   RegressionResolveResponse,
   RegressionScopeResponse,
 } from '@qa/contracts';
@@ -42,9 +43,21 @@ export function AutomationMapping() {
     queryFn: () => api.get('/api/v1/automation/mappings', AutomationMappingListResponse),
   });
 
+  const smoke = useQuery({
+    queryKey: ['regression-collection', 'smoke'],
+    queryFn: () => api.get('/api/v1/automation/collections/smoke', RegressionCollectionSchema),
+  });
+
   const approveAsset = useMutation({
     mutationFn: (assetId: string) => api.post(`/api/v1/automation/assets/${assetId}/approve`, {}, AutomationAssetSchema),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['automation-mappings'] }),
+  });
+
+  const syncSmoke = useMutation({
+    mutationFn: () => api.post('/api/v1/automation/collections/smoke/sync-approved', {}, RegressionCollectionSchema),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['regression-collection', 'smoke'] });
+    },
   });
 
   const resolve = useMutation({
@@ -139,6 +152,37 @@ export function AutomationMapping() {
           )}
         </Card>
       )}
+
+      <Card label="Smoke regression collection">
+        <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
+          Platform collection key <code className="text-xs">smoke</code> stores Squash case ids for template #7 (Smoke Regression).
+          Sync pulls ids from <strong>approved</strong> mappings — no Squash tags required.
+        </p>
+        {smoke.isError && <ErrorNotice message="Smoke collection could not be loaded." onRetry={() => void smoke.refetch()} />}
+        {smoke.isPending && <p role="status">Loading smoke collection…</p>}
+        {smoke.data && (
+          <p className="mb-2 text-sm font-mono" role="status">
+            smoke: {smoke.data.size} member{smoke.data.size === 1 ? '' : 's'}
+            {smoke.data.squashCaseIds.length > 0 ? ` → ${smoke.data.squashCaseIds.join(', ')}` : ' (empty — sync approved mappings)'}
+          </p>
+        )}
+        {session.can('automation.approve') && (
+          <button
+            type="button"
+            className="rounded border border-slate-300 px-3 py-1 text-sm dark:border-slate-600"
+            disabled={syncSmoke.isPending}
+            onClick={() => syncSmoke.mutate()}
+          >
+            Sync approved mappings into smoke
+          </button>
+        )}
+        {syncSmoke.isError && <p className="mt-2 text-sm text-red-700 dark:text-red-300" role="alert">Smoke sync failed.</p>}
+        {syncSmoke.data && (
+          <p className="mt-2 text-sm" role="status">
+            Synced {syncSmoke.data.size} approved Squash case id{syncSmoke.data.size === 1 ? '' : 's'} into smoke.
+          </p>
+        )}
+      </Card>
 
       <Card label="Resolve Squash case">
         <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
@@ -245,6 +289,9 @@ export function AutomationMapping() {
                 onChange={(e) => setScopeCollectionKey(e.target.value)}
                 placeholder="smoke"
               />
+              <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">
+                Leave case ids empty to expand curated members (smoke). Override only for API preview.
+              </span>
             </label>
           )}
           <label className="block text-sm">

@@ -1,8 +1,8 @@
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { ROLES, ROLE_PERMISSIONS } from '@qa/domain';
 import { DEFAULT_GROUP_MAPPINGS } from '@qa/security';
 import type { Db } from './db';
-import { idpGroupMapping, role, rolePermission } from './schema';
+import { idpGroupMapping, regressionCollection, role, rolePermission } from './schema';
 
 const ROLE_NAMES: Record<string, string> = {
   administrator: 'Administrator',
@@ -42,4 +42,19 @@ export async function seedDefaultGroupMappings(db: Db): Promise<number> {
     await tx.insert(idpGroupMapping).values(values);
     return values.length;
   });
+}
+
+/**
+ * Phase 9 E4 — ensure the curated `smoke` regression collection exists.
+ * Members (Squash case ids) are curated separately / synced from approved mappings.
+ */
+export async function seedRegressionCollections(db: Db): Promise<{ created: boolean }> {
+  const existing = await db.select({ id: regressionCollection.id }).from(regressionCollection).where(eq(regressionCollection.key, 'smoke')).limit(1);
+  if (existing.length > 0) return { created: false };
+  await db.insert(regressionCollection).values({
+    key: 'smoke',
+    name: 'Smoke',
+    description: 'Curated platform smoke collection for Regression template #7 (Squash case id members).',
+  });
+  return { created: true };
 }

@@ -15,7 +15,7 @@ Operators select a Squash project plus suite or campaign (probe-aware), or a pla
 
 - **suite** (`all-in-suite`): all test cases in the Squash project via `tm.testcase.list`. Explicit `suiteId` errors clearly when `tm.suite.list` is unsupported (Squash probe).
 - **campaign**: campaign (+ optional iteration) → `GET /iterations/{id}/test-plan` via `tm.iteration.testplan.list`. Clear error when campaign/test-plan probe is unavailable or the plan is empty.
-- **collection**: platform `collectionKey` (e.g. `smoke`) → members mapped to Squash via automation assets (E4 owns curated smoke; E3 stub wiring).
+- **collection**: platform `collectionKey` (e.g. `smoke`) → curated Squash case id members (E4 `regression_collection`; see [`phase9-e4-regression-collections.md`](./phase9-e4-regression-collections.md)).
 - **selected**: explicit `caseIds`.
 
 ## UI

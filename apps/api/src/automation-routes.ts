@@ -6,6 +6,9 @@ import {
   AutomationResolveResponse,
   CreateAutomationMappingRequest,
   RegisterAutomationAssetRequest,
+  RegressionCollectionListResponse,
+  RegressionCollectionSchema,
+  ReplaceRegressionCollectionMembersRequest,
   RegressionResolveRequest,
   RegressionResolveResponse,
   RegressionScopeRequest,
@@ -15,6 +18,7 @@ import { PlatformError } from '@qa/domain';
 import {
   parseRegressionScopeInput,
   type AutomationService,
+  type RegressionCollectionService,
   type RegressionScopeService,
 } from '@qa/application';
 import { requires } from '@qa/security';
@@ -37,6 +41,7 @@ export function registerAutomationRoutes(
   app: FastifyInstance,
   automation: AutomationService,
   scope?: RegressionScopeService,
+  collections?: RegressionCollectionService,
 ) {
   app.get('/api/v1/automation/assets', { config: { access: requires('automation.view') } }, async (req) => {
     const status = (req.query as { status?: string }).status;
@@ -94,5 +99,41 @@ export function registerAutomationRoutes(
     const raw = body(RegressionScopeRequest, req.body, 'regression scope');
     const input = parseRegressionScopeInput(raw);
     return RegressionScopeResponse.parse(await scope.resolve(input));
+  });
+
+  /** Phase 9 E4 — curated platform regression collections (smoke). */
+  app.get('/api/v1/automation/collections', { config: { access: requires('automation.view') } }, async () => {
+    if (!collections) throw new PlatformError('denied', 'Regression collections are not configured on this API.');
+    return RegressionCollectionListResponse.parse({ items: await collections.list() });
+  });
+
+  app.get('/api/v1/automation/collections/:key', { config: { access: requires('automation.view') } }, async (req) => {
+    if (!collections) throw new PlatformError('denied', 'Regression collections are not configured on this API.');
+    const key = String((req.params as { key: string }).key ?? '').trim();
+    return RegressionCollectionSchema.parse(await collections.getByKey(key));
+  });
+
+  app.put('/api/v1/automation/collections/:key/members', { config: { access: requires('automation.register') } }, async (req) => {
+    if (!collections) throw new PlatformError('denied', 'Regression collections are not configured on this API.');
+    const key = String((req.params as { key: string }).key ?? '').trim();
+    const input = body(ReplaceRegressionCollectionMembersRequest, req.body, 'replace regression collection members');
+    return RegressionCollectionSchema.parse(
+      await collections.replaceMembers({ id: req.principal!.id }, key, input.squashCaseIds),
+    );
+  });
+
+  /**
+   * Replace collection members with Squash case ids from approved automation mappings
+   * (keeps smoke compatible with seed/approve; no Squash tags).
+   */
+  app.post('/api/v1/automation/collections/:key/sync-approved', { config: { access: requires('automation.approve') } }, async (req) => {
+    if (!collections) throw new PlatformError('denied', 'Regression collections are not configured on this API.');
+    const key = String((req.params as { key: string }).key ?? '').trim();
+    return RegressionCollectionSchema.parse(
+      await collections.syncFromApprovedMappings({ id: req.principal!.id }, key, async () => {
+        const mappings = await automation.listMappings();
+        return mappings.filter((m) => m.status === 'approved').map((m) => m.squashCaseId);
+      }),
+    );
   });
 }

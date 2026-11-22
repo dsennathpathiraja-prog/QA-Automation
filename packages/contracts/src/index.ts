@@ -471,6 +471,33 @@ export type NotAutomatedCase = z.infer<typeof NotAutomatedCaseSchema>;
 export type RegressionResolveRequest = z.infer<typeof RegressionResolveRequest>;
 export type RegressionResolveResponse = z.infer<typeof RegressionResolveResponse>;
 
+/** Phase 9 E4 — curated platform regression collections (smoke) with Squash case id members. */
+export const RegressionCollectionListItemSchema = z.object({
+  id: z.string(),
+  key: z.string(),
+  name: z.string(),
+  description: z.string(),
+  size: z.number(),
+  updatedAt: z.string(),
+});
+export const RegressionCollectionListResponse = z.object({ items: z.array(RegressionCollectionListItemSchema) });
+export const RegressionCollectionSchema = z.object({
+  id: z.string(),
+  key: z.string(),
+  name: z.string(),
+  description: z.string(),
+  squashCaseIds: z.array(z.string()),
+  size: z.number(),
+  updatedAt: z.string(),
+});
+export const ReplaceRegressionCollectionMembersRequest = z.object({
+  squashCaseIds: z.array(z.string().min(1)),
+});
+export type RegressionCollectionListItem = z.infer<typeof RegressionCollectionListItemSchema>;
+export type RegressionCollectionListResponse = z.infer<typeof RegressionCollectionListResponse>;
+export type RegressionCollection = z.infer<typeof RegressionCollectionSchema>;
+export type ReplaceRegressionCollectionMembersRequest = z.infer<typeof ReplaceRegressionCollectionMembersRequest>;
+
 /** Phase 9 E3 — suite / campaign / collection / selected → ordered Squash case ids. */
 export const RegressionScopeKindSchema = z.enum(['suite', 'campaign', 'collection', 'selected']);
 export const RegressionScopeRequest = z.object({
