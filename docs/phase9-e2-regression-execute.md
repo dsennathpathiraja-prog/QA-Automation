@@ -29,4 +29,4 @@ docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
 3. Start a Regression workflow with `squashCaseIds` / scope covering both ids and an environment with an application URL — or after resolve, confirm execute step summary lists Passed (approved) and Skipped (Not Automated).
 4. Open **Executions** → work item `rg:<runId>` for live progress and screenshots.
 
-Squash status sync remains Phase 9 E5 (`rg.update-squash`).
+Squash status sync and the regression report are Phase 9 E5 — see [`phase9-e5-regression-report.md`](./phase9-e5-regression-report.md).

@@ -552,3 +552,44 @@ export const RegressionExecuteResponse = z.object({
 });
 export type RegressionCaseResult = z.infer<typeof RegressionCaseResultSchema>;
 export type RegressionExecuteResponse = z.infer<typeof RegressionExecuteResponse>;
+
+/** Phase 9 E5 — `rg.update-squash` sync outputs (degrade when Squash is not writable). */
+export const RegressionSyncResponse = z.object({
+  summary: z.string(),
+  writable: z.boolean(),
+  synced: z.number().int().nonnegative(),
+  attached: z.number().int().nonnegative().optional(),
+  degraded: z.boolean(),
+  results: z.array(RegressionCaseResultSchema).optional(),
+});
+export type RegressionSyncResponse = z.infer<typeof RegressionSyncResponse>;
+
+/** Phase 9 E5 — `rg.regression-report` artifact + optional previous-run compare. */
+export const RegressionReportTalliesSchema = z.object({
+  passed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  blocked: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+  notAutomated: z.number().int().nonnegative(),
+});
+export const RegressionReportCompareSchema = z.object({
+  previousRunId: z.string(),
+  previousWorkItem: z.string().optional(),
+  deltaCount: z.number().int().nonnegative(),
+  deltas: z.array(z.object({
+    name: z.string(),
+    squashCaseId: z.string().optional(),
+    from: z.string(),
+    to: z.string(),
+  })),
+});
+export const RegressionReportResponse = z.object({
+  artifactMarkdown: z.string(),
+  artifactPath: z.string(),
+  tallies: RegressionReportTalliesSchema,
+  syncSummary: z.string().optional(),
+  compare: RegressionReportCompareSchema.optional(),
+});
+export type RegressionReportTallies = z.infer<typeof RegressionReportTalliesSchema>;
+export type RegressionReportCompare = z.infer<typeof RegressionReportCompareSchema>;
+export type RegressionReportResponse = z.infer<typeof RegressionReportResponse>;

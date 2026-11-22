@@ -212,6 +212,8 @@ After cases are published to Squash, the worker seeds a **draft** automation ass
 
 **Regression execute (Phase 9 E2):** after approve, a Regression workflow’s `rg.execute-tests` step runs only approved assets via the Playwright runner (live progress + screenshots on Executions as `rg:<runId>`). Draft/unmapped stay Skipped / Not Automated — no explore or generate. See [`docs/phase9-e2-regression-execute.md`](../../../docs/phase9-e2-regression-execute.md).
 
+**Regression report + Squash update (Phase 9 E5):** `rg.update-squash` pushes statuses when a WRITE Squash connector is on (otherwise an explicit degrade message); `rg.regression-report` writes `regression-report.md` with tallies, evidence links, and optional previous-run compare. See [`docs/phase9-e5-regression-report.md`](../../../docs/phase9-e5-regression-report.md).
+
 **Regression scope (Phase 9 E3):** pick suite (project cases), campaign/iteration, platform `collectionKey`, or selected case ids — `POST /api/v1/automation/scope` or Automation Mapping → **Expand scope**, then resolve. Live Squash campaign listing runs in `rg.configure-scope`. See [`docs/phase9-e3-regression-scope.md`](../../../docs/phase9-e3-regression-scope.md).
 
 **Smoke collection (Phase 9 E4):** curated `regression_collection` key `smoke` holds Squash case ids (no Squash tags). After approving mappings, **Sync approved mappings into smoke** on Automation Mapping (or `POST /api/v1/automation/collections/smoke/sync-approved`), then expand scope with `collectionKey: smoke` or start **Smoke Regression**. See [`docs/phase9-e4-regression-collections.md`](../../../docs/phase9-e4-regression-collections.md).
