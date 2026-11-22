@@ -37,7 +37,7 @@ export interface AppDeps {
   mappings?: readonly GroupMapping[];
   readiness?: Record<string, () => Promise<boolean>>;
   /** When present, the OIDC login routes are registered; `sessions` must be the matching resolver. */
-  /** Read-only view of configured model providers for the AI Models screen. */
+  /** Read-only view of configured model providers (API; operator Models UI removed). */
   llm?: { providers(): Promise<LlmProvidersResponse['items']> };
   auth?: { config: AuthConfig; resolver: OidcSessionResolver };
   /** Connector management. Without it the connector list stays empty. */

@@ -14,7 +14,7 @@ Operators open finished Regression / work-item runs and review:
 - **Open report / Open evidence** select the run immediately (local state) and sync `?focus=` for deep links; report view shows stacked-bar + donut charts for outcome tallies.
 - Workflow **Run & output** shows **Open report** / **Open evidence** when execute outputs include `evidenceExecutionId`.
 - Report Markdown evidence links deep-link to `/evidence?focus=…` (not the raw screenshot JSON API).
-- Automation Mapping sync/resolve/scope tools are unchanged and not required for reviewing finished runs.
+- Automation sync/resolve/scope APIs are unchanged and not required for reviewing finished runs (operator Mapping UI removed).
 
 ## Verify (PowerShell-safe)
 

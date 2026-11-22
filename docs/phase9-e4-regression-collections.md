@@ -24,7 +24,7 @@ Migration: `packages/persistence/migrations/0018_regression_collections.sql`. St
 
 ## UI
 
-- **Automation Mapping** — Smoke collection card + **Sync approved mappings into smoke**; scope kind **collection** defaults to `smoke`.
+- Smoke collection APIs (`…/collections/smoke/sync-approved`); scope kind **collection** defaults to `smoke`. Operator Mapping UI removed.
 - **Workflow Run** — Smoke template pins selection; run wizard notes `collectionKey: smoke`.
 
 ## Verify (PowerShell-safe)
@@ -35,6 +35,6 @@ docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
 ```
 
 1. Approve at least one automation mapping.
-2. Automation Mapping → **Sync approved mappings into smoke** (or `POST /api/v1/automation/collections/smoke/sync-approved`).
+2. `POST /api/v1/automation/collections/smoke/sync-approved`.
 3. Expand scope with kind `collection` / key `smoke` (leave case ids empty) → case ids appear.
 4. Preview Regression resolve, or start **Smoke Regression** with `squashScope` + environment.

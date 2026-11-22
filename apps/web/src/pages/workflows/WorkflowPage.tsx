@@ -210,7 +210,7 @@ export function WorkflowPage() {
               {regression && (
                 <Alert severity="info" sx={{ mb: 2 }}>
                   Regression runs only <strong>approved</strong> Squash↔script mappings. Draft or unmapped cases stay <strong>Not Automated</strong> — never executed, generated, or explored.
-                  Approve drafts on <Link to="/automation">Automation Mapping</Link> before you start a run.
+                  Ensure mappings are approved before you start a run; workflow cases live in Squash and Executions.
                 </Alert>
               )}
               {steps.length === 0 && <Alert severity="warning">This draft has no steps. Create it from a template to get the guided list.</Alert>}
@@ -405,7 +405,7 @@ export function WorkflowPage() {
                   {regression && (
                     <Alert severity="warning" sx={{ mb: 1 }}>
                       Approve mappings before you run. Draft or unmapped Squash cases become Not Automated and are skipped — Regression never generates cases or opens explore connectors.
-                      Use <Link to="/automation">Automation Mapping</Link> to Approve, then preview resolve.
+                      Resolve preview runs as part of the Regression workflow steps.
                     </Alert>
                   )}
                   {regression && (

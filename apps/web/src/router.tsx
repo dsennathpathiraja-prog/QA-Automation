@@ -4,7 +4,6 @@ import { SessionGate, useSession, type Navigator } from './auth/session';
 import { AppShell } from './layout/AppShell';
 import { NAV_ITEMS, type NavItem } from './nav';
 import { AccessDenied, ComingSoon, PageHeader } from './pages/common';
-import { AiModels } from './pages/AiModels';
 import { ApprovedHosts } from './pages/ApprovedHosts';
 import { Connectors } from './pages/Connectors';
 import { ConnectorDetailPage } from './pages/connectors/ConnectorDetailPage';
@@ -17,7 +16,6 @@ import { TestCasePage, TestCases, TestCollectionPage } from './pages/TestCases';
 import { Workflows } from './pages/Workflows';
 import { WorkflowPage } from './pages/workflows/WorkflowPage';
 import { IdentityMapping } from './pages/IdentityMapping';
-import { AutomationMapping } from './pages/AutomationMapping';
 import { ReportEvidence } from './pages/ReportEvidence';
 import { SignInError } from './pages/SignInError';
 
@@ -49,14 +47,12 @@ const real: Record<string, () => ReactNode> = {
   workflows: () => <Workflows />,
   executions: () => <Executions />,
   'test-cases': () => <TestCases />,
-  automation: () => <AutomationMapping />,
   evidence: () => <ReportEvidence mode="evidence" />,
   reports: () => <ReportEvidence mode="report" />,
   connectors: () => <Connectors />,
   environments: () => <Environments />,
   identity: () => <IdentityMapping />,
   hosts: () => <ApprovedHosts />,
-  models: () => <AiModels />,
 };
 
 export interface RouterOptions {

@@ -20,7 +20,7 @@ Operators select a Squash project plus suite or campaign (probe-aware), or a pla
 
 ## UI
 
-- **Automation Mapping** — thin scope form → expands to case ids → feeds Regression prep.
+- Scope/resolve APIs (and worker `rg.configure-scope`) expand to case ids → feed Regression prep. Operator Mapping UI removed.
 - **Workflow Run** — Regression templates: `squashScope` / `selection` JSON fields + environment.
 
 ## Verify (PowerShell-safe)
@@ -36,4 +36,4 @@ docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
 # Then POST /api/v1/automation/resolve-regression with those ids.
 ```
 
-Or Automation Mapping → **Expand scope to case ids** → **Preview Regression resolve**. For live campaign listing, start a published Regression workflow with `squashScope` containing `projectId` + `campaignId`.
+Or `POST /api/v1/automation/scope` then `POST /api/v1/automation/resolve-regression`. For live campaign listing, start a published Regression workflow with `squashScope` containing `projectId` + `campaignId`.

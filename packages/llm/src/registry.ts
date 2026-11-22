@@ -16,7 +16,7 @@ export class StaticProviderRegistry implements ProviderRegistry {
   }
 }
 
-/** Configuration-driven resolver. The database-backed resolver (AI Models screen, qualification gate) arrives in Phase 5. */
+/** Configuration-driven resolver. The database-backed resolver (qualification gate) arrives in Phase 5. */
 export class StaticAssignmentResolver implements AssignmentResolver {
   constructor(private readonly byAgent: Record<string, Assignment>, private readonly defaultAssignment?: Assignment) {}
   async resolve(agentKey: string): Promise<Assignment | undefined> {
