@@ -86,7 +86,7 @@ describe('rg.regression-report (Phase 9 E5)', () => {
     expect(md).toContain('**Passed:** 1');
     expect(md).toContain('**Not Automated:** 1');
     expect(md).toContain('Squash recorded 1');
-    expect(md).toContain(`[screenshot](/evidence?focus=${evidenceId}&case=${assetId})`);
+    expect(md).toContain(`[screenshot](/runs/${evidenceId}?view=evidence&case=${assetId}&from=evidence)`);
     expect(md).toContain('| Login smoke | 10 | Passed |');
     expect(md).toContain('| Squash 99 | 99 | Not Automated |');
     expect(md).not.toContain('Compare to previous run');

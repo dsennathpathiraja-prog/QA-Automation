@@ -464,12 +464,12 @@ export function Executions() {
                     </ListItemButton>
                     <Chip size="small" label={WI_STATUS[item.status] ?? item.status} sx={{ flexShrink: 0 }} />
                     {FINISHED_RUN.has(item.status) && session.can('report.view') && (
-                      <Link to="/reports" search={{ focus: item.id } as never}>
+                      <Link to="/runs/$id" params={{ id: item.id }} search={{ view: 'report', from: 'executions' } as never}>
                         <Button size="small" sx={{ flexShrink: 0 }}>Report</Button>
                       </Link>
                     )}
                     {FINISHED_RUN.has(item.status) && session.can('evidence.view') && (
-                      <Link to="/evidence" search={{ focus: item.id } as never}>
+                      <Link to="/runs/$id" params={{ id: item.id }} search={{ view: 'evidence', from: 'executions' } as never}>
                         <Button size="small" sx={{ flexShrink: 0 }}>Evidence</Button>
                       </Link>
                     )}
@@ -676,12 +676,12 @@ function HistoryRunDetail({
       {evidenceExecutionId && (canReport || canEvidence) && (
         <Stack direction="row" spacing={1} useFlexGap sx={{ mb: 2, flexWrap: 'wrap' }}>
           {canReport && (
-            <Link to="/reports" search={{ focus: evidenceExecutionId } as never}>
+            <Link to="/runs/$id" params={{ id: evidenceExecutionId }} search={{ view: 'report', from: 'executions' } as never}>
               <Button variant="contained" size="small">Open report</Button>
             </Link>
           )}
           {canEvidence && (
-            <Link to="/evidence" search={{ focus: evidenceExecutionId } as never}>
+            <Link to="/runs/$id" params={{ id: evidenceExecutionId }} search={{ view: 'evidence', from: 'executions' } as never}>
               <Button size="small">Open evidence</Button>
             </Link>
           )}
