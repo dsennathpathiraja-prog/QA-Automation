@@ -1,5 +1,6 @@
 import {
   Alert,
+  Box,
   Button,
   Chip,
   List,
@@ -13,7 +14,7 @@ import {
 import { WorkItemExecutionBoard, WorkItemExecutionSchema } from '@qa/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApi } from '../api/context';
 import { ErrorNotice, PageHeader } from './common';
 import { countsLabel, type RunDetailView, WI_LIVE, WI_STATUS } from './run-detail/helpers';
@@ -23,23 +24,40 @@ export type ReportEvidenceMode = 'report' | 'evidence';
 
 const FINISHED = new Set(['completed', 'failed', 'cancelled']);
 
+type ReportSearch = {
+  focus?: string;
+  view?: RunDetailView;
+  case?: string;
+};
+
 /**
  * Product Report / Evidence surface for finished (and live) work-item / Regression runs.
  * Deep-link: `?focus=<executionId>&view=report|evidence&case=<testCaseId>`.
+ *
+ * Selection uses local state first (so Open report / Open evidence always open the detail),
+ * then syncs the URL for shareable deep links.
  */
 export function ReportEvidence({ mode }: { mode: ReportEvidenceMode }) {
   const api = useApi();
   const navigate = useNavigate();
-  const search = useSearch({ strict: false }) as {
-    focus?: string;
-    view?: string;
-    case?: string;
-  };
-  const focus = typeof search.focus === 'string' && search.focus.trim() ? search.focus.trim() : null;
+  const search = useSearch({ strict: false }) as ReportSearch;
+  const focusFromUrl = typeof search.focus === 'string' && search.focus.trim() ? search.focus.trim() : null;
   const focusCase = typeof search.case === 'string' && search.case.trim() ? search.case.trim() : null;
-  const view: RunDetailView = search.view === 'summary' || search.view === 'report' || search.view === 'evidence'
+  const viewFromUrl = search.view === 'summary' || search.view === 'report' || search.view === 'evidence'
     ? search.view
-    : mode;
+    : null;
+
+  const [selectedId, setSelectedId] = useState<string | null>(focusFromUrl);
+  const [view, setViewState] = useState<RunDetailView>(viewFromUrl ?? mode);
+  const detailRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (focusFromUrl) setSelectedId(focusFromUrl);
+  }, [focusFromUrl]);
+
+  useEffect(() => {
+    if (viewFromUrl) setViewState(viewFromUrl);
+  }, [viewFromUrl]);
 
   const board = useQuery({
     queryKey: ['work-item-executions'],
@@ -48,9 +66,9 @@ export function ReportEvidence({ mode }: { mode: ReportEvidenceMode }) {
   });
 
   const detail = useQuery({
-    queryKey: ['work-item-execution', focus],
-    queryFn: () => api.get(`/api/v1/work-item-executions/${focus}`, WorkItemExecutionSchema),
-    enabled: Boolean(focus),
+    queryKey: ['work-item-execution', selectedId],
+    queryFn: () => api.get(`/api/v1/work-item-executions/${selectedId}`, WorkItemExecutionSchema),
+    enabled: Boolean(selectedId),
     refetchInterval: (q) => (q.state.data && WI_LIVE.has(q.state.data.status) ? 1000 : false),
   });
 
@@ -68,28 +86,40 @@ export function ReportEvidence({ mode }: { mode: ReportEvidenceMode }) {
       .slice(0, 40);
   }, [board.data?.items]);
 
-  const shown = detail.data ?? board.data?.items.find((item) => item.id === focus);
+  const shown = detail.data
+    ?? (selectedId ? board.data?.items.find((item) => item.id === selectedId) : undefined);
 
-  const setFocus = (id: string, nextView: RunDetailView = view) => {
+  useEffect(() => {
+    if (!selectedId || !shown || !detailRef.current) return;
+    // jsdom (unit tests) does not implement scrollIntoView.
+    detailRef.current.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  }, [selectedId, shown?.id, view]);
+
+  const searchFor = (id: string, nextView: RunDetailView): ReportSearch => ({
+    focus: id,
+    ...(nextView !== mode ? { view: nextView } : {}),
+    ...(focusCase ? { case: focusCase } : {}),
+  });
+
+  const openRun = (id: string, nextView: RunDetailView = mode) => {
+    setSelectedId(id);
+    setViewState(nextView);
+    const path = mode === 'report' ? '/reports' : '/evidence';
     void navigate({
-      to: mode === 'report' ? '/reports' : '/evidence',
-      search: {
-        focus: id,
-        ...(nextView !== mode ? { view: nextView } : {}),
-        ...(focusCase ? { case: focusCase } : {}),
-      } as never,
+      to: path,
+      search: () => searchFor(id, nextView) as never,
+      replace: false,
     });
   };
 
   const setView = (next: RunDetailView) => {
-    if (!focus) return;
+    if (!selectedId) return;
+    setViewState(next);
+    const path = mode === 'report' ? '/reports' : '/evidence';
     void navigate({
-      to: mode === 'report' ? '/reports' : '/evidence',
-      search: {
-        focus,
-        ...(next !== mode ? { view: next } : {}),
-        ...(focusCase ? { case: focusCase } : {}),
-      } as never,
+      to: path,
+      search: () => searchFor(selectedId, next) as never,
+      replace: true,
     });
   };
 
@@ -97,6 +127,8 @@ export function ReportEvidence({ mode }: { mode: ReportEvidenceMode }) {
   const description = mode === 'report'
     ? 'Readable pass/fail/blocked/skipped/not-automated summaries for finished Regression and work-item runs.'
     : 'Browse screenshots and attachments captured on case results for finished runs.';
+  const openLabel = mode === 'report' ? 'Open report' : 'Open evidence';
+  const listPath = mode === 'report' ? '/reports' : '/evidence';
 
   return (
     <>
@@ -128,8 +160,8 @@ export function ReportEvidence({ mode }: { mode: ReportEvidenceMode }) {
                   sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5 }}
                 >
                   <ListItemButton
-                    selected={focus === item.id}
-                    onClick={() => setFocus(item.id)}
+                    selected={selectedId === item.id}
+                    onClick={() => openRun(item.id, mode)}
                     sx={{ flex: '1 1 auto', minWidth: 0, py: 0.75 }}
                   >
                     <ListItemText
@@ -141,12 +173,19 @@ export function ReportEvidence({ mode }: { mode: ReportEvidenceMode }) {
                   </ListItemButton>
                   <Chip size="small" label={WI_STATUS[item.status] ?? item.status} sx={{ flexShrink: 0 }} />
                   <Button
+                    component={Link}
+                    to={listPath}
+                    search={searchFor(item.id, mode) as never}
                     size="small"
-                    variant={focus === item.id ? 'contained' : 'outlined'}
-                    onClick={() => setFocus(item.id, mode)}
+                    variant={selectedId === item.id ? 'contained' : 'outlined'}
+                    onClick={(e) => {
+                      // Open immediately even if router search sync is slow / no-ops on same route.
+                      e.preventDefault();
+                      openRun(item.id, mode);
+                    }}
                     sx={{ flexShrink: 0 }}
                   >
-                    {mode === 'report' ? 'Open report' : 'Open evidence'}
+                    {openLabel}
                   </Button>
                 </ListItem>
               ))}
@@ -154,18 +193,20 @@ export function ReportEvidence({ mode }: { mode: ReportEvidenceMode }) {
           )}
         </Paper>
 
-        {focus && detail.isError && !shown && (
+        {selectedId && detail.isError && !shown && (
           <ErrorNotice message="That run could not be loaded." onRetry={() => void detail.refetch()} />
         )}
         {shown && (
-          <WorkItemRunDetail
-            shown={shown}
-            view={view}
-            onViewChange={setView}
-            focusCaseId={focusCase}
-          />
+          <Box ref={detailRef} tabIndex={-1}>
+            <WorkItemRunDetail
+              shown={shown}
+              view={view}
+              onViewChange={setView}
+              focusCaseId={focusCase}
+            />
+          </Box>
         )}
-        {focus && !shown && !detail.isError && detail.isLoading && (
+        {selectedId && !shown && !detail.isError && detail.isLoading && (
           <Alert severity="info">Loading run detail…</Alert>
         )}
       </Stack>

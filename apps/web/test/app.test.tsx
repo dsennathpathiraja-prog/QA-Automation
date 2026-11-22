@@ -234,10 +234,65 @@ describe('route guard', () => {
     });
     expect(await screen.findByText(/Browse screenshots/i)).toBeTruthy();
     expect(await screen.findByRole('region', { name: 'Runs with evidence' })).toBeTruthy();
-    await user.click(await screen.findByRole('button', { name: 'Open evidence' }));
+    await user.click(await screen.findByRole('link', { name: 'Open evidence' }));
     expect(await screen.findByRole('tab', { name: 'Evidence' })).toBeTruthy();
     expect(await screen.findByRole('region', { name: 'Run evidence' })).toBeTruthy();
     expect(await screen.findByAltText(/Screenshot evidence for Login smoke/)).toBeTruthy();
+  });
+
+  it('Reports Open report button opens the run detail with outcome charts', async () => {
+    const user = userEvent.setup();
+    const runId = '77777777-7777-4777-8777-777777777777';
+    renderApp('/reports', {
+      me: { status: 200, body: meFor('qa_lead') },
+      routes: {
+        '/api/v1/work-item-executions': {
+          status: 200,
+          body: {
+            workItems: [],
+            environments: [],
+            items: [{
+              id: runId,
+              workItem: '2309',
+              environmentId: '33333333-3333-4333-8333-333333333333',
+              environmentName: 'PayNSure',
+              caseCount: 130,
+              status: 'completed',
+              createdAt: '2026-11-22T12:00:00.000Z',
+              finishedAt: '2026-11-22T12:10:00.000Z',
+              counts: { total: 130, queued: 0, running: 0, passed: 130, failed: 0, blocked: 0, skipped: 0, completed: 130 },
+            }],
+          },
+        },
+        [`/api/v1/work-item-executions/${runId}`]: {
+          status: 200,
+          body: {
+            id: runId,
+            workItem: '2309',
+            environmentId: '33333333-3333-4333-8333-333333333333',
+            environmentName: 'PayNSure',
+            caseCount: 130,
+            status: 'completed',
+            createdAt: '2026-11-22T12:00:00.000Z',
+            finishedAt: '2026-11-22T12:10:00.000Z',
+            counts: { total: 130, queued: 0, running: 0, passed: 130, failed: 0, blocked: 0, skipped: 0, completed: 130 },
+            results: Array.from({ length: 130 }, (_, i) => ({
+              id: `r${i}`,
+              testCaseId: `c${i}`,
+              name: `Case ${i}`,
+              status: 'Passed',
+              message: 'ok',
+              hasScreenshot: false,
+            })),
+          },
+        },
+      },
+    });
+    await user.click(await screen.findByRole('link', { name: 'Open report' }));
+    const report = await screen.findByRole('region', { name: 'Run report' });
+    expect(within(report).getByText('130 passed')).toBeTruthy();
+    expect(within(report).getByRole('img', { name: /Stacked bar/i })).toBeTruthy();
+    expect(within(report).getByRole('img', { name: /Donut chart of 130 cases/i })).toBeTruthy();
   });
 
   it('Reports page shows tallies and regression-report.md for a focused run', async () => {

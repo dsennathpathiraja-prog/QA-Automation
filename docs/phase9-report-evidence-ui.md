@@ -11,6 +11,7 @@ Operators open finished Regression / work-item runs and review:
 ## Behaviour
 
 - Reuses existing APIs: `GET /api/v1/work-item-executions/:id`, screenshot GET, and workflow `events` for report Markdown (no new ObjectStore report endpoint).
+- **Open report / Open evidence** select the run immediately (local state) and sync `?focus=` for deep links; report view shows stacked-bar + donut charts for outcome tallies.
 - Workflow **Run & output** shows **Open report** / **Open evidence** when execute outputs include `evidenceExecutionId`.
 - Report Markdown evidence links deep-link to `/evidence?focus=…` (not the raw screenshot JSON API).
 - Automation Mapping sync/resolve/scope tools are unchanged and not required for reviewing finished runs.
