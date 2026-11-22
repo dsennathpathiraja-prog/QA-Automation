@@ -97,7 +97,7 @@ export function AutomationMapping() {
     <>
       <PageHeader
         title="Automation Mapping"
-        description="Link Squash cases to platform Playwright scripts. Approve a draft asset before Regression can run it. Regression prep below lists approved vs Not Automated — no generation or explore."
+        description="Link Squash cases to platform Playwright scripts. Approve a draft asset before you start a Regression run (Executions → Regression → Workflows). Regression prep below lists approved vs Not Automated — no generation or explore."
       />
       {mappings.isError && <ErrorNotice message="Mappings could not be loaded." onRetry={() => void mappings.refetch()} />}
       {mappings.isPending && <p role="status">Loading mappings…</p>}

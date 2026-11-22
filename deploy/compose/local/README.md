@@ -218,6 +218,8 @@ After cases are published to Squash, the worker seeds a **draft** automation ass
 
 **Smoke collection (Phase 9 E4):** curated `regression_collection` key `smoke` holds Squash case ids (no Squash tags). After approving mappings, **Sync approved mappings into smoke** on Automation Mapping (or `POST /api/v1/automation/collections/smoke/sync-approved`), then expand scope with `collectionKey: smoke` or start **Smoke Regression**. See [`docs/phase9-e4-regression-collections.md`](../../../docs/phase9-e4-regression-collections.md).
 
+**Deny-list & operator polish (Phase 9 E6):** Regression policy denies `tm.testcase.upsert`, `scm.*`, `browser.*`, `agent.*` (integration test on the operation log). Executions shows a Regression entry; Run wizard warns to approve mappings before run. See [`docs/phase9-e6-deny-list-polish.md`](../../../docs/phase9-e6-deny-list-polish.md).
+
 PowerShell-safe check:
 
 ```powershell
