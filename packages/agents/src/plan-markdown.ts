@@ -6,6 +6,8 @@ export interface PlanMarkdownMeta {
   criteria?: string[];
   findings?: string;
   source?: string;
+  /** Weak / mismatched Explore UI note (duplicate shop snapshots, template WI, etc.). */
+  exploreWarning?: string;
 }
 
 const kindOf = (raw: string): ScenarioKind => {
@@ -44,6 +46,10 @@ export function renderPlanMarkdown(scenarios: PlannerScenario[], meta: PlanMarkd
     lines.push('## Acceptance criteria', '');
     for (const c of meta.criteria) lines.push(`- ${c}`);
     lines.push('');
+  }
+
+  if (meta.exploreWarning?.trim()) {
+    lines.push('## Explore coverage warning', '', meta.exploreWarning.trim(), '');
   }
 
   if (meta.findings?.trim()) {

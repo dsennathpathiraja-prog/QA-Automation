@@ -16,6 +16,8 @@ import {
   snapshotIsActionable,
   summarizeSnapshotForFindings,
 } from './snapshot-content';
+import { analyzeWorkItemStory, isNotificationTemplateStory } from './story-scenarios';
+import { hasNearDuplicateExploreFindings, looksLikeShopSurface, parseExplorationCues } from './playwright-source';
 import type { BrowserAutomationPort, BrowserExplorerPort, ExploreFinding, ExploreRequest, ExploreResult } from './types';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -205,13 +207,31 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         );
       }
 
+      const analysis = analyzeWorkItemStory({
+        story: input.story || '',
+        criteria: input.criteria,
+        workItemTitle: input.workItemTitle,
+        application: input.application,
+      });
+      const templateStory = analysis.notificationTemplate
+        || isNotificationTemplateStory(input.story || '', input.criteria ?? []);
+      // Story-driven labels: for template WIs prefer template surfaces, not every AC as a fake page.
       const labels = input.scenarios.length > 0
         ? input.scenarios.map((s) => s.name)
-        : (input.criteria?.length ? input.criteria : [input.application]).map((c) => `Explore: ${c}`);
+        : templateStory
+          ? [
+            'Explore: escrow notification template / email preview',
+            ...(analysis.surfaces.some((s) => /checkout|order placement/i.test(s))
+              ? ['Explore: checkout order trigger (secondary)']
+              : []),
+          ]
+          : (input.criteria?.length ? input.criteria : [input.application]).map((c) => `Explore: ${c}`);
       const details: ExploreFinding[] = [];
       const probes: Array<DomProbeResult | undefined> = [];
       const probeErrors: Array<string | undefined> = [];
-      const limit = Math.min(input.maxPages ?? 5, Math.max(1, labels.length), 8);
+      // One primary capture is enough when we only have a single environment URL; avoid
+      // repeating identical snapshots once per AC label on the same shop page.
+      const limit = Math.min(input.maxPages ?? (templateStory ? 2 : 5), Math.max(1, labels.length), templateStory ? 2 : 8);
       try {
         await browser.openSession();
         let nav: Awaited<ReturnType<BrowserAutomationPort['navigate']>>;
@@ -329,19 +349,60 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         );
       }
 
-      const findings = actionable
+      // Dedupe near-identical same-URL snapshots — keep first, note the gap.
+      const unique: ExploreFinding[] = [];
+      const seenFp = new Set<string>();
+      for (const d of actionable) {
+        const fp = `${(d.url || '').toLowerCase()}|${(d.cuesSummary || '').slice(0, 120).toLowerCase()}`;
+        if (seenFp.has(fp)) continue;
+        seenFp.add(fp);
+        unique.push(d);
+      }
+
+      const findingsBody = unique
         .map((d) => {
           const cue = d.cuesSummary || d.snapshotExcerpt.replace(/\s+/g, ' ').slice(0, 280);
           return `- ${d.scenarioName} @ ${d.url}${d.title ? ` (${d.title})` : ''}\n  ${cue}`;
         })
         .join('\n');
-      const visitedUrls = [...new Set(actionable.map((d) => d.url).filter(Boolean))];
+
+      const findingsText = findingsBody;
+      const cues = parseExplorationCues(findingsText);
+      const shopOnly = looksLikeShopSurface(cues, findingsText);
+      const duplicate = hasNearDuplicateExploreFindings(findingsText) || actionable.length > unique.length;
+      let warning = '';
+      let relevant = true;
+      if (templateStory && shopOnly) {
+        warning = 'Explore UI gap: only the shop/catalog surface was reachable; escrow notification email template / preview was not found. Do not treat catalog snapshots as distinct email-field evidence. Prefer story-grounded scenarios.';
+        relevant = false;
+      } else if (duplicate && unique.length <= 1) {
+        warning = 'Explore UI: near-duplicate same-URL snapshots across targets — counted as one surface, not distinct AC evidence.';
+        relevant = !templateStory;
+      }
+
+      if (warning) {
+        // Keep a single representative snapshot plus an explicit gap note for the planner.
+      }
+      const findings = [
+        findingsBody,
+        warning ? `\n- Explore coverage warning: ${warning}` : '',
+        templateStory && analysis.searchTerms.length
+          ? `\n- Story search terms (for template surfaces): ${analysis.searchTerms.slice(0, 8).join(', ')}`
+          : '',
+      ].filter(Boolean).join('');
+
+      const visitedUrls = [...new Set(unique.map((d) => d.url).filter(Boolean))];
       const urlList = (visitedUrls.length > 0 ? visitedUrls : [input.url]).join(', ');
+      const summary = warning
+        ? `Visited ${urlList} (${unique.length} distinct surface${unique.length === 1 ? '' : 's'}) for ${input.application} before planning. ${warning}`
+        : `Visited ${urlList} (${unique.length} page snapshot${unique.length === 1 ? '' : 's'}) for ${input.application} before planning.`;
       return {
-        summary: `Visited ${urlList} (${actionable.length} page snapshot${actionable.length === 1 ? '' : 's'}) for ${input.application} before planning.`,
+        summary,
         findings,
-        details: actionable,
+        details: unique,
         source: 'browser',
+        warning: warning || undefined,
+        relevant,
       };
     },
   };

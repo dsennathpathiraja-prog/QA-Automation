@@ -51,6 +51,8 @@ export interface PlanResult {
   planArtifact: string;
   /** How the plan was produced. */
   source: 'model' | 'heuristic' | 'mcp';
+  /** Weak / mismatched Explore UI coverage (duplicate snapshots, wrong surface). */
+  exploreWarning?: string;
 }
 
 export interface GenerateRequest {
@@ -101,6 +103,10 @@ export interface ExploreRequest {
   /** Absolute URL the browser may open (must be on the connector allowlist). */
   url?: string;
   environment?: string;
+  /** Work item title — used with story to decide template vs shop surfaces. */
+  workItemTitle?: string;
+  /** Full story blob for story-driven explore targets. */
+  story?: string;
   /** Optional criteria / path labels when exploring before the plan exists. */
   criteria?: string[];
   scenarios: PlannerScenario[];
@@ -130,11 +136,19 @@ export interface ExploreResult {
   findings: string;
   details: ExploreFinding[];
   source: 'browser' | 'skipped' | 'mcp';
+  /** Weak explore: duplicate same-URL snapshots and/or surface mismatch vs story. */
+  warning?: string;
+  /** False when findings are not useful as distinct scenario evidence. */
+  relevant?: boolean;
 }
 
 export interface CodeExploreRequest {
   application: string;
   workItem?: string;
+  /** Work item title from Read — preferred search seed over application name. */
+  workItemTitle?: string;
+  /** Full story blob (title + description + AC) for story-derived search terms. */
+  story?: string;
   /** Bound repository name when known; otherwise the connector config supplies it. */
   repo?: string;
   criteria?: string[];
@@ -157,6 +171,9 @@ export interface CodeExploreResult {
   details: CodeFinding[];
   source: 'repo';
   repo?: string;
+  /** False when hits are empty/path-only or search was refused (app-name-only). */
+  relevant?: boolean;
+  warning?: string;
 }
 
 /**
