@@ -65,9 +65,15 @@ export function createLlmTestPlanner(gateway: LlmGateway | undefined): TestPlann
         workItemTitle,
         application: input.application,
         environmentUrl: input.environmentUrl,
+        templatePreviewUrl: input.templatePreviewUrl,
       });
+      const templateReached = Boolean(
+        coverage.primarySurfaceUrl
+        || (binding.primarySurfaceUrl && coverage.kind === 'strong' && !coverage.shopSurface)
+        || /Template preview surface reached|templatePreview=/i.test(input.findings || ''),
+      );
       const blockingGap = coverage.blockingGap
-        || (coverage.templateWorkItem && coverage.shopSurface);
+        || (coverage.templateWorkItem && coverage.shopSurface && !templateReached);
       const criteriaBlock = input.criteria.length > 0
         ? input.criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')
         : '(no separate acceptance criteria — derive scenarios from the story Description)';
@@ -119,8 +125,10 @@ export function createLlmTestPlanner(gateway: LlmGateway | undefined): TestPlann
       const exploreWarning = [
         coverage.warning,
         blockingGap
-          ? 'Template/email scenarios will be Blocked (needs-surface) until a matching preview/template URL is reachable.'
-          : '',
+          ? 'Template/email scenarios will be Blocked (needs-surface) until a matching preview/template URL is reachable. Set environment Template preview URL or QA_TEMPLATE_PREVIEW_URL.'
+          : templateReached && coverage.templateWorkItem
+            ? 'Notification/template preview surface reached — assert subject/greeting/table/CTA/Paid Amount from the WI.'
+            : '',
       ].filter(Boolean).join(' ');
       const planMarkdown = renderPlanMarkdown(scenarios, {
         workItem: input.workItem,

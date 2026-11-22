@@ -83,4 +83,36 @@ describe('story analysis 2357', () => {
     expect(templateCases.every((c) => /@qa-platform:needs-surface|test\.skip/i.test(c.steps))).toBe(true);
     expect(notificationTemplateScenarioSeeds({ story: story2357 }).length).toBeGreaterThan(5);
   });
+
+  it('plans/generates template-field assertions when preview surface was explored', () => {
+    const previewFindings = [
+      '- Explore: escrow notification template / email preview (configured) @ http://email-preview-fixture/',
+      '  title="Escrow notification email preview"; heading="Escrow notification template"; buttons="Confirm Delivery"; links="Confirm Delivery"',
+      '- Story surface binding: kind=template; primary=http://email-preview-fixture/; templatePreview=http://email-preview-fixture/',
+      '- Template preview surface reached: true (assert subject/greeting/table/CTA/Paid Amount from WI)',
+    ].join('\n');
+    const planned = planHeuristically({
+      workItem: '2357',
+      application: 'PayNSure',
+      story: story2357,
+      criteria: ['Paid Amount', 'Greeting'],
+      findings: previewFindings,
+      templatePreviewUrl: 'http://email-preview-fixture/',
+    });
+    expect(planned.blockingGap).toBe(false);
+    expect(planned.primarySurfaceUrl).toBe('http://email-preview-fixture/');
+    expect(planned.exploreWarning).toMatch(/preview surface reached|Paid Amount|CTA/i);
+    const generated = generateHeuristically({
+      workItem: '2357',
+      application: 'PayNSure',
+      story: story2357,
+      scenarios: planned.scenarios,
+      findings: previewFindings,
+      templatePreviewUrl: 'http://email-preview-fixture/',
+    });
+    const templateCases = generated.cases.filter((c) => /subject|greeting|Paid Amount|Confirm Delivery|held in escrow/i.test(c.name + c.expected));
+    expect(templateCases.length).toBeGreaterThan(0);
+    expect(templateCases.every((c) => c.runStatus !== 'Blocked')).toBe(true);
+    expect(templateCases.some((c) => /email-preview-fixture|Paid Amount|Confirm Delivery|held in escrow|^Hi\\b/i.test(c.steps))).toBe(true);
+  });
 });

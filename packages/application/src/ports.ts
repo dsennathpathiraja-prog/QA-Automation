@@ -160,6 +160,11 @@ export interface EnvironmentRecord {
   name: string;
   kind: EnvironmentKind;
   applicationUrl: string;
+  /**
+   * Optional notification/email template preview URL for stories that validate
+   * escrow/email templates (Phase 8 E2). When unset, Explore fails closed on shop-only hosts.
+   */
+  templatePreviewUrl?: string;
   browser: EnvironmentBrowser;
   restrictions: EnvironmentRestrictions;
   enabled: boolean;
@@ -176,6 +181,7 @@ export interface NewEnvironment {
   name: string;
   kind: EnvironmentKind;
   applicationUrl: string;
+  templatePreviewUrl?: string;
   browser: EnvironmentBrowser;
   restrictions: EnvironmentRestrictions;
   enabled: boolean;
@@ -186,6 +192,8 @@ export interface EnvironmentPatch {
   name?: string;
   kind?: EnvironmentKind;
   applicationUrl?: string;
+  /** Pass empty string to clear. */
+  templatePreviewUrl?: string | null;
   browser?: EnvironmentBrowser;
   restrictions?: EnvironmentRestrictions;
   enabled?: boolean;

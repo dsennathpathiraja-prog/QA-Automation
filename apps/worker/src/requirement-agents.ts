@@ -95,6 +95,11 @@ export interface RequirementAgentPorts {
   codeExplorer?: CodeExplorerPort;
   /** Resolve an environment id (or name) to an application URL for UI exploration. */
   resolveEnvironmentUrl?: (environment: string) => Promise<string | undefined>;
+  /**
+   * Resolve an optional notification/email template preview URL for the environment.
+   * When unset, Explore keeps the E1 fail-closed gap on shop-only hosts.
+   */
+  resolveTemplatePreviewUrl?: (environment: string) => Promise<string | undefined>;
 }
 
 /**
@@ -129,10 +134,14 @@ export async function performRequirementStep(
     const url = ports.resolveEnvironmentUrl && environment
       ? await ports.resolveEnvironmentUrl(environment)
       : undefined;
+    const templatePreviewUrl = ports.resolveTemplatePreviewUrl && environment
+      ? await ports.resolveTemplatePreviewUrl(environment)
+      : undefined;
     const explored: ExploreResult = await ports.explorer.explore({
       application,
       environment: environment || undefined,
       url,
+      templatePreviewUrl: templatePreviewUrl || undefined,
       workItemTitle: text(storyOut.title) || undefined,
       story: fullStory || undefined,
       criteria,
@@ -172,6 +181,7 @@ export async function performRequirementStep(
         blockingGap: explored.blockingGap,
         surfaceKind: explored.surfaceKind,
         primarySurfaceUrl: explored.primarySurfaceUrl,
+        ...(explored.templatePreviewUrl ? { templatePreviewUrl: explored.templatePreviewUrl } : {}),
         candidateRoutes: explored.candidateRoutes,
         artifactMarkdown,
         artifactPath: exploreUiArtifactPath(workItem, application),
@@ -221,6 +231,9 @@ export async function performRequirementStep(
     const environmentUrl = ports.resolveEnvironmentUrl && environment
       ? await ports.resolveEnvironmentUrl(environment)
       : undefined;
+    const templatePreviewUrl = ports.resolveTemplatePreviewUrl && environment
+      ? await ports.resolveTemplatePreviewUrl(environment)
+      : undefined;
     const planned: PlanResult = await ports.planner.plan({
       workItem,
       application,
@@ -228,6 +241,7 @@ export async function performRequirementStep(
       criteria,
       findings: findings || undefined,
       environmentUrl: environmentUrl || undefined,
+      templatePreviewUrl: templatePreviewUrl || undefined,
       executionId: step.runId,
       stepId: step.id,
     });
@@ -254,6 +268,9 @@ export async function performRequirementStep(
     const environmentUrl = ports.resolveEnvironmentUrl && environment
       ? await ports.resolveEnvironmentUrl(environment)
       : undefined;
+    const templatePreviewUrl = ports.resolveTemplatePreviewUrl && environment
+      ? await ports.resolveTemplatePreviewUrl(environment)
+      : undefined;
     const fromMd = planMarkdown ? parsePlanMarkdown(planMarkdown) : [];
     const source = scenarios.length > 0
       ? scenarios
@@ -266,6 +283,7 @@ export async function performRequirementStep(
           criteria,
           findings: findings || undefined,
           environmentUrl: environmentUrl || undefined,
+          templatePreviewUrl: templatePreviewUrl || undefined,
           executionId: step.runId,
           stepId: step.id,
         }) ?? { scenarios: [] })).scenarios;
@@ -278,6 +296,7 @@ export async function performRequirementStep(
       findings: findings || undefined,
       story: fullStory || undefined,
       environmentUrl: environmentUrl || undefined,
+      templatePreviewUrl: templatePreviewUrl || undefined,
       executionId: step.runId,
       stepId: step.id,
     });

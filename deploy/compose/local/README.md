@@ -86,6 +86,49 @@ docker compose -f deploy/compose/local/docker-compose.local.yml `
 
 Keep `http://sdk.paynsure.internal` (or the bare host) on the Playwright connector allowlist, then retry Explore UI — the MD artifact should list storefront cues (Search products, Add to cart, Proceed to checkout, …).
 
+### Email / notification template preview (Phase 8 E2)
+
+Escrow/email-template stories (e.g. WI 2357) need a **reachable template preview** surface. Without one, Explore stays **fail-closed** (Blocked / `needs-surface`) — it will not invent shop catalog passes for subject/greeting/Paid Amount/CTA.
+
+**Option A — Environment setting:** Environments → General → **Template preview URL** (must be an approved application host).
+
+**Option B — Worker env var** `QA_TEMPLATE_PREVIEW_URL` (overrides empty environment setting).
+
+**Option C — Local fixture host** (documented mock HTML under `deploy/compose/local/fixtures/email-preview/`):
+
+PowerShell:
+
+```powershell
+$env:QA_TEMPLATE_PREVIEW_URL = "http://email-preview-fixture/"
+docker compose -f deploy/compose/local/docker-compose.local.yml `
+  -f deploy/compose/local/docker-compose.email-preview.yml `
+  --profile email-preview --profile browser up -d --build
+```
+
+Bash:
+
+```bash
+export QA_TEMPLATE_PREVIEW_URL=http://email-preview-fixture/
+docker compose -f deploy/compose/local/docker-compose.local.yml \
+  -f deploy/compose/local/docker-compose.email-preview.yml \
+  --profile email-preview --profile browser up -d --build
+```
+
+Then:
+
+1. Approve host `email-preview-fixture` for plain http on the Playwright connector allowlist (and keep the shop host if order-trigger paths matter).
+2. Set the environment Template preview URL to `http://email-preview-fixture/` (or rely on the worker env var from the overlay).
+3. Re-run Requirement Validation for WI 2357-like stories — Explore should open the preview DOM; plan/generate should assert **subject / greeting / order table / Confirm Delivery / Paid Amount**, not shop catalog.
+
+Host debug of the fixture: `http://127.0.0.1:8099/` (published loopback). Worker/Playwright must use `http://email-preview-fixture/` (Compose DNS).
+
+Unit verify (no Compose):
+
+```powershell
+pnpm typecheck
+pnpm exec vitest run packages/agents packages/testing/test/environment-service.test.ts
+```
+
 ## Runner (Playwright / Executions screenshots)
 
 `runner-image` and `runner-launcher` are part of the **default** local stack (no compose profile). A normal `up --build` builds `qa-runner:local` and starts the launcher. The worker waits until `runner-launcher` is healthy. Executions **do not** HTTP probe-fall back to a fake Passed when the launcher is missing — cases stay **Blocked** with an actionable message instead.

@@ -186,6 +186,8 @@ export const EnvironmentSummarySchema = z.object({
 export const EnvironmentDetailSchema = EnvironmentSummarySchema.extend({
   browser: EnvironmentBrowserSchema,
   restrictions: EnvironmentRestrictionsSchema,
+  /** Optional notification/email template preview URL (Phase 8 E2). */
+  templatePreviewUrl: z.string().optional(),
   reachability: z.enum(['not-run', 'queued', 'checking', 'reachable', 'unreachable']),
   reachabilityDetail: z.string().optional(),
   reachabilityCheckedAt: z.string().optional(),
@@ -197,11 +199,15 @@ export const CreateEnvironmentRequest = z.object({
   name: z.string(),
   kind: EnvironmentKindSchema,
   applicationUrl: z.string(),
+  templatePreviewUrl: z.string().optional(),
   browser: EnvironmentBrowserSchema.partial().optional(),
   restrictions: EnvironmentRestrictionsSchema.partial().optional(),
   enabled: z.boolean().optional(),
 });
-export const UpdateEnvironmentRequest = CreateEnvironmentRequest.partial();
+export const UpdateEnvironmentRequest = CreateEnvironmentRequest.partial().extend({
+  /** Pass empty string to clear the template preview URL. */
+  templatePreviewUrl: z.string().nullable().optional(),
+});
 export type EnvironmentDetail = z.infer<typeof EnvironmentDetailSchema>;
 
 const AuthType = z.enum(['none', 'basic', 'form-login', 'bearer', 'storage-state']);
@@ -239,6 +245,7 @@ export const ResolvedEnvironmentSchema = z.object({
   name: z.string(),
   kind: EnvironmentKindSchema,
   applicationUrl: z.string(),
+  templatePreviewUrl: z.string().optional(),
   browser: EnvironmentBrowserSchema,
   restrictions: EnvironmentRestrictionsSchema,
   selectable: z.boolean(),

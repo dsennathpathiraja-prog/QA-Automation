@@ -18,13 +18,41 @@ export const NEEDS_SURFACE_MARKER = `@qa-platform:${NEEDS_SURFACE_TAG}`;
 
 export interface SurfaceBinding {
   surfaceKind: SurfaceKind;
-  /** Absolute primary validation URL when known from WI or a matching explore hit. */
+  /** Absolute primary validation URL when known from WI, env preview, or a matching explore hit. */
   primarySurfaceUrl?: string;
+  /**
+   * Configured notification/email template preview URL (environment setting or
+   * `QA_TEMPLATE_PREVIEW_URL`). Empty when unset — explore must fail closed on shop-only hosts.
+   */
+  templatePreviewUrl?: string;
   /** Relative path candidates to try beyond the environment app root. */
   candidateRoutes: string[];
   /** Absolute candidate URLs composed from environment base + routes (and WI URLs). */
   candidateUrls: string[];
   analysis: StoryAnalysis;
+}
+
+/** Normalize an absolute http(s) preview URL; returns undefined when blank/invalid. */
+export function normalizeTemplatePreviewUrl(raw?: string | null): string | undefined {
+  const t = (raw ?? '').trim();
+  if (!t) return undefined;
+  try {
+    const u = new URL(t);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined;
+    if (u.username || u.password) return undefined;
+    return u.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolve a configured template preview URL.
+ * Prefer an explicit value (environment setting); fall back to `QA_TEMPLATE_PREVIEW_URL`.
+ */
+export function resolveConfiguredTemplatePreviewUrl(explicit?: string | null): string | undefined {
+  return normalizeTemplatePreviewUrl(explicit)
+    || normalizeTemplatePreviewUrl(typeof process !== 'undefined' ? process.env.QA_TEMPLATE_PREVIEW_URL : undefined);
 }
 
 const TEMPLATE_ROUTES = [
@@ -100,8 +128,10 @@ function pickPrimaryFromStoryUrls(urls: string[], kind: SurfaceKind): string | u
 
 /**
  * Bind expected surface kind + candidate routes/URLs from WI analysis and optional env base.
- * `primarySurfaceUrl` is set only when known from the story (absolute URL) — explore may
- * later promote a matched candidate to primary when the live page matches the kind.
+ * Primary precedence for template stories:
+ * 1) Absolute WI URL that looks like email/template/preview
+ * 2) Configured template preview URL (environment / QA_TEMPLATE_PREVIEW_URL)
+ * 3) Unbound — explore may later promote a matched candidate; otherwise fail closed
  */
 export function bindStorySurface(input: {
   story: string;
@@ -110,6 +140,11 @@ export function bindStorySurface(input: {
   application?: string;
   /** Environment application URL (app root / shop host). */
   environmentUrl?: string;
+  /**
+   * Optional notification/email template preview URL from environment settings.
+   * When omitted, `QA_TEMPLATE_PREVIEW_URL` is consulted.
+   */
+  templatePreviewUrl?: string | null;
   analysis?: StoryAnalysis;
 }): SurfaceBinding {
   const analysis = input.analysis ?? analyzeWorkItemStory({
@@ -126,13 +161,23 @@ export function bindStorySurface(input: {
   const composed = origin
     ? routes.map((r) => joinOriginPath(origin, r))
     : [];
-  const candidateUrls = [...storyUrls, ...composed].filter((u, i, arr) => (
+  const configuredPreview = resolveConfiguredTemplatePreviewUrl(input.templatePreviewUrl);
+  const fromStory = pickPrimaryFromStoryUrls(storyUrls, surfaceKind);
+  const primarySurfaceUrl = fromStory
+    || (surfaceKind === 'template' ? configuredPreview : undefined)
+    || undefined;
+  const candidateUrls = [
+    ...(configuredPreview && surfaceKind === 'template' ? [configuredPreview] : []),
+    ...storyUrls,
+    ...composed,
+  ].filter((u, i, arr) => (
     arr.findIndex((x) => x.toLowerCase() === u.toLowerCase()) === i
   )).slice(0, 12);
 
   return {
     surfaceKind,
-    primarySurfaceUrl: pickPrimaryFromStoryUrls(storyUrls, surfaceKind),
+    primarySurfaceUrl,
+    ...(configuredPreview ? { templatePreviewUrl: configuredPreview } : {}),
     candidateRoutes: routes,
     candidateUrls,
     analysis,

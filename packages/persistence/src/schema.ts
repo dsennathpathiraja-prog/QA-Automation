@@ -285,6 +285,8 @@ export const environment = pgTable(
     name: text('name').notNull(),
     kind: text('kind').notNull(),
     applicationUrl: text('application_url').notNull(),
+    /** Optional notification/email template preview URL (Phase 8 E2). */
+    templatePreviewUrl: text('template_preview_url'),
     browserConfig: jsonb('browser_config').$type<Record<string, unknown>>().notNull().default({}),
     executionRestrictions: jsonb('execution_restrictions').$type<Record<string, unknown>>().notNull().default({}),
     enabled: boolean('enabled').notNull().default(true),

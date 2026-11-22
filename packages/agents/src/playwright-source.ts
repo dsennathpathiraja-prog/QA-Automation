@@ -206,6 +206,22 @@ export function assessExplorationCoverage(input: {
     };
   }
 
+  // Template preview DOM reached — strong coverage even if binding metadata repeats the same URL.
+  if (surfaceMatchesTemplate && !shopSurface) {
+    return {
+      kind: 'strong',
+      duplicateSurfaces,
+      urls,
+      shopSurface,
+      templateWorkItem,
+      blockingGap: false,
+      surfaceKind: 'template',
+      primarySurfaceUrl: cues.url || urls[0],
+      warning: '',
+      cues,
+    };
+  }
+
   if (duplicateSurfaces) {
     return {
       kind: 'weak',
@@ -312,10 +328,12 @@ export function buildMeaningfulPlaywrightSource(input: {
     criteria: input.criteria,
   });
   const cues = coverage.cues;
-  const targetUrl = cues.url || '/';
-  const name = esc(scenario.name);
   const templateScenario = isTemplateSurfaceScenario(scenario);
   const weakShop = coverage.kind === 'secondary' || (coverage.shopSurface && coverage.templateWorkItem);
+  const previewUrl = coverage.primarySurfaceUrl
+    || (coverage.surfaceKind === 'template' && /template|email|notif|preview/i.test(cues.url) ? cues.url : undefined);
+  const targetUrl = (templateScenario && previewUrl) ? previewUrl : (cues.url || '/');
+  const name = esc(scenario.name);
   // Fail closed: do not assert email fields against shop catalog when surface is mismatched.
   if (coverage.blockingGap && templateScenario) {
     return buildNeedsSurfacePlaywrightSource({
@@ -326,9 +344,13 @@ export function buildMeaningfulPlaywrightSource(input: {
       surfaceKind: coverage.surfaceKind,
     });
   }
+  // Strong template explore → assert WI template fields against the preview DOM.
+  const templatePreviewPath = templateScenario
+    && !coverage.blockingGap
+    && (coverage.kind === 'strong' || (Boolean(previewUrl) && !coverage.shopSurface));
   // Story-grounded template cases: do not invent shop-catalog clicks from weak explore.
-  const storyTemplatePath = templateScenario && (weakShop || coverage.kind !== 'strong');
-  const useUiSelectors = coverage.kind === 'strong' && !storyTemplatePath;
+  const storyTemplatePath = templateScenario && !templatePreviewPath && (weakShop || coverage.kind !== 'strong');
+  const useUiSelectors = coverage.kind === 'strong' && !storyTemplatePath && !templatePreviewPath;
 
   const heading = useUiSelectors ? (pick(cues.headings, index) || cues.title) : '';
   const field = useUiSelectors ? pick(cues.fields, index) : undefined;
@@ -345,6 +367,11 @@ export function buildMeaningfulPlaywrightSource(input: {
   ];
   if (coverage.warning) {
     lines.push(`  // Explore coverage (${coverage.kind}): ${clip(coverage.warning.replace(/\s+/g, ' '), 220)}`);
+  }
+
+  if (templatePreviewPath) {
+    lines.push(`  // Template preview surface @ ${clip(targetUrl, 120)} — assert WI template structure`);
+    return appendTemplatePreviewAssertions(lines, scenario, cues);
   }
 
   if (storyTemplatePath) {
@@ -401,6 +428,55 @@ export function buildMeaningfulPlaywrightSource(input: {
     if (button) lines.push(`  await page.getByRole('button', { name: '${esc(button)}' }).click();`);
     else if (link) lines.push(`  await page.getByRole('link', { name: '${esc(link)}' }).click();`);
     lines.push(`  await expect(page.getByText(/${escapeRegExp(clip(assertNeedle, 48))}|${escapeRegExp(primaryToken)}/i).first()).toBeVisible();`);
+  }
+
+  lines.push('});', '');
+  return lines.join('\n');
+}
+
+/**
+ * Assertions against a reachable template preview DOM (Phase 8 E2).
+ * Prefers explored cues (subject/greeting/table/CTA) then WI field keywords.
+ */
+function appendTemplatePreviewAssertions(
+  lines: string[],
+  scenario: PlannerScenario,
+  cues: ExplorationCues,
+): string {
+  const blob = `${scenario.name} ${scenario.criterion} ${scenario.steps} ${scenario.expected}`;
+  const heading = cues.headings.find((h) => /subject|escrow|notification|email/i.test(h)) || cues.headings[0];
+  if (heading) {
+    lines.push(`  await expect(page.getByRole('heading', { name: '${esc(heading)}' }).or(page.getByText('${esc(heading)}')).first()).toBeVisible();`);
+  } else {
+    lines.push(`  await expect(page.getByRole('main').or(page.locator('[data-testid="email-preview"], .email-preview, h1, h2')).first()).toBeVisible();`);
+  }
+
+  if (/subject|held in escrow/i.test(blob)) {
+    lines.push(`  await expect(page.getByText(/held in escrow|Your amount has been held/i).first()).toBeVisible();`);
+  } else if (/greeting|customer name/i.test(blob)) {
+    if (scenario.kind === 'negative') {
+      lines.push(`  await expect(page.getByText(/\\[Customer Name\\]/).first()).toHaveCount(0);`);
+    } else {
+      const greet = cues.fields.find((f) => /greeting|customer/i.test(f));
+      lines.push(greet
+        ? `  await expect(page.getByText(/${escapeRegExp(greet).slice(0, 40)}|^Hi\\b/i).first()).toBeVisible();`
+        : `  await expect(page.getByText(/^Hi\\b|Greeting/i).first()).toBeVisible();`);
+    }
+  } else if (/confirm delivery/i.test(blob)) {
+    const cta = cues.buttons.find((b) => /confirm delivery/i.test(b))
+      || cues.links.find((l) => /confirm delivery/i.test(l));
+    lines.push(cta
+      ? `  await expect(page.getByRole('link', { name: '${esc(cta)}' }).or(page.getByRole('button', { name: '${esc(cta)}' })).first()).toBeVisible();`
+      : `  await expect(page.getByRole('link', { name: /Confirm Delivery/i }).or(page.getByRole('button', { name: /Confirm Delivery/i })).first()).toBeVisible();`);
+  } else if (/paid amount|order details|table/i.test(blob)) {
+    lines.push(`  await expect(page.getByRole('table').or(page.locator('table, [data-testid="order-details"]')).first()).toBeVisible();`);
+    lines.push(`  await expect(page.getByText(/Paid Amount/i).first()).toBeVisible();`);
+  } else if (/support@|footer|copyright/i.test(blob)) {
+    lines.push(`  await expect(page.getByText(/support@paynsure\\.com|PayNSure Escrow|Copyright/i).first()).toBeVisible();`);
+  } else if (/bracket|placeholder|\[Customer Name\]|\[Paid Amount\]/i.test(blob)) {
+    lines.push(`  await expect(page.getByText(/\\[(Customer Name|Order ID|Merchant|Paid Amount)\\]/)).toHaveCount(0);`);
+  } else {
+    lines.push(`  await expect(page.getByText(/escrow|Order ID|Paid Amount|Confirm Delivery|Hi\\b/i).first()).toBeVisible();`);
   }
 
   lines.push('});', '');

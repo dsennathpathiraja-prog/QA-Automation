@@ -74,4 +74,60 @@ describe('playwright-source', () => {
     expect(source).not.toMatch(/getByRole\('button', \{ name: 'Kitchen'/);
     expect(source).not.toMatch(/Paid Amount appears with live amount/);
   });
+
+  it('asserts Paid Amount / CTA against a reachable template preview URL', () => {
+    const previewFindings = [
+      '- Explore: escrow notification template / email preview (configured) @ http://email-preview-fixture/',
+      '  title="Escrow notification email preview"; heading="Escrow notification template"; buttons="Confirm Delivery"; links="Confirm Delivery"; fields=""',
+      '- Story surface binding: kind=template; primary=http://email-preview-fixture/; templatePreview=http://email-preview-fixture/',
+      '- Template preview surface reached: true (assert subject/greeting/table/CTA/Paid Amount from WI)',
+    ].join('\n');
+    const coverage = assessExplorationCoverage({
+      findings: previewFindings,
+      story: 'Order Amount Placement in Escrow Notification Template',
+      criteria: ['Paid Amount', 'Confirm Delivery'],
+    });
+    expect(coverage.blockingGap).toBe(false);
+    expect(coverage.kind).toBe('strong');
+    expect(coverage.primarySurfaceUrl).toMatch(/email-preview-fixture/);
+
+    const paid = buildMeaningfulPlaywrightSource({
+      scenario: {
+        name: 'Positive: Paid Amount in order details table',
+        kind: 'positive',
+        priority: 'high',
+        criterion: 'Paid Amount in escrow notification template',
+        steps: 'Open template preview. Assert Paid Amount in the order details table.',
+        expected: 'Paid Amount is visible with a live value',
+      },
+      application: 'PayNSure',
+      findings: previewFindings,
+      story: 'Order Amount Placement in Escrow Notification Template',
+      criteria: ['Paid Amount'],
+      index: 0,
+    });
+    expect(paid).toContain("page.goto('http://email-preview-fixture/')");
+    expect(paid).toMatch(/Paid Amount/i);
+    expect(paid).toMatch(/getByRole\('table'|order-details/i);
+    expect(paid).not.toMatch(/@qa-platform:needs-surface/);
+
+    const cta = buildMeaningfulPlaywrightSource({
+      scenario: {
+        name: 'Positive: Confirm Delivery CTA',
+        kind: 'positive',
+        priority: 'high',
+        criterion: 'Confirm Delivery button',
+        steps: 'Open template preview. Assert Confirm Delivery CTA.',
+        expected: 'Confirm Delivery is visible',
+      },
+      application: 'PayNSure',
+      findings: previewFindings,
+      story: 'Order Amount Placement in Escrow Notification Template',
+      criteria: ['Confirm Delivery'],
+      index: 1,
+    });
+    expect(cta).toContain("page.goto('http://email-preview-fixture/')");
+    expect(cta).toMatch(/Confirm Delivery/i);
+    expect(cta).not.toMatch(/@qa-platform:needs-surface/);
+  });
 });

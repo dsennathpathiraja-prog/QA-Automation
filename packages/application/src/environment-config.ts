@@ -39,6 +39,7 @@ export interface ResolvedEnvironment {
   name: string;
   kind: string;
   applicationUrl: string;
+  templatePreviewUrl?: string;
   browser: EnvironmentBrowser;
   restrictions: EnvironmentRestrictions;
   selectable: boolean;
@@ -241,6 +242,7 @@ export class EnvironmentConfig {
       name: env.name,
       kind: env.kind,
       applicationUrl: env.applicationUrl,
+      ...(env.templatePreviewUrl ? { templatePreviewUrl: env.templatePreviewUrl } : {}),
       browser: env.browser,
       restrictions: env.restrictions,
       selectable,
