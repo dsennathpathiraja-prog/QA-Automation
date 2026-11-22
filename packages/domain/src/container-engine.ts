@@ -26,6 +26,8 @@ export interface ContainerEngine {
   start(id: string): Promise<void>;
   inspect(idOrName: string): Promise<ContainerState | undefined>;
   stop(id: string, graceSeconds: number): Promise<void>;
+  /** Force-removes a container (used to reclaim exited / never-started runners for the pool). */
+  remove(id: string): Promise<void>;
   list(labels: Record<string, string>): Promise<ContainerState[]>;
   /** The local image id (`sha256:...`), or undefined when the engine has no such image. */
   inspectImage(ref: string): Promise<{ id: string } | undefined>;

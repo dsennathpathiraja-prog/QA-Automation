@@ -196,6 +196,39 @@ export function compactCasesForRunner(cases: WorkItemCaseInput[]): Array<{ id: s
   }));
 }
 
+const POOL_FULL = /pool is full/i;
+/** How long Execute waits for a free runner slot before failing clearly (not instant Blocked). */
+export const RUNNER_POOL_WAIT_MS = 180_000;
+
+/** Retry launcher.launch while the pool is full; one work-item run uses a single batch container. */
+export async function launchWhenPoolFree(
+  launcher: RunnerLauncher,
+  spec: RunnerSpec,
+  o: { waitMs?: number; now?: () => number; sleep?: (ms: number) => Promise<void> } = {},
+) {
+  const waitMs = o.waitMs ?? RUNNER_POOL_WAIT_MS;
+  const now = o.now ?? Date.now;
+  const pause = o.sleep ?? sleep;
+  const deadline = now() + waitMs;
+  let attempt = 0;
+  while (true) {
+    try {
+      return await launcher.launch(spec);
+    } catch (e) {
+      const full = e instanceof PlatformError && e.errorClass === 'transient' && POOL_FULL.test(e.message);
+      if (!full) throw e;
+      if (now() >= deadline) {
+        throw new PlatformError(
+          'transient',
+          'The runner pool stayed full after waiting. Reclaim leftover qa-runner containers (`docker ps -a --filter label=qa.platform/managed=true`) or raise RUNNER_MAX_CONCURRENT, then re-run.',
+        );
+      }
+      attempt += 1;
+      await pause(Math.min(8_000, 400 * 2 ** Math.min(attempt, 4)));
+    }
+  }
+}
+
 async function viaRunner(o: {
   run: WorkItemRunRecord;
   cases: WorkItemCaseInput[];
@@ -246,7 +279,10 @@ async function viaRunner(o: {
       ...casesEnv,
     },
   };
-  const handle = await launcher.launcher.launch(spec);
+  if (o.onProgress) {
+    await o.onProgress(seeded.map((row) => ({ ...row, status: 'Queued' as const, message: 'Waiting for a runner slot' })));
+  }
+  const handle = await launchWhenPoolFree(launcher.launcher, spec);
   const deadline = Date.now() + (spec.limits.timeoutSeconds + 10) * 1000;
   let state = await launcher.launcher.status(handle.id);
   let lastFingerprint = '';

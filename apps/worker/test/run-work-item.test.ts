@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { FakeRunnerLauncher, InMemoryAuditSink, InMemoryTestCaseRepository } from '@qa/testing';
+import { FakeRunnerLauncher, InMemoryAuditSink, InMemoryTestCaseRepository, sampleRunnerSpec } from '@qa/testing';
 import { isPlaceholderScreenshot, PLACEHOLDER_SCREENSHOT_B64, screenshotContentType, TestCaseService } from '@qa/application';
-import { compactCasesForRunner, mergeLiveProgress, parseCaseResults, processWorkItemExecutions, RUNNER_REQUIRED, runWorkItemCases } from '../src/run-work-item';
+import { PlatformError } from '@qa/domain';
+import { compactCasesForRunner, launchWhenPoolFree, mergeLiveProgress, parseCaseResults, processWorkItemExecutions, RUNNER_REQUIRED, runWorkItemCases } from '../src/run-work-item';
 import { squashIdFromSummary, syncCaseResultsToSquash } from '../src/sync-execution';
 
 const image = `qa-runner@sha256:${'a'.repeat(64)}`;
@@ -227,6 +228,42 @@ describe('work-item Playwright run', () => {
     expect(out.results).toHaveLength(200);
     expect(out.results[0]).toMatchObject({ testCaseId: firstId, status: 'Passed' });
     expect(spec.limits.timeoutSeconds).toBeGreaterThanOrEqual(90 + 200 * 25);
+  });
+
+  it('waits and retries when the runner pool is temporarily full', async () => {
+    const launcher = new FakeRunnerLauncher();
+    let calls = 0;
+    const realLaunch = launcher.launch.bind(launcher);
+    launcher.launch = async (spec, opts) => {
+      calls += 1;
+      if (calls < 3) throw new PlatformError('transient', 'the runner pool is full (2/2 active); try again later');
+      return realLaunch(spec, opts);
+    };
+    let now = 0;
+    const handle = await launchWhenPoolFree(launcher, sampleRunnerSpec({ image }), {
+      waitMs: 60_000,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+    });
+    expect(handle.id).toBeTruthy();
+    expect(calls).toBe(3);
+  });
+
+  it('fails clearly after waiting if the runner pool stays full', async () => {
+    const launcher = new FakeRunnerLauncher();
+    launcher.launch = async () => {
+      throw new PlatformError('transient', 'the runner pool is full (8/8 active); try again later');
+    };
+    let now = 0;
+    await expect(launchWhenPoolFree(launcher, sampleRunnerSpec({ image }), {
+      waitMs: 1_000,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+    })).rejects.toThrow(/pool stayed full/);
   });
 
   it('keeps Blocked when the runner returns no RESULT_JSON (no HTTP probe fallback)', async () => {

@@ -124,7 +124,18 @@ docker run --rm --network qa-platform-local \
 
 4. If cases are **Blocked** with “runner-launcher is not available”, the launcher container is not on `qa-platform-local` — re-run step 1 (Docker socket must be available to Compose).
 
-5. Squash sync needs a **READ_WRITE** personal API token on the switched-on Squash connector (project name e.g. ToolKit-AgenFlow): Test Connection → Switch on → **restart the worker** after replacing the token.
+5. If cases are **Blocked** with “runner pool is full” / “pool stayed full”, check leftovers with **`docker ps -a`** (plain `docker ps` hides `created`/`exited` orphans that used to pin the pool). One Execute uses **one** `qa-runner-*` container for the whole batch — not one per case:
+
+```
+docker ps -a --filter label=qa.platform/managed=true
+docker images qa-runner:local   # must exist; runner-image Exited (0) after build
+docker rm -f $(docker ps -aq --filter label=qa.platform/managed=true) 2>/dev/null || true
+docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
+```
+
+Local default `RUNNER_MAX_CONCURRENT` is **8** (never treat `0` as a valid limit). The launcher reclaims finished/never-started runners before admitting a new one; the worker waits up to ~3 minutes for a free slot. If the image is missing you get “Rebuild the stack”, not pool-full.
+
+6. Squash sync needs a **READ_WRITE** personal API token on the switched-on Squash connector (project name e.g. ToolKit-AgenFlow): Test Connection → Switch on → **restart the worker** after replacing the token.
 
 Optional browser MCP (Explore UI / connector Test connection) still uses `--profile browser` — that is separate from Executions screenshots.
 

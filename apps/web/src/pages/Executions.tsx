@@ -680,6 +680,9 @@ function WorkItemRunDetail({ shown }: { shown: {
 
 function screenshotEmptyHint(message: string | undefined): string {
   const m = message ?? '';
+  if (/pool is full|pool stayed full/i.test(m)) {
+    return 'No screenshot: the runner pool was full. Wait for other runs to finish, reclaim leftover qa-runner containers, or raise RUNNER_MAX_CONCURRENT, then re-run.';
+  }
   if (/runner-launcher is not available|Playwright runner/i.test(m)) {
     return 'No screenshot: the Playwright runner was not available. Start the local stack (`docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d`) so runner-launcher and qa-runner:local are up, then re-run.';
   }

@@ -107,7 +107,24 @@ describe('runner launcher service', () => {
   it('applies back-pressure when the pool is full', async () => {
     const app = buildLauncherApp(deps(new FakeContainerEngine(), { maxConcurrent: 1 }));
     expect((await app.inject({ method: 'POST', url: '/v1/runners', headers: auth, payload: sampleRunnerSpec({ runId: 'a' }) })).statusCode).toBe(201);
-    expect((await app.inject({ method: 'POST', url: '/v1/runners', headers: auth, payload: sampleRunnerSpec({ runId: 'b' }) })).statusCode).toBe(429);
+    const full = await app.inject({ method: 'POST', url: '/v1/runners', headers: auth, payload: sampleRunnerSpec({ runId: 'b' }) });
+    expect(full.statusCode).toBe(429);
+    expect(full.json().error.message).toMatch(/pool is full \(1\/1 active\)/);
+  });
+
+  it('reclaims never-started created runners so they do not pin the pool', async () => {
+    const engine = new FakeContainerEngine();
+    const app = buildLauncherApp(deps(engine, { maxConcurrent: 1 }));
+    const stuck = await app.inject({ method: 'POST', url: '/v1/runners', headers: auth, payload: sampleRunnerSpec({ runId: 'stuck' }) });
+    expect(stuck.statusCode).toBe(201);
+    const id = stuck.json().id as string;
+    // Simulate create-without-start leftover (putFiles-era orphans).
+    engine.containers.get(id)!.state.status = 'created';
+    engine.containers.get(id)!.state.startedAt = undefined;
+    const next = await app.inject({ method: 'POST', url: '/v1/runners', headers: auth, payload: sampleRunnerSpec({ runId: 'fresh' }) });
+    expect(next.statusCode).toBe(201);
+    expect(engine.containers.has(id)).toBe(false);
+    expect([...engine.containers.values()][0]!.state.status).toBe('running');
   });
 
   it('cannot see, stop or list containers the platform did not create', async () => {

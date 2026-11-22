@@ -55,6 +55,25 @@ export function buildLauncherApp(deps: LauncherDeps): FastifyInstance {
     return c;
   };
 
+  /**
+   * Free pool slots held by finished runners and never-started leftovers (e.g. create-then-putFiles
+   * failures left status=created and blocked the pool at maxConcurrent=2).
+   */
+  const reclaimFinished = async (): Promise<number> => {
+    let removed = 0;
+    for (const c of await deps.engine.list({ [LABEL.managed]: 'true' })) {
+      if (c.status === 'running' || c.status === 'restarting' || c.status === 'paused' || c.status === 'removing') continue;
+      // created / exited / dead / unknown — not actively running work
+      try {
+        await deps.engine.remove(c.id);
+        removed += 1;
+      } catch {
+        /* best-effort */
+      }
+    }
+    return removed;
+  };
+
   const currentPin = async (): Promise<{ image: string; dockerRef: string } | undefined> => {
     if (!deps.localImage) return undefined;
     const info = await deps.engine.inspectImage(deps.localImage.ref);
@@ -92,10 +111,26 @@ export function buildLauncherApp(deps: LauncherDeps): FastifyInstance {
     if (deps.localImage && !pin) return reply.code(503).send(err('transient', 'The runner image is not on this machine yet. Rebuild the stack.'));
     if (pin && spec.image !== pin.image) return reply.code(403).send(err('denied', 'image is not the approved runner'));
     const name = containerName(spec.runId);
+    await reclaimFinished();
     const existing = await deps.engine.inspect(name);
-    if (existing) return reply.code(200).send({ id: existing.id, runId: spec.runId, startedAt: (existing.startedAt ?? new Date()).toISOString() });
-    const running = (await deps.engine.list({ [LABEL.managed]: 'true' })).filter((c) => c.status === 'running' || c.status === 'created').length;
-    if (running >= deps.maxConcurrent) return reply.code(429).send(err('rate-limited', 'the runner pool is full; try again later'));
+    if (existing) {
+      // A leftover created/exited container with this runId was just reclaimed; only return live ones.
+      if (existing.status === 'running' || existing.status === 'restarting' || existing.status === 'paused') {
+        return reply.code(200).send({ id: existing.id, runId: spec.runId, startedAt: (existing.startedAt ?? new Date()).toISOString() });
+      }
+      try {
+        await deps.engine.remove(existing.id);
+      } catch {
+        /* recreate below */
+      }
+    }
+    const active = (await deps.engine.list({ [LABEL.managed]: 'true' })).filter((c) => c.status === 'running' || c.status === 'restarting' || c.status === 'paused');
+    if (active.length >= deps.maxConcurrent) {
+      return reply.code(429).send(err('rate-limited', `the runner pool is full (${active.length}/${deps.maxConcurrent} active); try again later`, {
+        active: active.length,
+        maxConcurrent: deps.maxConcurrent,
+      }));
+    }
 
     const body = toDockerCreateBody(spec, deps.translate);
     if (pin) body.Image = pin.dockerRef;
@@ -106,9 +141,22 @@ export function buildLauncherApp(deps: LauncherDeps): FastifyInstance {
       if (!requireConflict(e)) throw e;
       const c = await deps.engine.inspect(name);
       if (!c) throw e;
-      return reply.code(200).send({ id: c.id, runId: spec.runId, startedAt: (c.startedAt ?? new Date()).toISOString() });
+      if (c.status === 'running' || c.status === 'restarting' || c.status === 'paused') {
+        return reply.code(200).send({ id: c.id, runId: spec.runId, startedAt: (c.startedAt ?? new Date()).toISOString() });
+      }
+      await deps.engine.remove(c.id);
+      id = (await deps.engine.create(name, body)).id;
     }
-    await deps.engine.start(id);
+    try {
+      await deps.engine.start(id);
+    } catch (e) {
+      try {
+        await deps.engine.remove(id);
+      } catch {
+        /* ignore */
+      }
+      throw e;
+    }
     return reply.code(201).send({ id, runId: spec.runId, startedAt: new Date().toISOString() });
   });
 
