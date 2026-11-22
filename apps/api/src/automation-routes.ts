@@ -8,9 +8,15 @@ import {
   RegisterAutomationAssetRequest,
   RegressionResolveRequest,
   RegressionResolveResponse,
+  RegressionScopeRequest,
+  RegressionScopeResponse,
 } from '@qa/contracts';
 import { PlatformError } from '@qa/domain';
-import type { AutomationService } from '@qa/application';
+import {
+  parseRegressionScopeInput,
+  type AutomationService,
+  type RegressionScopeService,
+} from '@qa/application';
 import { requires } from '@qa/security';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -27,7 +33,11 @@ const idOf = (raw: unknown, what: string) => {
   return id;
 };
 
-export function registerAutomationRoutes(app: FastifyInstance, automation: AutomationService) {
+export function registerAutomationRoutes(
+  app: FastifyInstance,
+  automation: AutomationService,
+  scope?: RegressionScopeService,
+) {
   app.get('/api/v1/automation/assets', { config: { access: requires('automation.view') } }, async (req) => {
     const status = (req.query as { status?: string }).status;
     const filter = status === 'draft' || status === 'approved' ? status : undefined;
@@ -73,5 +83,16 @@ export function registerAutomationRoutes(app: FastifyInstance, automation: Autom
   app.post('/api/v1/automation/resolve-regression', { config: { access: requires('automation.view') } }, async (req) => {
     const input = body(RegressionResolveRequest, req.body, 'resolve regression automation');
     return RegressionResolveResponse.parse(await automation.resolveForRegression(input.squashCaseIds));
+  });
+
+  /**
+   * Phase 9 E3 — expand suite / campaign / collection / selected into Squash case ids for resolve.
+   * Suite/campaign without Squash on the API: pass `caseIds` (worker `rg.configure-scope` does live Squash).
+   */
+  app.post('/api/v1/automation/scope', { config: { access: requires('automation.view') } }, async (req) => {
+    if (!scope) throw new PlatformError('denied', 'Regression scope is not configured on this API.');
+    const raw = body(RegressionScopeRequest, req.body, 'regression scope');
+    const input = parseRegressionScopeInput(raw);
+    return RegressionScopeResponse.parse(await scope.resolve(input));
   });
 }

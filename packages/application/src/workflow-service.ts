@@ -307,12 +307,17 @@ export class WorkflowService {
     if (!version) throw new PlatformError('conflict', 'This workflow has no published version.');
     this.ready(await this.report(version.definition));
     const def = asDef(version.definition);
+    // Pinned wizard values (e.g. Regression smoke collectionKey) are not shown in the run form — merge them in.
+    const mergedParams: Record<string, unknown> = { ...params };
     for (const p of def.spec?.parameters ?? []) {
-      const missing = params[p.name] === undefined || params[p.name] === '';
+      if (p.pinned !== undefined && p.pinned !== null && (mergedParams[p.name] === undefined || mergedParams[p.name] === '')) {
+        mergedParams[p.name] = p.pinned;
+      }
+      const missing = mergedParams[p.name] === undefined || mergedParams[p.name] === '';
       if (current.type === 'requirement-validation' && p.name === 'environment') continue;
       if (p.required && (p.pinned === undefined || p.pinned === null) && missing) throw new PlatformError('validation', `${p.name} is required to start this workflow.`);
     }
-    const run = await this.executions().insert({ id: randomUUID(), workflowId: id, versionId: version.id, definition: version.definition, params });
+    const run = await this.executions().insert({ id: randomUUID(), workflowId: id, versionId: version.id, definition: version.definition, params: mergedParams });
     await this.d.audit.append({ actorId: actor.id, action: 'execution.start', subjectType: 'workflow_execution', subjectId: run.id, detail: { workflowId: id, versionId: version.id } });
     return runOf(run, current.name);
   }

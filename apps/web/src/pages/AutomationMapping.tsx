@@ -3,6 +3,7 @@ import {
   AutomationMappingListResponse,
   AutomationResolveResponse,
   RegressionResolveResponse,
+  RegressionScopeResponse,
 } from '@qa/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -20,6 +21,8 @@ const reasonLabel = (reason: string) => {
 const parseCaseIds = (raw: string) =>
   [...new Set(raw.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean))];
 
+type ScopeKind = 'selected' | 'suite' | 'campaign' | 'collection';
+
 export function AutomationMapping() {
   const api = useApi();
   const session = useSession();
@@ -27,6 +30,13 @@ export function AutomationMapping() {
   const [resolveId, setResolveId] = useState('');
   const [resolved, setResolved] = useState('');
   const [prepIds, setPrepIds] = useState('');
+  const [scopeKind, setScopeKind] = useState<ScopeKind>('selected');
+  const [scopeProjectId, setScopeProjectId] = useState('');
+  const [scopeSuiteId, setScopeSuiteId] = useState('');
+  const [scopeCampaignId, setScopeCampaignId] = useState('');
+  const [scopeIterationId, setScopeIterationId] = useState('');
+  const [scopeCollectionKey, setScopeCollectionKey] = useState('smoke');
+  const [scopeCaseIds, setScopeCaseIds] = useState('');
   const mappings = useQuery({
     queryKey: ['automation-mappings'],
     queryFn: () => api.get('/api/v1/automation/mappings', AutomationMappingListResponse),
@@ -51,6 +61,23 @@ export function AutomationMapping() {
   const prep = useMutation({
     mutationFn: (squashCaseIds: string[]) =>
       api.post('/api/v1/automation/resolve-regression', { squashCaseIds }, RegressionResolveResponse),
+  });
+
+  const scope = useMutation({
+    mutationFn: () => {
+      const caseIds = parseCaseIds(scopeCaseIds);
+      const body: Record<string, unknown> = { kind: scopeKind };
+      if (scopeProjectId.trim()) body.projectId = scopeProjectId.trim();
+      if (scopeSuiteId.trim()) body.suiteId = scopeSuiteId.trim();
+      if (scopeCampaignId.trim()) body.campaignId = scopeCampaignId.trim();
+      if (scopeIterationId.trim()) body.iterationId = scopeIterationId.trim();
+      if (scopeCollectionKey.trim()) body.collectionKey = scopeCollectionKey.trim();
+      if (caseIds.length > 0) body.caseIds = caseIds;
+      return api.post('/api/v1/automation/scope', body, RegressionScopeResponse);
+    },
+    onSuccess: (data) => {
+      setPrepIds(data.caseIds.join('\n'));
+    },
   });
 
   return (
@@ -139,6 +166,109 @@ export function AutomationMapping() {
           </button>
         </form>
         {resolved && <p className="mt-3 text-sm" role="status">{resolved}</p>}
+      </Card>
+
+      <Card label="Regression scope (suite / campaign / collection)">
+        <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
+          Expand scope to Squash case ids for resolve. Selected and collection work here; suite/campaign live listing runs on the worker
+          (<code className="text-xs">rg.configure-scope</code>) — pass case ids to preview, or start a Regression workflow run.
+        </p>
+        <form
+          className="space-y-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            scope.mutate();
+          }}
+        >
+          <label className="block text-sm">
+            Scope kind
+            <select
+              className="mt-1 block w-full rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-950"
+              value={scopeKind}
+              onChange={(e) => setScopeKind(e.target.value as ScopeKind)}
+            >
+              <option value="selected">Selected case ids</option>
+              <option value="suite">Project suite (all cases in project)</option>
+              <option value="campaign">Campaign / iteration</option>
+              <option value="collection">Platform collection key</option>
+            </select>
+          </label>
+          {(scopeKind === 'suite' || scopeKind === 'campaign') && (
+            <label className="block text-sm">
+              Squash project id
+              <input
+                className="mt-1 block w-full rounded border border-slate-300 px-2 py-1 font-mono text-sm dark:border-slate-600 dark:bg-slate-950"
+                value={scopeProjectId}
+                onChange={(e) => setScopeProjectId(e.target.value)}
+                placeholder="1"
+              />
+            </label>
+          )}
+          {scopeKind === 'suite' && (
+            <label className="block text-sm">
+              Suite id (optional — omit when Squash suite probe is unsupported)
+              <input
+                className="mt-1 block w-full rounded border border-slate-300 px-2 py-1 font-mono text-sm dark:border-slate-600 dark:bg-slate-950"
+                value={scopeSuiteId}
+                onChange={(e) => setScopeSuiteId(e.target.value)}
+              />
+            </label>
+          )}
+          {scopeKind === 'campaign' && (
+            <>
+              <label className="block text-sm">
+                Campaign id
+                <input
+                  className="mt-1 block w-full rounded border border-slate-300 px-2 py-1 font-mono text-sm dark:border-slate-600 dark:bg-slate-950"
+                  value={scopeCampaignId}
+                  onChange={(e) => setScopeCampaignId(e.target.value)}
+                  placeholder="10"
+                />
+              </label>
+              <label className="block text-sm">
+                Iteration id (optional — all iterations when empty)
+                <input
+                  className="mt-1 block w-full rounded border border-slate-300 px-2 py-1 font-mono text-sm dark:border-slate-600 dark:bg-slate-950"
+                  value={scopeIterationId}
+                  onChange={(e) => setScopeIterationId(e.target.value)}
+                  placeholder="20"
+                />
+              </label>
+            </>
+          )}
+          {scopeKind === 'collection' && (
+            <label className="block text-sm">
+              Collection key
+              <input
+                className="mt-1 block w-full rounded border border-slate-300 px-2 py-1 font-mono text-sm dark:border-slate-600 dark:bg-slate-950"
+                value={scopeCollectionKey}
+                onChange={(e) => setScopeCollectionKey(e.target.value)}
+                placeholder="smoke"
+              />
+            </label>
+          )}
+          <label className="block text-sm">
+            Squash case ids {scopeKind === 'selected' ? '(required)' : '(optional override / API preview)'}
+            <textarea
+              className="mt-1 block w-full rounded border border-slate-300 px-2 py-1 font-mono text-sm dark:border-slate-600 dark:bg-slate-950"
+              rows={2}
+              value={scopeCaseIds}
+              onChange={(e) => setScopeCaseIds(e.target.value)}
+              placeholder={'238\n239'}
+            />
+          </label>
+          <button type="submit" className="rounded border border-slate-300 px-3 py-1 text-sm dark:border-slate-600" disabled={scope.isPending}>
+            Expand scope to case ids
+          </button>
+        </form>
+        {scope.isError && <p className="mt-2 text-sm text-red-700 dark:text-red-300" role="alert">Scope expansion failed.</p>}
+        {scope.data && (
+          <p className="mt-3 text-sm font-mono" role="status">
+            {scope.data.mode}: {scope.data.caseIds.length} id{scope.data.caseIds.length === 1 ? '' : 's'}
+            {scope.data.caseIds.length > 0 ? ` → ${scope.data.caseIds.join(', ')}` : ''}
+            {' '}(copied into Regression prep below)
+          </p>
+        )}
       </Card>
 
       <Card label="Regression prep (approved-only)">

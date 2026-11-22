@@ -471,6 +471,35 @@ export type NotAutomatedCase = z.infer<typeof NotAutomatedCaseSchema>;
 export type RegressionResolveRequest = z.infer<typeof RegressionResolveRequest>;
 export type RegressionResolveResponse = z.infer<typeof RegressionResolveResponse>;
 
+/** Phase 9 E3 — suite / campaign / collection / selected → ordered Squash case ids. */
+export const RegressionScopeKindSchema = z.enum(['suite', 'campaign', 'collection', 'selected']);
+export const RegressionScopeRequest = z.object({
+  kind: RegressionScopeKindSchema.optional(),
+  mode: z.string().optional(),
+  projectId: z.string().min(1).optional(),
+  suiteId: z.string().min(1).optional(),
+  campaignId: z.string().min(1).optional(),
+  iterationId: z.string().min(1).optional(),
+  collectionKey: z.string().min(1).optional(),
+  caseIds: z.array(z.string().min(1)).optional(),
+  squashCaseIds: z.array(z.string().min(1)).optional(),
+  squashScope: z.record(z.unknown()).optional(),
+  selection: z.record(z.unknown()).optional(),
+  config: z.record(z.unknown()).optional(),
+}).passthrough();
+export const RegressionScopeResponse = z.object({
+  caseIds: z.array(z.string()),
+  kind: RegressionScopeKindSchema,
+  mode: z.enum(['all-in-suite', 'selected', 'regression-collection', 'campaign']),
+  projectId: z.string().optional(),
+  suiteId: z.string().optional(),
+  campaignId: z.string().optional(),
+  iterationId: z.string().optional(),
+  collectionKey: z.string().optional(),
+});
+export type RegressionScopeRequest = z.infer<typeof RegressionScopeRequest>;
+export type RegressionScopeResponse = z.infer<typeof RegressionScopeResponse>;
+
 /** Phase 9 E2 — compact `rg.execute-tests` step outputs (screenshots live on evidenceExecutionId). */
 export const RegressionCaseResultSchema = z.object({
   testCaseId: z.string(),

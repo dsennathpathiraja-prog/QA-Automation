@@ -338,7 +338,7 @@ describe('Squash provider against the documentation-based mock', () => {
     expect(r.description).toBe('A visitor can buy without an account.');
   });
 
-  it('reads execution history, campaigns and iterations', async () => {
+  it('reads execution history, campaigns, iterations and iteration test plans', async () => {
     const c = connect();
     const h = (await call(c, 'tm.execution.history', { testCaseId: '238' })) as any;
     expect(h.items).toEqual([
@@ -347,6 +347,13 @@ describe('Squash provider against the documentation-based mock', () => {
     ]);
     expect(((await call(c, 'tm.campaign.list', { project: '1' })) as any).items).toEqual([{ id: '10', name: 'Release 12' }]);
     expect(((await call(c, 'tm.iteration.list', { campaign: '10' })) as any).items).toHaveLength(2);
+    const plan = (await call(c, 'tm.iteration.testplan.list', { iteration: '20' })) as any;
+    expect(plan.items).toEqual([
+      { id: '1001', testCaseId: '238', name: 'Guest checkout with card' },
+      { id: '1002', testCaseId: '239', name: 'Log out' },
+    ]);
+    const probe = await connect().probeCapabilities();
+    expect(probe.find((p) => p.capability === 'tm.iteration.testplan.list')).toMatchObject({ support: 'supported' });
   });
 
   it('maps HTTP failures to error classes', async () => {

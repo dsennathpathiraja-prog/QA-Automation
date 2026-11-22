@@ -18,11 +18,16 @@ import { EgressPolicy, HardenedHttpClient, OllamaAdapter, OpenAiCompatibleAdapte
 import { LlmGateway, StaticAssignmentResolver, StaticProviderRegistry, type DataClass, type LlmPort, type ProviderEntry } from '@qa/llm';
 import { SecretRedactor } from '@qa/security';
 import { tick as engineTick } from '@qa/workflow-engine';
-import { AutomationService, TestCaseService } from '@qa/application';
+import { AutomationService, caseIdsFromPlatformCollection, TestCaseService } from '@qa/application';
 import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgAutomationRepository, PgConnectorRepository, PgEnvironmentRepository, PgExecutionRepository, PgInstanceResolver, PgLlmAuditSink, PgOperationLogSink, PgRunPolicyStore, PgTestCaseRepository, PgTestRequestQueue, pingDb } from '@qa/persistence';
 import { publishGeneratedCases, type GeneratedCase } from './publish-cases';
 import { buildWorkerApp } from './app';
 import { ConnectorTester } from './connector-tester';
+import {
+  performConfigureScope,
+  performSelectSquashProject,
+  squashPortFromInvoker,
+} from './configure-scope';
 import { ConnectorHealthScheduler } from './health-scheduler';
 import { WorkerLoop } from './loop';
 import { checkReachability } from './reachability';
@@ -208,6 +213,32 @@ const loop = new WorkerLoop({
         }
       },
       perform: async (step) => {
+        if (step.type === 'rg.select-squash-project') {
+          return performSelectSquashProject(step);
+        }
+        if (step.type === 'rg.configure-scope') {
+          const actor = { type: 'step' as const, id: step.id, executionId: step.runId, stepId: step.id };
+          const squashPort = squash
+            ? squashPortFromInvoker(async (capability, input) => squash.invoke({
+              role: 'testManagement',
+              capability,
+              input,
+              actor,
+            }))
+            : undefined;
+          const collections = testCases && automation
+            ? {
+              caseIdsForCollectionKey: async (key: string) => caseIdsFromPlatformCollection({
+                collectionKey: key,
+                listCollections: () => testCases.collections(),
+                getCollection: (id) => testCases.collection(id).then((c) => c ? { cases: c.cases } : undefined).catch(() => undefined),
+                listAssets: () => automation.listAssets(),
+                listMappings: () => automation.listMappings(),
+              }),
+            }
+            : undefined;
+          return performConfigureScope(step, { squash: squashPort, collections });
+        }
         if (step.type === 'rg.resolve-automation') {
           return performResolveAutomation(step, automation);
         }

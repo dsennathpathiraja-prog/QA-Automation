@@ -212,6 +212,8 @@ After cases are published to Squash, the worker seeds a **draft** automation ass
 
 **Regression execute (Phase 9 E2):** after approve, a Regression workflow’s `rg.execute-tests` step runs only approved assets via the Playwright runner (live progress + screenshots on Executions as `rg:<runId>`). Draft/unmapped stay Skipped / Not Automated — no explore or generate. See [`docs/phase9-e2-regression-execute.md`](../../../docs/phase9-e2-regression-execute.md).
 
+**Regression scope (Phase 9 E3):** pick suite (project cases), campaign/iteration, platform `collectionKey`, or selected case ids — `POST /api/v1/automation/scope` or Automation Mapping → **Expand scope**, then resolve. Live Squash campaign listing runs in `rg.configure-scope`. See [`docs/phase9-e3-regression-scope.md`](../../../docs/phase9-e3-regression-scope.md).
+
 PowerShell-safe check:
 
 ```powershell

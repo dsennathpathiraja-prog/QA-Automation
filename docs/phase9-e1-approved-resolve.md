@@ -33,4 +33,4 @@ Seed two mappings (publish to Squash or register), approve one on `/automation`,
 # Expect resolved = approved only; Not Automated for draft (mapping-unapproved) and missing (no-mapping).
 ```
 
-Or use **Automation Mapping** → Approve one row → **Preview Regression resolve** with both Squash case ids.
+Or use **Automation Mapping** → Approve one row → **Expand scope** (E3) and/or **Preview Regression resolve** with both Squash case ids.

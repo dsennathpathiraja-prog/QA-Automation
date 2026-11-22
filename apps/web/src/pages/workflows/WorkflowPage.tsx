@@ -53,6 +53,13 @@ const STEP_LABEL: Record<string, string> = {
   'rv.execute-tests': 'Execute tests',
   'rv.sync-results': 'Sync results',
   'rv.qa-report': 'QA report',
+  'rg.select-squash-project': 'Select Squash project',
+  'rg.configure-scope': 'Configure suite / campaign / collection',
+  'rg.select-environment': 'Select environment',
+  'rg.resolve-automation': 'Resolve approved automation',
+  'rg.execute-tests': 'Execute Regression tests',
+  'rg.update-squash': 'Update Squash',
+  'rg.regression-report': 'Regression report',
 };
 
 const STEP_HELP: Record<string, string> = {
@@ -64,6 +71,13 @@ const STEP_HELP: Record<string, string> = {
   'rv.generate-tests': 'Turns each planned scenario into a Playwright case (quality gate forbids body-only stubs).',
   'rv.heal-tests': 'Rewrites broken platform-owned stubs only.',
   'rv.publish-testcases': 'Stores cases under the work item and upserts Squash when writable; refuses stub-only cases.',
+  'rg.select-squash-project': 'Records the Squash project from squashScope for scope expansion.',
+  'rg.configure-scope': 'Expands suite, campaign/iteration, or platform collection into Squash case ids.',
+  'rg.select-environment': 'Resolves the target application URL for execute.',
+  'rg.resolve-automation': 'Approved-only resolve; drafts and unmapped cases become Not Automated.',
+  'rg.execute-tests': 'Runs approved scripts via Playwright with evidence on Executions.',
+  'rg.update-squash': 'Syncs results to Squash when the token allows (later epic).',
+  'rg.regression-report': 'Writes the regression report artifact (later epic).',
 };
 
 type WfTab = 'steps' | 'flow' | 'connectors' | 'check' | 'run';
@@ -101,7 +115,20 @@ export function WorkflowPage() {
   const publish = useMutation({ mutationFn: () => api.post(`/api/v1/workflows/${id}/publish-request`, {}, WorkflowSchema), onSuccess: refresh });
   const approve = useMutation({ mutationFn: () => api.post(`/api/v1/workflows/${id}/approve`, {}, WorkflowSchema), onSuccess: refresh });
   const start = useMutation({
-    mutationFn: () => api.post(`/api/v1/workflows/${id}/runs`, { parameters: params }, ExecutionSchema),
+    mutationFn: () => {
+      const parameters: Record<string, unknown> = { ...params };
+      for (const key of ['squashScope', 'selection'] as const) {
+        const raw = parameters[key];
+        if (typeof raw === 'string' && raw.trim().startsWith('{')) {
+          try {
+            parameters[key] = JSON.parse(raw) as unknown;
+          } catch {
+            /* keep string — worker parseRegressionScopeInput also accepts JSON text */
+          }
+        }
+      }
+      return api.post(`/api/v1/workflows/${id}/runs`, { parameters }, ExecutionSchema);
+    },
     onSuccess: (run) => { setRunId(run.id); setTab('run'); },
   });
   const remove = useMutation({
@@ -132,6 +159,7 @@ export function WorkflowPage() {
 
   const patch = (next: Def) => setEdited(next);
   const generation = workflow.data?.type === 'requirement-validation';
+  const regression = workflow.data?.type === 'regression-testing';
   const steps = (def?.spec?.steps ?? []).filter((s) => !(generation && ['rv.execute-tests', 'rv.sync-results', 'rv.qa-report'].includes(s.type)));
   const enabled = steps.filter((s) => s.enabled !== false);
   const exploreUiOn = enabled.some((s) => s.type === 'rv.explore-ui' || s.id === 'explore_ui');
@@ -140,12 +168,13 @@ export function WorkflowPage() {
   const stepEvents = (events.data?.items ?? []).filter((event) => event.kind === 'step.completed' || event.kind === 'step.failed');
   const runParams = (def?.spec?.parameters ?? []).filter((p) => {
     if (p.pinned !== undefined && p.pinned !== null) return false;
-    if (p.name === 'environment') return exploreUiOn;
+    if (p.name === 'environment') return exploreUiOn || regression;
     if (p.name === 'acceptPlan') return false; // dedicated checkbox below
+    if (p.name === 'browser') return false;
     return p.required;
   });
-  const missingEnvironment = exploreUiOn && !params.environment;
-  const canStartRun = !start.isPending && !(exploreUiOn && !params.environment);
+  const missingEnvironment = (exploreUiOn || regression) && !params.environment;
+  const canStartRun = !start.isPending && !((exploreUiOn || regression) && !params.environment);
   const acceptPlanOn = params.acceptPlan === 'true' || params.acceptPlan === '1';
   const pausedForPlan = run.data?.status === 'paused'
     && stepEvents.some((event) => event.kind === 'step.completed' && String(event.payload.stepType ?? '') === 'rv.generate-test-plan')
@@ -365,9 +394,16 @@ export function WorkflowPage() {
                       Publish refuses body-only stubs. Explore-gap / needs-surface cases are flagged; AC coverage gaps appear in the plan Markdown.
                     </Typography>
                   )}
+                  {regression && (
+                    <Alert severity="info">
+                      Regression expands squashScope / selection into Squash case ids (<code>rg.configure-scope</code>), then approved-only resolve and execute.
+                      Example squashScope JSON: {'{"projectId":"1"}'} or {'{"projectId":"1","campaignId":"10","iterationId":"20"}'}.
+                      Selected mode selection: {'{"mode":"selected","caseIds":["238","239"]}'}.
+                    </Alert>
+                  )}
                   {runParams.map((p) => (
                     p.name === 'environment' || p.type === 'environment-ref' ? (
-                      <FormControl key={p.name} fullWidth required={exploreUiOn} error={missingEnvironment}>
+                      <FormControl key={p.name} fullWidth required={exploreUiOn || regression} error={missingEnvironment}>
                         <InputLabel id={`param-${p.name}-label`}>Environment</InputLabel>
                         <Select
                           labelId={`param-${p.name}-label`}
@@ -388,10 +424,38 @@ export function WorkflowPage() {
                         )}
                         {missingEnvironment && selectableEnvironments.length > 0 && (
                           <Typography variant="caption" color="error" sx={{ mt: 0.5 }}>
-                            Environment is required so Explore UI can open the application.
+                            {regression
+                              ? 'Environment is required so Regression execute can open the application.'
+                              : 'Environment is required so Explore UI can open the application.'}
                           </Typography>
                         )}
                       </FormControl>
+                    ) : p.type === 'squash-scope' ? (
+                      <TextField
+                        key={p.name}
+                        id={`param-${p.name}`}
+                        label="Squash scope (JSON)"
+                        helperText='Project and optional campaign/iteration, e.g. {"projectId":"1"} or {"projectId":"1","campaignId":"10"}.'
+                        multiline
+                        minRows={3}
+                        value={params[p.name] ?? ''}
+                        onChange={(e) => setParams({ ...params, [p.name]: e.target.value })}
+                        fullWidth
+                        required={p.required}
+                      />
+                    ) : p.type === 'test-case-selection' ? (
+                      <TextField
+                        key={p.name}
+                        id={`param-${p.name}`}
+                        label="Case selection (JSON)"
+                        helperText='Selected: {"mode":"selected","caseIds":["238"]}. Collection uses pinned smoke when the template sets it.'
+                        multiline
+                        minRows={3}
+                        value={params[p.name] ?? ''}
+                        onChange={(e) => setParams({ ...params, [p.name]: e.target.value })}
+                        fullWidth
+                        required={p.required}
+                      />
                     ) : (
                       <TextField
                         key={p.name}
