@@ -27,6 +27,7 @@ import { ConnectorHealthScheduler } from './health-scheduler';
 import { WorkerLoop } from './loop';
 import { checkReachability } from './reachability';
 import { enrichStoryFromConnector } from './read-story';
+import { performResolveAutomation } from './resolve-automation';
 import { performRequirementStep } from './requirement-agents';
 import { launcherDown, runReachabilityCheck } from './runner-check';
 import { launcherDown as workItemLauncherDown, processWorkItemExecutions, runWorkItemCases } from './run-work-item';
@@ -205,6 +206,9 @@ const loop = new WorkerLoop({
         }
       },
       perform: async (step) => {
+        if (step.type === 'rg.resolve-automation') {
+          return performResolveAutomation(step, automation);
+        }
         let params = step.params;
         if (step.type === 'rv.read-user-story') {
           const enrich = await enrichStoryFromConnector({

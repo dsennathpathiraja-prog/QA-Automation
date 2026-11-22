@@ -439,3 +439,34 @@ export const AutomationResolveResponse = z.object({
   status: AutomationAssetStatusSchema,
   approved: z.boolean(),
 });
+
+/** Phase 9 E1 — Regression approved-only resolve (`rg.resolve-automation` / prep API). */
+export const NotAutomatedReasonSchema = z.enum(['mapping-unapproved', 'no-mapping', 'asset-missing']);
+export const ResolvedAutomationSchema = z.object({
+  squashCaseId: z.string(),
+  squashReference: z.string(),
+  assetId: z.string(),
+  assetKey: z.string(),
+  assetName: z.string(),
+  scriptPath: z.string(),
+  status: z.literal('approved'),
+});
+export const NotAutomatedCaseSchema = z.object({
+  squashCaseId: z.string(),
+  reason: NotAutomatedReasonSchema,
+  squashReference: z.string().optional(),
+  assetId: z.string().optional(),
+  status: AutomationAssetStatusSchema.optional(),
+});
+export const RegressionResolveRequest = z.object({
+  squashCaseIds: z.array(z.string().min(1)).min(1),
+});
+export const RegressionResolveResponse = z.object({
+  resolved: z.array(ResolvedAutomationSchema),
+  notAutomated: z.array(NotAutomatedCaseSchema),
+});
+export type NotAutomatedReason = z.infer<typeof NotAutomatedReasonSchema>;
+export type ResolvedAutomation = z.infer<typeof ResolvedAutomationSchema>;
+export type NotAutomatedCase = z.infer<typeof NotAutomatedCaseSchema>;
+export type RegressionResolveRequest = z.infer<typeof RegressionResolveRequest>;
+export type RegressionResolveResponse = z.infer<typeof RegressionResolveResponse>;

@@ -6,6 +6,8 @@ import {
   AutomationResolveResponse,
   CreateAutomationMappingRequest,
   RegisterAutomationAssetRequest,
+  RegressionResolveRequest,
+  RegressionResolveResponse,
 } from '@qa/contracts';
 import { PlatformError } from '@qa/domain';
 import type { AutomationService } from '@qa/application';
@@ -57,10 +59,19 @@ export function registerAutomationRoutes(app: FastifyInstance, automation: Autom
     return reply.code(201).send(AutomationResolveResponse.parse(resolved));
   });
 
-  /** Squash case id → platform automation asset id (Regression seed). */
+  /** Squash case id → platform automation asset id (Regression seed; draft or approved). */
   app.get('/api/v1/automation/resolve', { config: { access: requires('automation.view') } }, async (req) => {
     const squashCaseId = String((req.query as { squashCaseId?: string }).squashCaseId ?? '').trim();
     if (!squashCaseId) throw new PlatformError('validation', 'Query parameter squashCaseId is required.');
     return AutomationResolveResponse.parse(await automation.resolveBySquashCaseId(squashCaseId));
+  });
+
+  /**
+   * Phase 9 E1 — Regression prep: approved-only resolve.
+   * Draft / unmapped / missing asset → Not Automated (never executed or generated).
+   */
+  app.post('/api/v1/automation/resolve-regression', { config: { access: requires('automation.view') } }, async (req) => {
+    const input = body(RegressionResolveRequest, req.body, 'resolve regression automation');
+    return RegressionResolveResponse.parse(await automation.resolveForRegression(input.squashCaseIds));
   });
 }
