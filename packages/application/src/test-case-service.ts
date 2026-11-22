@@ -183,6 +183,22 @@ const countsOf = (caseCount: number, results?: WorkItemCaseResultRecord[]) => {
   };
 };
 
+/** Historic 1×1 red placeholder wrongly shown as “evidence” when capture failed or was size-capped. */
+export const PLACEHOLDER_SCREENSHOT_B64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+/** True when base64 is missing, the known red stub, or too small to be a real viewport capture. */
+export function isPlaceholderScreenshot(b64: string | undefined | null): boolean {
+  if (!b64) return true;
+  if (b64 === PLACEHOLDER_SCREENSHOT_B64) return true;
+  return b64.length < 200;
+}
+
+/** Sniff JPEG (`/9j/`) vs PNG (`iVBOR`) so the UI data-URI MIME matches the bytes. */
+export function screenshotContentType(b64: string): 'image/jpeg' | 'image/png' {
+  return b64.startsWith('/9j') ? 'image/jpeg' : 'image/png';
+}
+
 const runOf = (row: WorkItemRunRecord, results?: WorkItemCaseResultRecord[]) => ({
   id: row.id,
   workItem: row.workItem,
@@ -200,7 +216,7 @@ const runOf = (row: WorkItemRunRecord, results?: WorkItemCaseResultRecord[]) => 
     name: r.name,
     status: r.status,
     message: r.message,
-    hasScreenshot: Boolean(r.screenshotPng),
+    hasScreenshot: Boolean(r.screenshotPng) && !isPlaceholderScreenshot(r.screenshotPng),
     squashExecutionId: r.squashExecutionId,
     steps: r.steps,
   })),
@@ -488,8 +504,15 @@ export class TestCaseService {
 
   async caseScreenshot(executionId: string, testCaseId: string) {
     const row = await this.d.cases.getCaseResult(executionId, testCaseId);
-    if (!row?.screenshotPng) throw new PlatformError('not-found', 'Screenshot not found');
-    return { testCaseId: row.testCaseId, name: row.name, contentType: 'image/png' as const, pngBase64: row.screenshotPng };
+    if (!row?.screenshotPng || isPlaceholderScreenshot(row.screenshotPng)) {
+      throw new PlatformError('not-found', 'Screenshot not found');
+    }
+    return {
+      testCaseId: row.testCaseId,
+      name: row.name,
+      contentType: screenshotContentType(row.screenshotPng),
+      pngBase64: row.screenshotPng,
+    };
   }
 
   /** Live cases that belong to the work-item collection (excludes soft-deleted and uncollected orphans). */

@@ -658,8 +658,14 @@ function WorkItemRunDetail({ shown }: { shown: {
                   ))}
                 </Stack>
               )}
-              {row.hasScreenshot && row.status !== 'Queued' && row.status !== 'Running' && (
-                <CaseScreenshot executionId={shown.id} testCaseId={row.testCaseId} name={row.name} />
+              {row.status !== 'Queued' && row.status !== 'Running' && (
+                row.hasScreenshot
+                  ? <CaseScreenshot executionId={shown.id} testCaseId={row.testCaseId} name={row.name} />
+                  : (
+                    <Alert sx={{ mt: 1 }} severity="info" aria-label={`No screenshot for ${row.name}`}>
+                      No screenshot was captured for this case. Rebuild the Playwright runner image if capture should be available.
+                    </Alert>
+                  )
               )}
             </ListItem>
           ))}
@@ -674,18 +680,38 @@ function WorkItemRunDetail({ shown }: { shown: {
 
 function CaseScreenshot({ executionId, testCaseId, name }: { executionId: string; testCaseId: string; name: string }) {
   const api = useApi();
+  const [broken, setBroken] = useState(false);
   const shot = useQuery({
     queryKey: ['work-item-screenshot', executionId, testCaseId],
     queryFn: () => api.get(`/api/v1/work-item-executions/${executionId}/cases/${testCaseId}/screenshot`, WorkItemCaseScreenshot),
   });
-  if (shot.isError) return <Typography variant="body2">Screenshot for {name} could not be loaded.</Typography>;
+  if (shot.isError || broken) {
+    return (
+      <Alert sx={{ mt: 1 }} severity="warning" aria-label={`Screenshot missing for ${name}`}>
+        Screenshot evidence for {name} could not be shown.
+      </Alert>
+    );
+  }
   if (!shot.data) return <Typography variant="body2">Loading screenshot…</Typography>;
   return (
     <Box
       component="img"
-      sx={{ mt: 1, maxHeight: 192, border: 1, borderColor: 'divider', borderRadius: 1 }}
+      sx={{
+        mt: 1,
+        display: 'block',
+        maxHeight: 240,
+        maxWidth: '100%',
+        width: 'auto',
+        height: 'auto',
+        objectFit: 'contain',
+        border: 1,
+        borderColor: 'divider',
+        borderRadius: 1,
+        backgroundColor: 'background.paper',
+      }}
       alt={`Screenshot evidence for ${name}`}
-      src={`data:image/png;base64,${shot.data.pngBase64}`}
+      src={`data:${shot.data.contentType};base64,${shot.data.pngBase64}`}
+      onError={() => setBroken(true)}
     />
   );
 }

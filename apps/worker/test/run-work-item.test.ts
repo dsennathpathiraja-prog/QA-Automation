@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { FakeRunnerLauncher, InMemoryAuditSink, InMemoryTestCaseRepository } from '@qa/testing';
-import { TestCaseService } from '@qa/application';
+import { isPlaceholderScreenshot, PLACEHOLDER_SCREENSHOT_B64, screenshotContentType, TestCaseService } from '@qa/application';
 import { mergeLiveProgress, parseCaseResults, processWorkItemExecutions, runWorkItemCases } from '../src/run-work-item';
 import { squashIdFromSummary, syncCaseResultsToSquash } from '../src/sync-execution';
 
 const image = `qa-runner@sha256:${'a'.repeat(64)}`;
-const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+/** Fake JPEG payload long enough to count as real evidence (not the 1×1 red stub). */
+const shot = `/9j/${'A'.repeat(300)}`;
+
+describe('screenshot evidence helpers', () => {
+  it('treats the historic red 1×1 stub as a non-screenshot', () => {
+    expect(isPlaceholderScreenshot(PLACEHOLDER_SCREENSHOT_B64)).toBe(true);
+    expect(isPlaceholderScreenshot(shot)).toBe(false);
+    expect(screenshotContentType(shot)).toBe('image/jpeg');
+  });
+});
 
 describe('work-item Playwright run', () => {
   it('merges PROGRESS_JSON and RESULT_JSON into live case progress', () => {
@@ -15,36 +24,36 @@ describe('work-item Playwright run', () => {
     ];
     const text = [
       'PROGRESS_JSON {"testCaseId":"a","name":"Login","status":"Running","message":"Opening page","steps":[{"name":"Open page","status":"Running"},{"name":"Capture evidence","status":"Queued"}]}',
-      `RESULT_JSON ${JSON.stringify({ testCaseId: 'a', name: 'Login', status: 'Passed', message: 'answered 200', screenshotPng: 'x', steps: [{ name: 'Open page', status: 'Passed' }, { name: 'Capture evidence', status: 'Passed' }] })}`,
+      `RESULT_JSON ${JSON.stringify({ testCaseId: 'a', name: 'Login', status: 'Passed', message: 'answered 200', screenshotPng: shot, steps: [{ name: 'Open page', status: 'Passed' }, { name: 'Capture evidence', status: 'Passed' }] })}`,
     ].join('\n');
     const out = mergeLiveProgress(text, seeded);
-    expect(out[0]).toMatchObject({ status: 'Passed', message: 'answered 200', screenshotPng: 'x' });
+    expect(out[0]).toMatchObject({ status: 'Passed', message: 'answered 200', screenshotPng: shot });
     expect(out[0]?.steps?.[0]?.status).toBe('Passed');
     expect(out[1]?.status).toBe('Queued');
   });
 
-  it('parses RESULT_JSON lines from the runner', () => {
+  it('parses RESULT_JSON lines from the runner and drops placeholder screenshots', () => {
     const text = [
-      'RESULT_JSON {"testCaseId":"a","name":"Login","status":"Passed","message":"answered 200","screenshotPng":"x"}',
+      `RESULT_JSON ${JSON.stringify({ testCaseId: 'a', name: 'Login', status: 'Passed', message: 'answered 200', screenshotPng: shot })}`,
       'noise',
       'RESULT_JSON {"testCaseId":"b","name":"Bad","status":"Failed","message":"answered 500","screenshotPng":"y"}',
     ].join('\n');
     expect(parseCaseResults(text, [])).toEqual([
-      { testCaseId: 'a', name: 'Login', status: 'Passed', message: 'answered 200', screenshotPng: 'x' },
-      { testCaseId: 'b', name: 'Bad', status: 'Failed', message: 'answered 500', screenshotPng: 'y' },
+      { testCaseId: 'a', name: 'Login', status: 'Passed', message: 'answered 200', screenshotPng: shot },
+      { testCaseId: 'b', name: 'Bad', status: 'Failed', message: 'answered 500', screenshotPng: undefined },
     ]);
   });
 
   it('finds RESULT_JSON after docker noise on the same line', () => {
-    const text = '\x01noise RESULT_JSON {"testCaseId":"a","name":"Login","status":"Passed","message":"answered 200","screenshotPng":"x"}\n';
-    expect(parseCaseResults(text, [])[0]).toMatchObject({ testCaseId: 'a', status: 'Passed' });
+    const text = `\x01noise RESULT_JSON ${JSON.stringify({ testCaseId: 'a', name: 'Login', status: 'Passed', message: 'answered 200', screenshotPng: shot })}\n`;
+    expect(parseCaseResults(text, [])[0]).toMatchObject({ testCaseId: 'a', status: 'Passed', screenshotPng: shot });
   });
 
   it('maps legacy answered N logs to per-case Passed when RESULT_JSON is missing', () => {
     const out = parseCaseResults('answered 200\n', [{ id: 'a', name: 'Positive PayNSure' }, { id: 'b', name: 'Edge ToolKit-AgenFlow' }]);
     expect(out).toEqual([
-      { testCaseId: 'a', name: 'Positive PayNSure', status: 'Passed', message: 'answered 200', screenshotPng: expect.any(String), steps: expect.any(Array) },
-      { testCaseId: 'b', name: 'Edge ToolKit-AgenFlow', status: 'Passed', message: 'answered 200', screenshotPng: expect.any(String), steps: expect.any(Array) },
+      { testCaseId: 'a', name: 'Positive PayNSure', status: 'Passed', message: 'answered 200', steps: expect.any(Array) },
+      { testCaseId: 'b', name: 'Edge ToolKit-AgenFlow', status: 'Passed', message: 'answered 200', steps: expect.any(Array) },
     ]);
   });
 
@@ -79,7 +88,7 @@ describe('work-item Playwright run', () => {
       launcher: {
         launcher,
         image,
-        logs: async () => `RESULT_JSON ${JSON.stringify({ testCaseId: '33333333-3333-4333-8333-333333333333', name: 'Login', status: 'Passed', message: 'answered 200', screenshotPng: png })}\n`,
+        logs: async () => `RESULT_JSON ${JSON.stringify({ testCaseId: '33333333-3333-4333-8333-333333333333', name: 'Login', status: 'Passed', message: 'answered 200', screenshotPng: shot })}\n`,
       },
       now: 1,
     });
@@ -140,7 +149,7 @@ describe('work-item Playwright run', () => {
         progress.push('running');
         return {
           viaRunner: false,
-          results: listed.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Passed' as const, message: 'answered 200', screenshotPng: png, steps: [{ name: 'Open', status: 'Passed' as const }] })),
+          results: listed.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Passed' as const, message: 'answered 200', screenshotPng: shot, steps: [{ name: 'Open', status: 'Passed' as const }] })),
         };
       },
       syncSquash: async (results) => ({
@@ -153,6 +162,7 @@ describe('work-item Playwright run', () => {
     const done = await cases.getWorkItemExecution(prepared.id);
     expect(done.status).toBe('completed');
     expect(done.results?.[0]).toMatchObject({ status: 'Passed', hasScreenshot: true, squashExecutionId: '9' });
+    expect((await cases.caseScreenshot(prepared.id, done.results![0]!.testCaseId)).contentType).toBe('image/jpeg');
     expect(done.results?.[0]?.steps?.[0]).toMatchObject({ name: 'Open', status: 'Passed' });
     expect(done.counts).toMatchObject({ passed: 1, completed: 1, total: 1 });
     expect(done.squashSync).toMatch(/Squash recorded/);
@@ -168,7 +178,7 @@ describe('Squash execution sync', () => {
   it('maps Passed to SUCCESS and stores the Squash execution id', async () => {
     const out = await syncCaseResultsToSquash({
       workItem: 'QA-1',
-      results: [{ testCaseId: 'a', name: 'Login', status: 'Passed', message: 'ok', screenshotPng: png }],
+      results: [{ testCaseId: 'a', name: 'Login', status: 'Passed', message: 'ok', screenshotPng: shot }],
       squashIdForCase: async () => '238',
       upsert: async () => ({ id: '77', created: true }),
       updateStatus: async () => undefined,
@@ -181,7 +191,7 @@ describe('Squash execution sync', () => {
     const { PlatformError } = await import('@qa/domain');
     const out = await syncCaseResultsToSquash({
       workItem: '7259',
-      results: [{ testCaseId: 'a', name: 'Positive PayNSure', status: 'Passed', message: 'ok', screenshotPng: png }],
+      results: [{ testCaseId: 'a', name: 'Positive PayNSure', status: 'Passed', message: 'ok', screenshotPng: shot }],
       squashIdForCase: async () => '238',
       upsert: async () => {
         throw new PlatformError('auth', 'SquashTM rejected the API token (expired, revoked, or not a token)');

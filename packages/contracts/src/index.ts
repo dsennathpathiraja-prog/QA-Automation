@@ -367,7 +367,12 @@ export const WorkItemExecutionBoard = z.object({
   items: z.array(WorkItemExecutionSchema),
 });
 export const StartWorkItemExecutionRequest = z.object({ workItem: z.string(), environmentId: z.string() });
-export const WorkItemCaseScreenshot = z.object({ testCaseId: z.string(), name: z.string(), contentType: z.literal('image/png'), pngBase64: z.string() });
+export const WorkItemCaseScreenshot = z.object({
+  testCaseId: z.string(),
+  name: z.string(),
+  contentType: z.enum(['image/png', 'image/jpeg']),
+  pngBase64: z.string().min(200),
+});
 
 export const ValidateEnvironmentRequest = z.object({
   workflowType: z.enum(['requirement-validation', 'regression-testing']).optional(),
