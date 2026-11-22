@@ -323,7 +323,11 @@ export const ResetTestCasesResponse = z.object({
   casesCleared: z.number(),
   squashWiped: z.literal(false),
 });
-export const WorkItemCaseStatus = z.enum(['Passed', 'Failed', 'Blocked', 'Skipped']);
+export const WorkItemCaseStatus = z.enum(['Queued', 'Running', 'Passed', 'Failed', 'Blocked', 'Skipped']);
+export const WorkItemCaseStepSchema = z.object({
+  name: z.string(),
+  status: z.enum(['Queued', 'Running', 'Passed', 'Failed', 'Blocked', 'Skipped']),
+});
 export const WorkItemCaseResultSchema = z.object({
   id: z.string(),
   testCaseId: z.string(),
@@ -332,6 +336,17 @@ export const WorkItemCaseResultSchema = z.object({
   message: z.string(),
   hasScreenshot: z.boolean(),
   squashExecutionId: z.string().optional(),
+  steps: z.array(WorkItemCaseStepSchema).optional(),
+});
+export const WorkItemRunCounts = z.object({
+  total: z.number(),
+  queued: z.number(),
+  running: z.number(),
+  passed: z.number(),
+  failed: z.number(),
+  blocked: z.number(),
+  skipped: z.number(),
+  completed: z.number(),
 });
 export const WorkItemExecutionSchema = z.object({
   id: z.string(),
@@ -343,6 +358,7 @@ export const WorkItemExecutionSchema = z.object({
   createdAt: z.string(),
   finishedAt: z.string().optional(),
   squashSync: z.string().optional(),
+  counts: WorkItemRunCounts.optional(),
   results: z.array(WorkItemCaseResultSchema).optional(),
 });
 export const WorkItemExecutionBoard = z.object({

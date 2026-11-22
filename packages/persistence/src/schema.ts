@@ -517,11 +517,12 @@ export const workItemCaseResult = pgTable(
     message: text('message').notNull().default(''),
     screenshotPng: text('screenshot_png'),
     squashExecutionId: text('squash_execution_id'),
+    stepsJson: text('steps_json'),
     createdAt: ts('created_at').notNull().defaultNow(),
   },
   (t) => [
     index('work_item_case_result_execution_idx').on(t.executionId),
-    check('work_item_case_result_status_ck', sql`${t.status} in ('Passed','Failed','Blocked','Skipped')`),
+    check('work_item_case_result_status_ck', sql`${t.status} in ('Queued','Running','Passed','Failed','Blocked','Skipped')`),
   ],
 );
 

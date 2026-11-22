@@ -99,6 +99,13 @@
       "when": 1795083000000,
       "tag": "0013_test_case_kind_priority",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1795320000000,
+      "tag": "0014_work_item_live_progress",
+      "breakpoints": true
     }
   ]
 }

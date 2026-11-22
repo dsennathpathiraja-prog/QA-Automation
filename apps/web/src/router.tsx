@@ -75,7 +75,9 @@ export function buildRouter(opts: RouterOptions = {}): AnyRouter {
   const executions = createRoute({
     getParentRoute: () => shell,
     path: '/executions',
-    validateSearch: (s: Record<string, unknown>) => ({ tab: s.tab === 'history' ? ('history' as const) : undefined }),
+    validateSearch: (s: Record<string, unknown>) => ({
+      tab: s.tab === 'history' || s.tab === 'prepared' ? (s.tab as 'history' | 'prepared') : undefined,
+    }),
     component: () => <Guarded item={executionsItem}><Executions /></Guarded>,
   });
 

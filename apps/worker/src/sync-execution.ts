@@ -1,7 +1,7 @@
 import { PlatformError } from '@qa/domain';
 import type { CaseOutcome } from './run-work-item';
 
-const SQUASH_STATUS: Record<CaseOutcome['status'], string> = {
+const SQUASH_STATUS: Partial<Record<CaseOutcome['status'], string>> = {
   Passed: 'SUCCESS',
   Failed: 'FAILURE',
   Blocked: 'BLOCKED',
@@ -39,8 +39,13 @@ export async function syncCaseResultsToSquash(o: {
         if (!error) error = `No Squash case id for "${row.name}". Store cases in Squash on publish first.`;
         continue;
       }
+      const mapped = SQUASH_STATUS[row.status];
+      if (!mapped) {
+        out.push(row);
+        continue;
+      }
       const execution = await o.upsert(squashCaseId);
-      await o.updateStatus(execution.id, SQUASH_STATUS[row.status], row.message);
+      await o.updateStatus(execution.id, mapped, row.message);
       out.push({ ...row, squashExecutionId: execution.id });
       synced += 1;
     } catch (e) {
