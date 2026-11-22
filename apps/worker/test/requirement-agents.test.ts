@@ -182,13 +182,14 @@ describe('performRequirementStep', () => {
   });
 
   it('uses the healer port for rv.heal-tests', async () => {
+    const healedSteps = "import { test, expect } from '@playwright/test';\ntest('x', async ({ page }) => {\n  await page.goto('/');\n  await expect(page.getByRole('button', { name: 'Pay' })).toBeVisible();\n});\n";
     const healer: TestHealerPort = {
       async heal(input) {
         return {
           summary: `healed ${input.cases.length}`,
           source: 'heuristic',
           fixed: 1,
-          cases: input.cases,
+          cases: input.cases.map((c) => ({ ...c, steps: healedSteps })),
         };
       },
     };

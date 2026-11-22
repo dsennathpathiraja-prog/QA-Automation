@@ -129,6 +129,17 @@ pnpm typecheck
 pnpm exec vitest run packages/agents packages/testing/test/environment-service.test.ts
 ```
 
+### Case quality gate before publish (Phase 8 E3)
+
+Publish (and generate/heal) refuse **body-only** stubs (`locator("body").toBeVisible` as the only assertion). Explore-gap / `needs-surface` cases are flagged but still stored as Blocked. The plan Markdown includes an **AC coverage** section (covered vs gaps).
+
+Optional: on Workflow **Run**, check **Pause after plan (accept before generate)** so the run pauses after Plan for human review; **Resume** on Executions continues to Generate.
+
+```powershell
+pnpm typecheck
+pnpm exec vitest run packages/agents/test/case-quality-gate.test.ts apps/worker/test/publish-cases.test.ts packages/workflow-engine/test/chaos.test.ts
+```
+
 ## Runner (Playwright / Executions screenshots)
 
 `runner-image` and `runner-launcher` are part of the **default** local stack (no compose profile). A normal `up --build` builds `qa-runner:local` and starts the launcher. The worker waits until `runner-launcher` is healthy. Executions **do not** HTTP probe-fall back to a fake Passed when the launcher is missing — cases stay **Blocked** with an actionable message instead.

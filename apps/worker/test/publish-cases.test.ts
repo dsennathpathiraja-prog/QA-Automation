@@ -95,4 +95,51 @@ describe('publishGeneratedCases', () => {
     expect(out.summary).toMatch(/token is READ-only/);
     expect(out.summary).not.toMatch(/migration 0010/);
   });
+
+  it('refuses body-only stub cases before writing Test Cases or Squash', async () => {
+    const repo = new InMemoryTestCaseRepository();
+    const testCases = new TestCaseService({ cases: repo, audit: new InMemoryAuditSink() });
+    let squashCalls = 0;
+    await expect(publishGeneratedCases({
+      workItem: '7259',
+      cases: [{
+        name: 'Positive: stub',
+        steps: "import { test, expect } from '@playwright/test';\ntest('x', async ({ page }) => {\n  await page.goto('/');\n  await expect(page.locator('body')).toBeVisible();\n});\n",
+        expected: 'Ok',
+        workItem: '7259',
+        reference: 'QAP-7259-stub',
+      }],
+      testCases,
+      squash: async () => {
+        squashCalls += 1;
+        return { id: '99', created: true, projectId: '7' };
+      },
+    })).rejects.toThrow(/quality gate|stub/i);
+    expect(await testCases.list()).toHaveLength(0);
+    expect(squashCalls).toBe(0);
+  });
+
+  it('publishes needs-surface cases and notes the quality gate', async () => {
+    const testCases = new TestCaseService({ cases: new InMemoryTestCaseRepository(), audit: new InMemoryAuditSink() });
+    const out = await publishGeneratedCases({
+      workItem: '2357',
+      cases: [{
+        name: 'Positive: greeting (needs surface)',
+        steps: "// @qa-platform:needs-surface\nimport { test } from '@playwright/test';\ntest('g', async () => { test.skip(true, 'gap'); });\n",
+        expected: 'Blocked until template preview exists',
+        workItem: '2357',
+        reference: 'QAP-2357-1',
+        runStatus: 'Blocked',
+        tags: ['needs-surface'],
+      }],
+      testCases,
+      criteria: ['Greeting shows Customer Name', 'Totally uncovered AC about SMS'],
+      blockingGap: true,
+      squash: async () => ({ id: '55', created: true, projectId: '7' }),
+    });
+    expect(out.summary).toMatch(/needs-surface|Blocked/);
+    expect(out.summary).toMatch(/Quality gate/);
+    expect(out.quality?.needsSurfaceCount).toBe(1);
+    expect(out.quality?.ok).toBe(true);
+  });
 });

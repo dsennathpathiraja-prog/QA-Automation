@@ -1,3 +1,4 @@
+import { assessAcCoverage, renderAcCoverageMarkdown } from './case-quality-gate';
 import type { PlannerScenario, ScenarioKind, ScenarioPriority, SurfaceKind } from './types';
 
 export interface PlanMarkdownMeta {
@@ -92,6 +93,13 @@ export function renderPlanMarkdown(scenarios: PlannerScenario[], meta: PlanMarkd
     lines.push(`- **Expected:** ${scenario.expected}`);
     lines.push('');
   });
+
+  if (meta.criteria && meta.criteria.length > 0) {
+    const coverageMd = renderAcCoverageMarkdown(
+      assessAcCoverage({ criteria: meta.criteria, scenarios }),
+    );
+    if (coverageMd) lines.push(coverageMd.trimEnd(), '');
+  }
 
   return `${lines.join('\n').trim()}\n`;
 }

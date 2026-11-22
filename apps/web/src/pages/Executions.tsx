@@ -574,6 +574,7 @@ export function Executions() {
                     const message = typeof event.payload.message === 'string' ? event.payload.message : '';
                     const failed = event.kind === 'step.failed';
                     const output = summary || message;
+                    const qualityRefuse = failed && /quality gate|stub-forbidden|Publish refused/i.test(output);
                     const artifact = markdownFromStepPayload(event.payload);
                     return (
                       <Paper key={event.seq} variant="outlined" sx={{ p: 1.5 }}>
@@ -583,6 +584,11 @@ export function Executions() {
                           <Typography variant="caption" color="text.secondary">#{event.seq}</Typography>
                         </Stack>
                         <Typography variant="subtitle2" color="text.secondary">Output</Typography>
+                        {qualityRefuse && (
+                          <Alert severity="error" sx={{ mb: 1 }}>
+                            Case quality gate refused this step. Fix stub / body-only cases (or regenerate) before publish.
+                          </Alert>
+                        )}
                         <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
                           {output || (failed ? 'This step failed without a summary.' : 'This step completed without a summary.')}
                         </Typography>

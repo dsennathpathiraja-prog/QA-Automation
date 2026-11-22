@@ -63,11 +63,23 @@ Each of these steps stores Markdown on the step event (`outputs.artifactMarkdown
 | Explore code | Visited source paths + excerpts | `explore/{app}/{work-item}.code.md` |
 | Plan scenarios | Full test plan | `plans/{app}/{work-item}.plan.md` |
 
+## Case quality gate (before publish)
+
+Pre-publish checks keep the Squash / Test Cases corpus safe:
+
+| Check | Behavior |
+|-------|----------|
+| Body-only / stub cases | **Refused** (generate, heal, and publish fail with a clear quality-gate message) |
+| Explore-gap / `needs-surface` | **Flagged** (cases may publish as Blocked; execute does not Pass them on the wrong host) |
+| AC coverage vs scenarios | **Flagged** in the plan Markdown (`## AC coverage`) and in publish summary warnings |
+
+Optional human accept: set run parameter `acceptPlan=true` (Workflow Run checkbox **Pause after plan**) so the engine pauses after `rv.generate-test-plan`; review the MD artifact, then Resume.
+
 ## Markdown plan artifact
 
 Planner output always includes:
 
-- `planMarkdown` — full Markdown body (Context, Acceptance criteria, Exploration findings, Scenarios)
+- `planMarkdown` — full Markdown body (Context, Acceptance criteria, Exploration findings, Scenarios, **AC coverage**)
 - `planArtifact` — relative path `plans/{application}/{work-item}.plan.md`
 - `scenarios` — structured array used by the engine and healer
 

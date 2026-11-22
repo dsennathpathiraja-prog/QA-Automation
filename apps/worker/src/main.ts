@@ -9,6 +9,7 @@ import {
   PLAYWRIGHT_TEST_GENERATOR,
   PLAYWRIGHT_TEST_HEALER,
   PLAYWRIGHT_TEST_PLANNER,
+  type PlannerScenario,
 } from '@qa/agents';
 import { buildProviders, buildSecretStore, connectDatabase } from '@qa/bootstrap';
 import { ConnectorExecutionManager } from '@qa/connector-sdk';
@@ -314,10 +315,23 @@ const loop = new WorkerLoop({
               : {}),
           }];
         });
+        const storyOut = step.prior.read_story ?? {};
+        const planOut = step.prior.plan ?? {};
+        const criteria = Array.isArray(storyOut.acceptanceCriteria)
+          ? storyOut.acceptanceCriteria.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+          : [];
+        const scenarios = Array.isArray(planOut.scenarios) ? planOut.scenarios : undefined;
+        const planMarkdown = typeof planOut.planMarkdown === 'string' ? planOut.planMarkdown : undefined;
+        const blockingGap = planOut.blockingGap === true
+          || (typeof planOut.exploreWarning === 'string' && /blocking explore gap/i.test(planOut.exploreWarning));
         const published = await publishGeneratedCases({
           workItem: typeof result.outputs.workItem === 'string' ? result.outputs.workItem : '',
           cases,
           testCases,
+          criteria,
+          scenarios: scenarios as PlannerScenario[] | undefined,
+          planMarkdown,
+          blockingGap,
           squash: squash
             ? async (_item, upsert) => squash.invoke<{ id: string; created: boolean; projectId?: string }>({
                 role: 'testManagement',
@@ -333,7 +347,22 @@ const loop = new WorkerLoop({
               })
             : undefined,
         });
-        return { summary: published.summary, outputs: { ...result.outputs, squash: 'read-write' } };
+        return {
+          summary: published.summary,
+          outputs: {
+            ...result.outputs,
+            squash: 'read-write',
+            qualityGate: published.quality
+              ? {
+                ok: published.quality.ok,
+                summary: published.quality.summary,
+                stubCount: published.quality.stubCount,
+                needsSurfaceCount: published.quality.needsSurfaceCount,
+                acGaps: published.quality.acCoverage.filter((r) => !r.covered).map((r) => r.criterion),
+              }
+              : undefined,
+          },
+        };
       },
     })) === 'busy') busy = true;
     if (environments && hosts && (await checkReachability(environments, async (target) => {
