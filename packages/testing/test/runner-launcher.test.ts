@@ -52,6 +52,16 @@ describe('runner spec validation', () => {
     expect(validateRunnerSpec(spec({ runId: '../x' })).join()).toMatch(/runId/);
     expect(validateRunnerSpec(spec({ executionId: 'a b' })).join()).toMatch(/executionId/);
   });
+
+  it('accepts /tmp inlineFiles for large case lists and rejects unsafe paths or oversize payloads', () => {
+    expect(validateRunnerSpec(spec({ inlineFiles: [{ path: '/tmp/qa-cases.json', content: '[]' }] }))).toEqual([]);
+    expect(validateRunnerSpec(spec({ inlineFiles: [{ path: '/etc/passwd', content: 'x' }] })).join()).toMatch(/\/tmp\//);
+    expect(validateRunnerSpec(spec({ inlineFiles: [{ path: '/tmp/qa-cases.json', content: 'x'.repeat(2 * 1024 * 1024 + 1) }] })).join()).toMatch(/byte limit/);
+  });
+
+  it('still rejects oversized env values (cases must use inlineFiles)', () => {
+    expect(validateRunnerSpec(spec({ env: { QA_CASES_JSON: 'x'.repeat(4097) } })).join()).toMatch(/QA_CASES_JSON is too long/);
+  });
 });
 
 runnerLauncherContract('FakeRunnerLauncher', async () => {

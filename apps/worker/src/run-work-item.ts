@@ -1,5 +1,8 @@
-import { PlatformError, type RunnerLauncher, type RunnerSpec } from '@qa/domain';
+import { PlatformError, RUNNER_INLINE_FILES_MAX_BYTES, RUNNER_MAX, type RunnerLauncher, type RunnerSpec } from '@qa/domain';
 import { isPlaceholderScreenshot, type CaseRunStatus, type CaseStepProgress, type TestCaseService, type WorkItemRunRecord } from '@qa/application';
+
+/** Injected into the runner via launcher putFiles (tmpfs) — not env (4096-byte cap). */
+const CASES_FILE = '/tmp/qa-cases.json';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const NO_RESULTS = 'The runner finished without case results.';
@@ -121,9 +124,7 @@ export function mergeLiveProgress(text: string, seeded: CaseOutcome[]): CaseOutc
           screenshotPng: undefined,
         };
         const status = asStatus(row.status) ?? current.status;
-        const steps = Array.isArray(row.steps)
-          ? parseSteps(row.steps)
-          : applyStepIndex(current.steps, row.stepIndex, row.stepStatus);
+        const steps = mergeStepProgress(current.steps, row.steps, row.stepIndex, row.stepStatus);
         byId.set(row.testCaseId, {
           ...current,
           name: typeof row.name === 'string' ? row.name : current.name,
@@ -174,7 +175,8 @@ export function mergeLiveProgress(text: string, seeded: CaseOutcome[]): CaseOutc
         status,
         message: typeof row.message === 'string' ? row.message : '',
         screenshotPng: realScreenshot(typeof row.screenshotPng === 'string' ? row.screenshotPng : prior?.screenshotPng),
-        steps: Array.isArray(row.steps) ? parseSteps(row.steps) : markStepsDone(prior?.steps, status),
+        // Prefer seeded/full step labels when present; runner may only send compact Open/Capture names.
+        steps: prior?.steps?.length ? markStepsDone(prior.steps, status) : Array.isArray(row.steps) ? parseSteps(row.steps) : markStepsDone(prior?.steps, status),
         squashExecutionId: prior?.squashExecutionId,
       });
     } catch {
@@ -186,6 +188,15 @@ export function mergeLiveProgress(text: string, seeded: CaseOutcome[]): CaseOutc
 
 export function launcherDown(e: unknown): boolean {
   return e instanceof PlatformError && e.errorClass === 'transient' && /could not resolve|network error|timed out|not reachable/.test(e.message);
+}
+
+/** Compact case payloads for the runner (id/name + short labels). Full step text stays in UI seed. */
+export function compactCasesForRunner(cases: WorkItemCaseInput[]): Array<{ id: string; name: string; steps: string[] }> {
+  return cases.map((c) => ({
+    id: c.id,
+    name: c.name.length > 240 ? `${c.name.slice(0, 237)}...` : c.name,
+    steps: ['Open page', 'Capture evidence'],
+  }));
 }
 
 async function viaRunner(o: {
@@ -206,6 +217,16 @@ async function viaRunner(o: {
     message: 'Waiting to run',
     steps: defaultSteps(c.steps, 'Queued'),
   }));
+  const casesJson = JSON.stringify(compactCasesForRunner(o.cases));
+  const casesBytes = Buffer.byteLength(casesJson, 'utf8');
+  if (casesBytes > RUNNER_INLINE_FILES_MAX_BYTES) {
+    throw new PlatformError(
+      'validation',
+      `This work item’s case list is ${casesBytes} bytes and exceeds the ${RUNNER_INLINE_FILES_MAX_BYTES} byte runner input limit. Split the collection or shorten case names, then re-run.`,
+    );
+  }
+  // Per-case Playwright open+shot; scale wall clock for large prepared sets (hundreds of cases).
+  const timeoutSeconds = Math.min(RUNNER_MAX.timeoutSeconds, Math.max(180, 90 + o.cases.length * 25));
   const spec: RunnerSpec = {
     runId: `wi-${o.run.id.replace(/[^A-Za-z0-9]/g, '')}-${o.now ?? Date.now()}`,
     executionId: o.run.id.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 128) || 'workitem',
@@ -213,16 +234,13 @@ async function viaRunner(o: {
     bundleRef: 'work-item',
     environmentId: o.run.environmentId.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 128) || 'environment',
     // Chromium needs headroom; the old 128 pid cap could kill the browser before RESULT_JSON was printed.
-    limits: { cpus: 1, memoryMb: 2048, timeoutSeconds: 180, pids: 512 },
+    limits: { cpus: 1, memoryMb: 2048, timeoutSeconds, pids: 512 },
     allowedHosts: [target.port ? `${host}:${target.port}` : host],
     env: {
       QA_TARGET_URL: o.url,
-      QA_CASES_JSON: JSON.stringify(o.cases.map((c) => ({
-        id: c.id,
-        name: c.name,
-        steps: defaultSteps(c.steps, 'Queued').map((s) => s.name),
-      }))),
+      QA_CASES_FILE: CASES_FILE,
     },
+    inlineFiles: [{ path: CASES_FILE, content: casesJson }],
   };
   const handle = await launcher.launcher.launch(spec);
   const deadline = Date.now() + (spec.limits.timeoutSeconds + 10) * 1000;
@@ -260,7 +278,8 @@ async function viaRunner(o: {
       ...row,
       // Prefer freshly parsed shot; keep any shot already merged from SCREENSHOT_JSON during the run.
       screenshotPng: row.screenshotPng ?? fromLive?.screenshotPng,
-      steps: row.steps ?? markStepsDone(prior?.steps, row.status),
+      // Keep seeded step labels (full case text); runner only sends compact Open/Capture labels.
+      steps: markStepsDone(prior?.steps, row.status) ?? row.steps,
     };
   });
   if (o.onProgress) await o.onProgress(finalResults);
@@ -347,6 +366,24 @@ function parseSteps(raw: unknown): CaseStepProgress[] | undefined {
     out.push({ name, status });
   }
   return out.length > 0 ? out : undefined;
+}
+
+/** Keep seeded/full step names; copy status from compact runner progress by index when possible. */
+function mergeStepProgress(
+  current: CaseStepProgress[] | undefined,
+  incoming: unknown,
+  stepIndex: unknown,
+  stepStatus: unknown,
+): CaseStepProgress[] | undefined {
+  if (current?.length && Array.isArray(incoming)) {
+    return current.map((step, i) => {
+      const row = incoming[i];
+      const next = row && typeof row === 'object' ? asStatus((row as { status?: unknown }).status) : undefined;
+      return next ? { ...step, status: next } : step;
+    });
+  }
+  if (Array.isArray(incoming)) return parseSteps(incoming);
+  return applyStepIndex(current, stepIndex, stepStatus);
 }
 
 function applyStepIndex(steps: CaseStepProgress[] | undefined, stepIndex: unknown, stepStatus: unknown): CaseStepProgress[] | undefined {

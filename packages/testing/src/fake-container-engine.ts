@@ -11,6 +11,7 @@ export class FakeContainerEngine implements ContainerEngine {
   readonly created: { name: string; body: Record<string, unknown> }[] = [];
   readonly images = new Map<string, { id: string }>();
   readonly output = new Map<string, string>();
+  readonly files = new Map<string, Array<{ path: string; content: string }>>();
   private seq = 0;
 
   async create(name: string, body: Record<string, unknown>) {
@@ -46,6 +47,11 @@ export class FakeContainerEngine implements ContainerEngine {
 
   async logs(id: string) {
     return this.output.get(id) ?? '';
+  }
+
+  async putFiles(id: string, files: Array<{ path: string; content: string }>) {
+    this.get(id);
+    this.files.set(id, files.map((f) => ({ ...f })));
   }
 
   add(state: ContainerState) {

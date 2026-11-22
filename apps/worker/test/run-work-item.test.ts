@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FakeRunnerLauncher, InMemoryAuditSink, InMemoryTestCaseRepository } from '@qa/testing';
 import { isPlaceholderScreenshot, PLACEHOLDER_SCREENSHOT_B64, screenshotContentType, TestCaseService } from '@qa/application';
-import { mergeLiveProgress, parseCaseResults, processWorkItemExecutions, RUNNER_REQUIRED, runWorkItemCases } from '../src/run-work-item';
+import { compactCasesForRunner, mergeLiveProgress, parseCaseResults, processWorkItemExecutions, RUNNER_REQUIRED, runWorkItemCases } from '../src/run-work-item';
 import { squashIdFromSummary, syncCaseResultsToSquash } from '../src/sync-execution';
 
 const image = `qa-runner@sha256:${'a'.repeat(64)}`;
@@ -167,7 +167,58 @@ describe('work-item Playwright run', () => {
     expect(out.results[0]).toMatchObject({ status: 'Passed', name: 'Login' });
     expect(launcher.specOf('runner-1').bundleRef).toBe('work-item');
     expect(launcher.specOf('runner-1').env?.QA_TARGET_URL).toBe('https://qa.shop.example/app');
+    expect(launcher.specOf('runner-1').env?.QA_CASES_FILE).toBe('/tmp/qa-cases.json');
+    expect(launcher.specOf('runner-1').env?.QA_CASES_JSON).toBeUndefined();
+    expect(launcher.specOf('runner-1').inlineFiles?.[0]?.path).toBe('/tmp/qa-cases.json');
+    expect(JSON.parse(launcher.specOf('runner-1').inlineFiles![0]!.content)).toEqual([
+      { id: '33333333-3333-4333-8333-333333333333', name: 'Login', steps: ['Open page', 'Capture evidence'] },
+    ]);
     expect(launcher.specOf('runner-1').limits.pids).toBeGreaterThanOrEqual(512);
+  });
+
+  it('packs hundreds of cases into inlineFiles under the env size cap', async () => {
+    const launcher = new FakeRunnerLauncher();
+    const realLaunch = launcher.launch.bind(launcher);
+    launcher.launch = async (spec, opts) => {
+      const handle = await realLaunch(spec, opts);
+      launcher.finish(handle.id, 0);
+      return handle;
+    };
+    const many = Array.from({ length: 200 }, (_, i) => ({
+      id: `33333333-3333-4333-8333-${String(i).padStart(12, '0')}`,
+      name: `Case ${i}: ${'x'.repeat(80)}`,
+      steps: Array.from({ length: 20 }, (_, j) => `import { test } from '@playwright/test'; // line ${j} ${'y'.repeat(40)}`).join('\n'),
+    }));
+    const run = {
+      id: '11111111-1111-4111-8111-111111111111',
+      workItem: '5289',
+      environmentId: '22222222-2222-4222-8222-222222222222',
+      environmentName: 'PayNSure',
+      caseCount: many.length,
+      status: 'running' as const,
+      createdAt: new Date(),
+    };
+    const firstId = many[0]!.id;
+    const out = await runWorkItemCases({
+      run,
+      cases: many,
+      url: 'https://qa.shop.example/app',
+      launcher: {
+        launcher,
+        image,
+        logs: async () => many.map((c) => `RESULT_JSON ${JSON.stringify({ testCaseId: c.id, name: c.name, status: 'Passed', message: 'answered 200' })}`).join('\n'),
+      },
+      now: 1,
+    });
+    const spec = launcher.specOf('runner-1');
+    expect(spec.env?.QA_CASES_JSON).toBeUndefined();
+    expect(spec.inlineFiles?.[0]?.content.length).toBeGreaterThan(10_000);
+    expect(spec.inlineFiles?.[0]?.content.length).toBeLessThan(2 * 1024 * 1024);
+    expect(JSON.parse(spec.inlineFiles![0]!.content)).toHaveLength(200);
+    expect(compactCasesForRunner(many)[0]?.steps).toEqual(['Open page', 'Capture evidence']);
+    expect(out.results).toHaveLength(200);
+    expect(out.results[0]).toMatchObject({ testCaseId: firstId, status: 'Passed' });
+    expect(spec.limits.timeoutSeconds).toBeGreaterThanOrEqual(90 + 200 * 25);
   });
 
   it('keeps Blocked when the runner returns no RESULT_JSON (no HTTP probe fallback)', async () => {

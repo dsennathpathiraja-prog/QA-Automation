@@ -32,7 +32,8 @@ function status(c: ContainerState) {
  * runner: containers without the managed label cannot be inspected, stopped or listed through it.
  */
 export function buildLauncherApp(deps: LauncherDeps): FastifyInstance {
-  const app = Fastify({ logger: false });
+  // Work-item case lists arrive as inlineFiles (up to ~2MiB); default Fastify 1MiB would reject them.
+  const app = Fastify({ logger: false, bodyLimit: 3 * 1024 * 1024 });
 
   app.addHook('onRequest', async (req, reply) => {
     if (req.url === '/healthz') return;
@@ -96,6 +97,10 @@ export function buildLauncherApp(deps: LauncherDeps): FastifyInstance {
       const c = await deps.engine.inspect(name);
       if (!c) throw e;
       return reply.code(200).send({ id: c.id, runId: spec.runId, startedAt: (c.startedAt ?? new Date()).toISOString() });
+    }
+    if (spec.inlineFiles && spec.inlineFiles.length > 0) {
+      if (!deps.engine.putFiles) throw new PlatformError('internal', 'This launcher cannot inject runner input files.');
+      await deps.engine.putFiles(id, spec.inlineFiles);
     }
     await deps.engine.start(id);
     return reply.code(201).send({ id, runId: spec.runId, startedAt: new Date().toISOString() });

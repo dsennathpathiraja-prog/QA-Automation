@@ -20,6 +20,28 @@ const MAX_SCREENSHOT_B64 = 48_000;
 
 const finish = (code) => process.exit(code);
 
+/** Prefer QA_CASES_FILE (large sets via launcher inlineFiles); fall back to QA_CASES_JSON for older callers. */
+async function loadCases() {
+  const file = process.env.QA_CASES_FILE;
+  if (file) {
+    try {
+      const { readFile } = await import('node:fs/promises');
+      const raw = await readFile(file, 'utf8');
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      console.log(`cases file unreadable: ${e instanceof Error ? e.message : 'error'}`);
+      return [];
+    }
+  }
+  try {
+    const parsed = JSON.parse(process.env.QA_CASES_JSON ?? '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 const hostAllowed = (hostname, port) => {
   const host = hostname.toLowerCase();
   const withPort = port ? `${host}:${port}` : host;
@@ -29,13 +51,7 @@ const hostAllowed = (hostname, port) => {
   });
 };
 
-let cases = [];
-try {
-  cases = JSON.parse(process.env.QA_CASES_JSON ?? '[]');
-  if (!Array.isArray(cases)) cases = [];
-} catch {
-  cases = [];
-}
+let cases = await loadCases();
 
 let url;
 try {
