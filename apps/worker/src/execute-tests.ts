@@ -331,7 +331,7 @@ export async function performExecuteTests(
     const allBlocked = runnable.length > 0 && runnable.every((r) => r.status === 'Blocked');
     await deps.testCases.completeWorkItemExecution(evidenceId, {
       status: allBlocked ? 'failed' : 'completed',
-      squashSync: 'Regression evidence stored on the platform. Squash status sync is Phase 9 E5.',
+      squashSync: 'Regression evidence stored on the platform. Squash status sync runs in rg.update-squash.',
       results,
     });
   }

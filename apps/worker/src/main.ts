@@ -33,12 +33,14 @@ import { WorkerLoop } from './loop';
 import { checkReachability } from './reachability';
 import { enrichStoryFromConnector } from './read-story';
 import { performExecuteTests } from './execute-tests';
+import { parseReportCases, performRegressionReport, type PreviousRegressionRun } from './regression-report';
 import { performResolveAutomation } from './resolve-automation';
 import { performRequirementStep } from './requirement-agents';
 import { launcherDown, runReachabilityCheck } from './runner-check';
 import { launcherDown as workItemLauncherDown, processWorkItemExecutions, runWorkItemCases } from './run-work-item';
 import { performSelectEnvironment } from './select-environment';
 import { squashIdFromSummary, syncCaseResultsToSquash } from './sync-execution';
+import { performUpdateSquash } from './update-squash';
 
 const env = process.env;
 const profile = (env.PLATFORM_PROFILE ?? 'standard') as DeploymentProfile;
@@ -315,6 +317,91 @@ const loop = new WorkerLoop({
                 throw new PlatformError('internal', 'The runner could not be started.');
               }
             },
+          });
+        }
+        if (step.type === 'rg.update-squash') {
+          return performUpdateSquash(step, {
+            testCases,
+            resolveWritable: squash && conn
+              ? async () => {
+                  const connectors = new PgConnectorRepository(conn.db);
+                  const candidates = (await connectors.list()).filter((c) => c.category === 'test-management' && c.enabled && c.accessMode === 'read_write');
+                  let squashInstance = candidates[0];
+                  for (const candidate of candidates) {
+                    const states = await connectors.capabilityStates(candidate.id);
+                    if (states.some((s) => s.capability === 'tm.execution.upsert' && s.granted)) {
+                      squashInstance = candidate;
+                      break;
+                    }
+                  }
+                  if (!squashInstance) return undefined;
+                  const states = await connectors.capabilityStates(squashInstance.id);
+                  if (!states.some((s) => s.capability === 'tm.execution.upsert' && s.granted)) return undefined;
+                  const actor = { type: 'user' as const, id: 'worker', permissions: ['connector.manage'] };
+                  const workItemKey = `rg:${step.runId}`.slice(0, 120);
+                  return {
+                    upsert: async (testCaseId: string) => squash.invoke<{ id: string; created: boolean }>({
+                      connectorInstanceId: squashInstance.id,
+                      capability: 'tm.execution.upsert',
+                      input: { testCaseId },
+                      idempotencyKey: `rg-exec-${workItemKey}-${testCaseId}`,
+                      actor,
+                    }),
+                    updateStatus: async (executionId: string, status: string, actualResult?: string) => {
+                      await squash.invoke({
+                        connectorInstanceId: squashInstance.id,
+                        capability: 'tm.execution.status.update',
+                        input: { executionId, status, actualResult },
+                        actor,
+                      });
+                    },
+                    uploadAttachment: async ({ executionId, testCaseId, name, contentBase64, sha256 }) =>
+                      squash.invoke<{ id: string }>({
+                        connectorInstanceId: squashInstance.id,
+                        capability: 'tm.attachment.upload',
+                        input: { entityType: 'execution', entityId: executionId, name, contentBase64, sha256 },
+                        idempotencyKey: `rg-attach-${workItemKey}-${testCaseId}-${executionId}-${sha256.slice(0, 16)}`,
+                        actor,
+                      }),
+                  };
+                }
+              : undefined,
+          });
+        }
+        if (step.type === 'rg.regression-report') {
+          return performRegressionReport(step, {
+            findPreviousRun: testCases
+              ? async ({ evidenceExecutionId, environmentId }) => {
+                  const board = await testCases.executionBoard();
+                  const candidates = board.items
+                    .filter((item) => item.workItem.startsWith('rg:'))
+                    .filter((item) => item.status === 'completed' || item.status === 'failed')
+                    .filter((item) => !environmentId || item.environmentId === environmentId)
+                    .filter((item) => !evidenceExecutionId || item.id !== evidenceExecutionId)
+                    .sort((a, b) => {
+                      const ta = a.finishedAt ?? a.createdAt;
+                      const tb = b.finishedAt ?? b.createdAt;
+                      return tb.localeCompare(ta);
+                    });
+                  const previous = candidates[0];
+                  if (!previous?.results) return undefined;
+                  const mapped: PreviousRegressionRun = {
+                    id: previous.id,
+                    workItem: previous.workItem,
+                    finishedAt: previous.finishedAt,
+                    environmentId: previous.environmentId,
+                    results: parseReportCases(previous.results.map((r) => ({
+                      testCaseId: r.testCaseId,
+                      name: r.name,
+                      status: r.status,
+                      message: r.message,
+                      hasScreenshot: r.hasScreenshot,
+                      squashExecutionId: r.squashExecutionId,
+                    }))),
+                  };
+                  return mapped;
+                }
+              : undefined,
           });
         }
         let params = step.params;

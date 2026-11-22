@@ -76,8 +76,8 @@ const STEP_HELP: Record<string, string> = {
   'rg.select-environment': 'Resolves the target application URL for execute.',
   'rg.resolve-automation': 'Approved-only resolve; drafts and unmapped cases become Not Automated.',
   'rg.execute-tests': 'Runs approved scripts via Playwright with evidence on Executions.',
-  'rg.update-squash': 'Syncs results to Squash when the token allows (later epic).',
-  'rg.regression-report': 'Writes the regression report artifact (later epic).',
+  'rg.update-squash': 'Pushes execution status to Squash when WRITE allows; otherwise degrades with a clear message.',
+  'rg.regression-report': 'Writes deterministic regression-report.md (pass/fail/blocked/skipped/Not Automated) with optional previous-run compare.',
 };
 
 type WfTab = 'steps' | 'flow' | 'connectors' | 'check' | 'run';
