@@ -218,6 +218,9 @@ describe('route guard', () => {
       },
     });
     expect(await screen.findByRole('tab', { name: 'Execution' })).toBeTruthy();
+    expect(await screen.findByRole('region', { name: 'Regression' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open Workflows' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Automation Mapping' })).toBeTruthy();
     expect(await screen.findByRole('button', { name: 'Prepare execution' })).toBeTruthy();
     expect(screen.getByText(/soft-deleted cases are excluded/i)).toBeTruthy();
     expect(await screen.findByRole('region', { name: 'Setup ready to run' })).toBeTruthy();
@@ -226,7 +229,8 @@ describe('route guard', () => {
     expect(await screen.findByRole('button', { name: 'Run' })).toBeTruthy();
     expect(screen.getByText(/Only recently added preparations/i)).toBeTruthy();
     await user.click(screen.getByRole('tab', { name: 'History' }));
-    expect(await screen.findByText(/These runs create and publish test cases/)).toBeTruthy();
+    expect(await screen.findByText(/Regression runs resolve approved automation/i)).toBeTruthy();
+    expect(screen.getByText(/Approve drafts on/i)).toBeTruthy();
     expect(screen.getByText('Succeeded')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Open workflow' })).toBeTruthy();
     const checkout = await screen.findByRole('button', { name: /Checkout/ });
