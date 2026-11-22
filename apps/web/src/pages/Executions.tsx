@@ -671,7 +671,11 @@ function WorkItemRunDetail({ shown, onCancel, cancelPending }: {
           Updating every second while cases run. Per-case status, step progress, and pass/fail counts refresh as the runner reports them.
         </Alert>
       )}
-      {shown.squashSync && <Alert sx={{ mt: 2 }} severity="info">{shown.squashSync}</Alert>}
+      {shown.squashSync && (
+        <Alert sx={{ mt: 2 }} severity={squashSyncAlertSeverity(shown.squashSync)} aria-label="Squash sync status">
+          {shown.squashSync}
+        </Alert>
+      )}
       {shown.results && shown.results.length > 0 && (
         <List sx={{ mt: 1 }}>
           {shown.results.map((row) => (
@@ -710,6 +714,14 @@ function WorkItemRunDetail({ shown, onCancel, cancelPending }: {
       )}
     </Paper>
   );
+}
+
+/** Sync line: info when Squash accepted status/attachments; warning when status or screenshots degraded. */
+function squashSyncAlertSeverity(message: string): 'info' | 'warning' {
+  if (/Squash was not updated|No writable Squash|was not available|Screenshot attachments were not uploaded|then stopped:/i.test(message)) {
+    return 'warning';
+  }
+  return 'info';
 }
 
 function screenshotEmptyHint(message: string | undefined): string {

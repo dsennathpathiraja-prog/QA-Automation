@@ -102,10 +102,10 @@ if (conn && secrets && hosts && built) {
   scheduler = new ConnectorHealthScheduler({ connectors: new PgConnectorRepository(conn.db), tests: new PgTestRequestQueue(conn.db), intervalMs: env.CONNECTOR_HEALTH_MS ? Number(env.CONNECTOR_HEALTH_MS) : undefined });
 }
 
-/** Work-item search, Playwright MCP, Squash test-case store, and Squash execution status writes. */
+/** Work-item search, Playwright MCP, Squash test-case store, execution status, and screenshot attachments. */
 function squashWriteAllowed(method: string, path: string): boolean {
   if (method === 'POST' && /\/(_apis\/wit\/wiql|mcp)$/.test(path)) return true;
-  if (method === 'POST' && /\/api\/rest\/[^/]+\/(test-cases(\/\d+\/steps)?|iterations\/\d+\/executions)$/.test(path)) return true;
+  if (method === 'POST' && /\/api\/rest\/[^/]+\/(test-cases(\/\d+\/steps)?|iterations\/\d+\/executions|(executions|test-cases)\/\d+\/attachments\/?)$/.test(path)) return true;
   if (method === 'DELETE' && /\/api\/rest\/[^/]+\/test-steps\/\d+$/.test(path)) return true;
   return method === 'PATCH' && /\/api\/rest\/[^/]+\/(test-cases|executions)\/\d+$/.test(path);
 }
@@ -470,6 +470,14 @@ const loop = new WorkerLoop({
                   actor,
                 });
               },
+              uploadAttachment: async ({ executionId, testCaseId, name, contentBase64, sha256 }) =>
+                squash.invoke<{ id: string }>({
+                  connectorInstanceId: squashInstance.id,
+                  capability: 'tm.attachment.upload',
+                  input: { entityType: 'execution', entityId: executionId, name, contentBase64, sha256 },
+                  idempotencyKey: `attach-${workItem}-${testCaseId}-${executionId}-${sha256.slice(0, 16)}`,
+                  actor,
+                }),
             });
           }
         : undefined,

@@ -202,7 +202,7 @@ Local default `RUNNER_MAX_CONCURRENT` is **8** (never treat `0` as a valid limit
 
 6. **Cancel a live work-item run** from Executions (Cancel on the live row). The worker stops and removes that run’s `qa-runner-*` container so the pool slot frees immediately — you should not need a manual reclaim after Cancel.
 
-7. Squash sync needs a **READ_WRITE** personal API token on the switched-on Squash connector (project name e.g. ToolKit-AgenFlow): Test Connection → Switch on → **restart the worker** after replacing the token.
+7. Squash sync needs a **READ_WRITE** personal API token on the switched-on Squash connector (project name e.g. ToolKit-AgenFlow): Test Connection → Switch on → **restart the worker** after replacing the token. After a Run, the work-item detail sync line should mention execution status and, when attachments succeed, uploaded screenshots. If Squash refuses attachments, the line warns and platform screenshots still show on Executions.
 
 Optional browser MCP (Explore UI / connector Test connection) still uses `--profile browser` — that is separate from Executions screenshots.
 

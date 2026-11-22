@@ -43,7 +43,7 @@ export class PgInstanceResolver implements InstanceResolver {
       effectiveCapabilities: withBrowserExploreHelpers(new Set([
         ...states.filter((s) => s.granted && s.support !== 'unsupported').map((s) => s.capabilityId as CapabilityId),
         ...(r.category === 'test-management' && r.accessMode === 'read_write'
-          ? (['tm.testcase.upsert', 'tm.execution.upsert', 'tm.execution.status.update'] as CapabilityId[])
+          ? (['tm.testcase.upsert', 'tm.execution.upsert', 'tm.execution.status.update', 'tm.attachment.upload'] as CapabilityId[])
           : []),
       ])),
     };
