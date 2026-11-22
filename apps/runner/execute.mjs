@@ -2,7 +2,11 @@
  * Runs prepared work-item cases against QA_TARGET_URL.
  * Prefers Playwright when installed; otherwise opens the URL over HTTP (same allowlist as reachability).
  * Prints PROGRESS_JSON while a case runs and one RESULT_JSON line per case for the worker to parse.
- * Screenshots are compact JPEG viewports; never emit the historic 1×1 red stub as evidence.
+ *
+ * Screenshots are emitted on a separate SCREENSHOT_JSON line so RESULT_JSON stays small.
+ * Docker log / launcher JSON responses often truncate multi‑100KB lines; putting status after a huge
+ * base64 field used to drop both the parseable result and the image (worker then probe-fell-back
+ * to “answered 200” with no evidence).
  */
 import { request as httpRequest } from 'node:http';
 import { connect as tlsConnect } from 'node:tls';
@@ -11,8 +15,8 @@ const timeoutMs = 15_000;
 const target = process.env.QA_TARGET_URL ?? '';
 const allowed = (process.env.QA_ALLOWED_HOSTS ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy || '';
-/** Keep RESULT_JSON lines well under Docker/HTTP limits. */
-const MAX_SCREENSHOT_B64 = 120_000;
+/** Keep each log line well under common Docker/HTTP truncation thresholds (~16–64KiB). */
+const MAX_SCREENSHOT_B64 = 48_000;
 
 const finish = (code) => process.exit(code);
 
@@ -52,6 +56,8 @@ if (cases.length === 0) {
 }
 
 const playwright = await loadPlaywright();
+console.log(`RUNNER_MODE ${JSON.stringify({ capture: playwright ? 'playwright' : 'http', browsersPath: process.env.PLAYWRIGHT_BROWSERS_PATH ?? null })}`);
+
 for (const item of cases) {
   try {
     const result = playwright
@@ -83,14 +89,25 @@ function emitProgress(item, status, message, steps) {
   console.log(`PROGRESS_JSON ${JSON.stringify({ testCaseId: item.id, name: item.name, status, message, steps })}`);
 }
 
+/**
+ * Status line first (always small), then optional screenshot line.
+ * Never put base64 ahead of status/message in RESULT_JSON.
+ */
 function emitResult(row) {
   const shot = typeof row.screenshotPng === 'string' && row.screenshotPng.length >= 200
     ? shrinkScreenshot(row.screenshotPng)
     : undefined;
-  const payload = { ...row };
-  if (shot) payload.screenshotPng = shot;
-  else delete payload.screenshotPng;
+  const payload = {
+    testCaseId: row.testCaseId,
+    name: row.name,
+    status: row.status,
+    message: row.message,
+    steps: row.steps,
+  };
   console.log(`RESULT_JSON ${JSON.stringify(payload)}`);
+  if (shot) {
+    console.log(`SCREENSHOT_JSON ${JSON.stringify({ testCaseId: row.testCaseId, screenshotPng: shot })}`);
+  }
 }
 
 /** Prefer a smaller JPEG over dropping evidence entirely. */
@@ -114,21 +131,23 @@ function blocked(item, message) {
 async function loadPlaywright() {
   try {
     return await import('playwright');
-  } catch {
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : 'import failed';
+    console.log(`RUNNER_MODE ${JSON.stringify({ capture: 'http', reason })}`);
     return undefined;
   }
 }
 
-/** Capture a viewport JPEG, retrying at lower quality / crop so we stay under the log size cap. */
+/** Capture a compact viewport JPEG under the log-line size cap. */
 async function captureViewport(page) {
-  for (const quality of [40, 28, 18, 12]) {
+  for (const quality of [36, 24, 16, 10]) {
     const buf = await page.screenshot({ type: 'jpeg', quality, fullPage: false });
     const b64 = buf.toString('base64');
     if (b64.length <= MAX_SCREENSHOT_B64) return b64;
   }
   const clipped = await page.screenshot({
     type: 'jpeg',
-    quality: 12,
+    quality: 10,
     fullPage: false,
     clip: { x: 0, y: 0, width: 640, height: 360 },
   });
@@ -144,18 +163,32 @@ async function runWithPlaywright(pw, u, item) {
     args: ['--disable-dev-shm-usage', '--no-sandbox'],
   });
   try {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
     emitProgress(item, 'Running', 'Opening page', stepsAt(names, 0));
     const res = await page.goto(u.href, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
     emitProgress(item, 'Running', 'Capturing screenshot', stepsAt(names, Math.min(1, names.length - 1), 'Passed', 'Running', 'Queued'));
-    const screenshotPng = await captureViewport(page).catch(() => undefined);
+    let screenshotPng;
+    let captureNote;
+    try {
+      screenshotPng = await captureViewport(page);
+      if (!screenshotPng) captureNote = 'screenshot exceeded size cap';
+    } catch (e) {
+      captureNote = e instanceof Error ? e.message : 'screenshot failed';
+      screenshotPng = undefined;
+    }
     const statusCode = res?.status() ?? 0;
     const doneSteps = (fill) => names.map((name) => ({ name, status: fill }));
-    const base = { testCaseId: item.id, name: item.name, ...(screenshotPng ? { screenshotPng } : {}), steps: doneSteps(!res ? 'Blocked' : statusCode >= 500 || statusCode < 200 ? 'Failed' : 'Passed') };
-    if (!res) return { ...base, status: 'Blocked', message: 'did not answer', steps: doneSteps('Blocked') };
-    if (statusCode >= 500) return { ...base, status: 'Failed', message: `answered ${statusCode}`, steps: doneSteps('Failed') };
-    if (statusCode >= 200) return { ...base, status: 'Passed', message: `answered ${statusCode}`, steps: doneSteps('Passed') };
-    return { ...base, status: 'Failed', message: `answered ${statusCode}`, steps: doneSteps('Failed') };
+    const suffix = captureNote ? ` · no screenshot (${captureNote})` : '';
+    if (!res) {
+      return { testCaseId: item.id, name: item.name, status: 'Blocked', message: `did not answer${suffix}`, steps: doneSteps('Blocked'), ...(screenshotPng ? { screenshotPng } : {}) };
+    }
+    if (statusCode >= 500) {
+      return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${statusCode}${suffix}`, steps: doneSteps('Failed'), ...(screenshotPng ? { screenshotPng } : {}) };
+    }
+    if (statusCode >= 200) {
+      return { testCaseId: item.id, name: item.name, status: 'Passed', message: `answered ${statusCode}${suffix}`, steps: doneSteps('Passed'), ...(screenshotPng ? { screenshotPng } : {}) };
+    }
+    return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${statusCode}${suffix}`, steps: doneSteps('Failed'), ...(screenshotPng ? { screenshotPng } : {}) };
   } catch (e) {
     const message = e instanceof Error ? e.message : 'did not answer';
     return blocked(item, message);
@@ -172,9 +205,10 @@ async function runWithHttp(u, item) {
     emitProgress(item, 'Running', 'Recording result', stepsAt(names, Math.min(1, names.length - 1), 'Passed', 'Running', 'Queued'));
     // HTTP probe cannot capture a page image — omit screenshot (UI shows empty state, not a red stub).
     const done = (fill) => names.map((name) => ({ name, status: fill }));
-    if (status >= 500) return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${status}`, steps: done('Failed') };
-    if (status >= 200) return { testCaseId: item.id, name: item.name, status: 'Passed', message: `answered ${status}`, steps: done('Passed') };
-    return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${status}`, steps: done('Failed') };
+    const hint = ' · no screenshot (HTTP probe; Playwright unavailable in runner image)';
+    if (status >= 500) return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${status}${hint}`, steps: done('Failed') };
+    if (status >= 200) return { testCaseId: item.id, name: item.name, status: 'Passed', message: `answered ${status}${hint}`, steps: done('Passed') };
+    return { testCaseId: item.id, name: item.name, status: 'Failed', message: `answered ${status}${hint}`, steps: done('Failed') };
   } catch {
     return blocked(item, 'did not answer');
   }

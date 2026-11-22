@@ -352,7 +352,7 @@ const loop = new WorkerLoop({
             }),
             allowedMethods: ['GET', 'POST'],
             timeoutMs: 60_000,
-            // RESULT_JSON lines include compact JPEG screenshots for every case.
+            // RESULT_JSON carries status; SCREENSHOT_JSON carries compact JPEG evidence per case.
             maxBodyBytes: 32 * 1024 * 1024,
           });
           const launcher = new RemoteRunnerLauncher({ baseUrl: launcherUrl, token: () => launcherToken, http });

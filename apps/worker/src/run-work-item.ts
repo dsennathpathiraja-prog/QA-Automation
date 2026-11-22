@@ -40,21 +40,31 @@ export async function runWorkItemCases(o: {
   if (o.launcher) {
     try {
       const results = await viaRunner(o);
-      if (!isEmptyRunnerResult(results) || !o.probe) return { viaRunner: true, results };
-      // Runner container finished but emitted no RESULT_JSON (stale image, truncated logs, crash).
-      // Fall back to a direct probe so the board still shows Passed/Failed instead of all Blocked.
-      const probed = await viaDirect(o);
+      if (!shouldProbeFallback(results) || !o.probe) return { viaRunner: true, results };
+      // Runner produced no parseable RESULT_JSON at all (stale image / crash). Probe for status only —
+      // never do this when log markers were present but truncated (that fakes Passed with no screenshot).
+      const probed = await viaDirect({ ...o, probeReason: 'runner returned no RESULT_JSON' });
       return { viaRunner: true, results: probed };
     } catch (e) {
       if (!launcherDown(e)) throw e;
     }
   }
-  return { viaRunner: false, results: await viaDirect(o) };
+  return { viaRunner: false, results: await viaDirect({ ...o, probeReason: 'runner-launcher unavailable' }) };
 }
 
 export function parseCaseResults(text: string, fallback: WorkItemCaseInput[]): CaseOutcome[] {
   const found = parseResultLines(text);
-  if (found.length > 0) return found;
+  if (found.length > 0) return attachScreenshots(found, text);
+
+  // Truncated RESULT_JSON used to put huge base64 before status/message; do not treat fragments as a
+  // clean legacy reachability log — that hid missing screenshots behind a probe fallback.
+  if (/\bRESULT_JSON\b|\bSCREENSHOT_JSON\b|\bRUNNER_MODE\b|\bPROGRESS_JSON\b/.test(text)) {
+    const excerpt = text.replace(/\s+/g, ' ').trim().slice(0, 240);
+    const message = excerpt
+      ? `${NO_RESULTS} Runner log markers were present but RESULT_JSON could not be parsed (often a truncated log line). Rebuild qa-runner:local with --profile runners --build. Log: ${excerpt}`
+      : `${NO_RESULTS} Runner log markers were present but RESULT_JSON could not be parsed. Rebuild qa-runner:local with --profile runners --build.`;
+    return fallback.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message, steps: defaultSteps(c.steps, 'Blocked') }));
+  }
 
   // Older runner images only printed reachability-style "answered N" with no RESULT_JSON.
   const answered = Number(/answered (\d{3})\b/.exec(text)?.[1]);
@@ -76,7 +86,7 @@ export function parseCaseResults(text: string, fallback: WorkItemCaseInput[]): C
   return fallback.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message, steps: defaultSteps(c.steps, 'Blocked') }));
 }
 
-/** Merge seeded placeholders with PROGRESS_JSON / RESULT_JSON lines for live UI updates. */
+/** Merge seeded placeholders with PROGRESS_JSON / RESULT_JSON / SCREENSHOT_JSON lines for live UI updates. */
 export function mergeLiveProgress(text: string, seeded: CaseOutcome[]): CaseOutcome[] {
   const byId = new Map(seeded.map((row) => [row.testCaseId, { ...row, steps: row.steps?.map((s) => ({ ...s })) }]));
   for (const line of text.split(/\r?\n/)) {
@@ -108,6 +118,27 @@ export function mergeLiveProgress(text: string, seeded: CaseOutcome[]): CaseOutc
         });
       } catch {
         /* ignore bad progress lines */
+      }
+      continue;
+    }
+    const shotIdx = line.indexOf('SCREENSHOT_JSON ');
+    if (shotIdx >= 0) {
+      const raw = line.slice(shotIdx + 'SCREENSHOT_JSON '.length).trim();
+      try {
+        const row = JSON.parse(raw) as { testCaseId?: string; screenshotPng?: string };
+        if (typeof row.testCaseId !== 'string') continue;
+        const shot = realScreenshot(typeof row.screenshotPng === 'string' ? row.screenshotPng : undefined);
+        if (!shot) continue;
+        const current = byId.get(row.testCaseId) ?? {
+          testCaseId: row.testCaseId,
+          name: row.testCaseId,
+          status: 'Running' as const,
+          message: '',
+          steps: undefined,
+        };
+        byId.set(row.testCaseId, { ...current, screenshotPng: shot });
+      } catch {
+        /* ignore bad screenshot lines */
       }
       continue;
     }
@@ -143,6 +174,12 @@ export function launcherDown(e: unknown): boolean {
 
 function isEmptyRunnerResult(results: CaseOutcome[]): boolean {
   return results.length > 0 && results.every((r) => r.status === 'Blocked' && r.message.startsWith(NO_RESULTS));
+}
+
+/** Probe only when the runner left no usable markers — truncated RESULT_JSON must not become a fake Passed. */
+function shouldProbeFallback(results: CaseOutcome[]): boolean {
+  if (!isEmptyRunnerResult(results)) return false;
+  return !results.some((r) => /could not be parsed|log markers were present/i.test(r.message));
 }
 
 async function viaRunner(o: {
@@ -194,7 +231,9 @@ async function viaRunner(o: {
       try {
         const partial = await launcher.logs(handle.id);
         const merged = mergeLiveProgress(partial, seeded);
-        const fingerprint = merged.map((r) => `${r.testCaseId}:${r.status}:${r.message}:${r.steps?.map((s) => s.status).join(',') ?? ''}`).join('|');
+        const fingerprint = merged
+          .map((r) => `${r.testCaseId}:${r.status}:${r.message}:${r.screenshotPng?.length ?? 0}:${r.steps?.map((s) => s.status).join(',') ?? ''}`)
+          .join('|');
         if (fingerprint !== lastFingerprint) {
           lastFingerprint = fingerprint;
           await o.onProgress(merged);
@@ -207,10 +246,14 @@ async function viaRunner(o: {
     state = await launcher.launcher.status(handle.id);
   }
   const text = await launcher.logs(handle.id);
+  const live = mergeLiveProgress(text, seeded);
   const finalResults = parseCaseResults(text, o.cases).map((row) => {
     const prior = seeded.find((s) => s.testCaseId === row.testCaseId);
+    const fromLive = live.find((s) => s.testCaseId === row.testCaseId);
     return {
       ...row,
+      // Prefer freshly parsed shot; keep any shot already merged from SCREENSHOT_JSON during the run.
+      screenshotPng: row.screenshotPng ?? fromLive?.screenshotPng,
       steps: row.steps ?? markStepsDone(prior?.steps, row.status),
     };
   });
@@ -223,6 +266,7 @@ async function viaDirect(o: {
   url: string;
   probe?: (url: string) => Promise<{ status: number }>;
   onProgress?: (results: CaseOutcome[]) => Promise<void> | void;
+  probeReason?: string;
 }): Promise<CaseOutcome[]> {
   const seeded = o.cases.map((c) => ({
     testCaseId: c.id,
@@ -238,7 +282,8 @@ async function viaDirect(o: {
   try {
     const res = await o.probe(o.url);
     const status: CaseRunStatus = res.status >= 500 ? 'Failed' : res.status >= 200 ? 'Passed' : 'Failed';
-    const message = `answered ${res.status}`;
+    const why = o.probeReason ? ` · no screenshot (${o.probeReason})` : ' · no screenshot (HTTP probe)';
+    const message = `answered ${res.status}${why}`;
     // Probe has no browser — omit screenshot so the UI shows an empty state instead of a red stub.
     return o.cases.map((c) => ({ testCaseId: c.id, name: c.name, status, message, steps: defaultSteps(c.steps, status) }));
   } catch (e) {
@@ -272,6 +317,34 @@ function parseResultLines(text: string): CaseOutcome[] {
     }
   }
   return found;
+}
+
+function parseScreenshotLines(text: string): Map<string, string> {
+  const shots = new Map<string, string>();
+  for (const line of text.split(/\r?\n/)) {
+    const idx = line.indexOf('SCREENSHOT_JSON ');
+    if (idx < 0) continue;
+    const raw = line.slice(idx + 'SCREENSHOT_JSON '.length).trim();
+    if (!raw) continue;
+    try {
+      const row = JSON.parse(raw) as { testCaseId?: string; screenshotPng?: string };
+      if (typeof row.testCaseId !== 'string') continue;
+      const shot = realScreenshot(typeof row.screenshotPng === 'string' ? row.screenshotPng : undefined);
+      if (shot) shots.set(row.testCaseId, shot);
+    } catch {
+      /* ignore bad screenshot lines */
+    }
+  }
+  return shots;
+}
+
+function attachScreenshots(rows: CaseOutcome[], text: string): CaseOutcome[] {
+  const shots = parseScreenshotLines(text);
+  if (shots.size === 0) return rows;
+  return rows.map((row) => ({
+    ...row,
+    screenshotPng: row.screenshotPng ?? shots.get(row.testCaseId),
+  }));
 }
 
 function defaultSteps(stepsText: string | undefined, fill: CaseStepProgress['status']): CaseStepProgress[] {
