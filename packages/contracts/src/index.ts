@@ -354,7 +354,7 @@ export const WorkItemExecutionSchema = z.object({
   environmentId: z.string(),
   environmentName: z.string(),
   caseCount: z.number(),
-  status: z.enum(['prepared', 'queued', 'running', 'completed', 'failed']),
+  status: z.enum(['prepared', 'queued', 'running', 'completed', 'failed', 'cancelled']),
   createdAt: z.string(),
   finishedAt: z.string().optional(),
   squashSync: z.string().optional(),

@@ -124,18 +124,31 @@ docker run --rm --network qa-platform-local \
 
 4. If cases are **Blocked** with “runner-launcher is not available”, the launcher container is not on `qa-platform-local` — re-run step 1 (Docker socket must be available to Compose).
 
-5. If cases are **Blocked** with “runner pool is full” / “pool stayed full”, check leftovers with **`docker ps -a`** (plain `docker ps` hides `created`/`exited` orphans that used to pin the pool). One Execute uses **one** `qa-runner-*` container for the whole batch — not one per case:
+5. If cases are **Blocked** with “runner pool is full” / “pool stayed full”, check leftovers with **`docker ps -a`** (plain `docker ps` hides `created`/`exited` orphans that used to pin the pool). One Execute uses **one** `qa-runner-*` container for the whole batch — not one per case.
+
+**PowerShell (Windows):**
+
+```
+docker ps -a --filter "label=qa.platform/managed=true"
+docker images qa-runner:local
+docker ps -aq --filter "label=qa.platform/managed=true" | ForEach-Object { docker rm -f $_ }
+docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
+```
+
+**Bash:**
 
 ```
 docker ps -a --filter label=qa.platform/managed=true
-docker images qa-runner:local   # must exist; runner-image Exited (0) after build
+docker images qa-runner:local
 docker rm -f $(docker ps -aq --filter label=qa.platform/managed=true) 2>/dev/null || true
 docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
 ```
 
-Local default `RUNNER_MAX_CONCURRENT` is **8** (never treat `0` as a valid limit). The launcher reclaims finished/never-started runners before admitting a new one; the worker waits up to ~3 minutes for a free slot. If the image is missing you get “Rebuild the stack”, not pool-full.
+Local default `RUNNER_MAX_CONCURRENT` is **8** (never treat `0` as a valid limit). The launcher reclaims finished/never-started runners before admitting a new one; the worker waits up to ~3 minutes for a free slot. If the image is missing you get a PowerShell rebuild hint (not pool-full).
 
-6. Squash sync needs a **READ_WRITE** personal API token on the switched-on Squash connector (project name e.g. ToolKit-AgenFlow): Test Connection → Switch on → **restart the worker** after replacing the token.
+6. **Cancel a live work-item run** from Executions (Cancel on the live row). The worker stops and removes that run’s `qa-runner-*` container so the pool slot frees immediately — you should not need a manual reclaim after Cancel.
+
+7. Squash sync needs a **READ_WRITE** personal API token on the switched-on Squash connector (project name e.g. ToolKit-AgenFlow): Test Connection → Switch on → **restart the worker** after replacing the token.
 
 Optional browser MCP (Explore UI / connector Test connection) still uses `--profile browser` — that is separate from Executions screenshots.
 

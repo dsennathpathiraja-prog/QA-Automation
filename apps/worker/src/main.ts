@@ -179,6 +179,27 @@ const loop = new WorkerLoop({
     if (executions && (await engineTick(executions, {
       owner: 'worker',
       now: new Date(),
+      onCancel: async (runId) => {
+        const launcherUrl = env.RUNNER_LAUNCHER_URL;
+        const launcherToken = env.RUNNER_LAUNCHER_TOKEN_FILE ? readSecretFile(env.RUNNER_LAUNCHER_TOKEN_FILE) : env.RUNNER_LAUNCHER_TOKEN;
+        if (!launcherUrl || !launcherToken) return;
+        try {
+          const launcherHost = new URL(launcherUrl);
+          const http = new HardenedHttpClient({
+            egress: new EgressPolicy({
+              rules: [{ hostPattern: launcherHost.hostname, purpose: 'platform', internal: true, allowHttp: launcherHost.protocol === 'http:', allowLoopback: launcherHost.hostname === 'localhost' || launcherHost.hostname === '127.0.0.1' }],
+              profile,
+              platformEnv,
+            }),
+            allowedMethods: ['GET', 'POST'],
+            timeoutMs: 15_000,
+          });
+          const launcher = new RemoteRunnerLauncher({ baseUrl: launcherUrl, token: () => launcherToken, http });
+          await launcher.cancelByExecution(runId.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 128) || runId, 'workflow run cancelled');
+        } catch {
+          /* best-effort — cancel still clears the lease */
+        }
+      },
       perform: async (step) => {
         let params = step.params;
         if (step.type === 'rv.read-user-story') {
@@ -326,12 +347,12 @@ const loop = new WorkerLoop({
         if (!row?.applicationUrl) throw new PlatformError('not-found', 'That environment was not found.');
         return row.applicationUrl;
       },
-      run: async ({ run, cases, url, onProgress }) => {
+      run: async ({ run, cases, url, onProgress, isCancelled }) => {
         // Executions require Playwright via runner-launcher — never HTTP probe-pass without screenshots.
         const launcherUrl = env.RUNNER_LAUNCHER_URL;
         const launcherToken = env.RUNNER_LAUNCHER_TOKEN_FILE ? readSecretFile(env.RUNNER_LAUNCHER_TOKEN_FILE) : env.RUNNER_LAUNCHER_TOKEN;
         if (!launcherUrl || !launcherToken) {
-          return runWorkItemCases({ run, cases, url, onProgress });
+          return runWorkItemCases({ run, cases, url, onProgress, isCancelled });
         }
         try {
           const launcherHost = new URL(launcherUrl);
@@ -353,11 +374,12 @@ const loop = new WorkerLoop({
             cases,
             url,
             onProgress,
+            isCancelled,
             launcher: { launcher, image, logs: (id) => launcher.logs(id) },
           });
         } catch (e) {
           if (workItemLauncherDown(e) || launcherDown(e)) {
-            return runWorkItemCases({ run, cases, url, onProgress });
+            return runWorkItemCases({ run, cases, url, onProgress, isCancelled });
           }
           if (e instanceof PlatformError) throw e;
           throw new PlatformError('internal', 'The runner could not be started.');
