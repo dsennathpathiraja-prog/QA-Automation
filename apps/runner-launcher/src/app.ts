@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { LABEL, PlatformError, containerName, materializeInlineFilesToEnv, requireConflict, stateOf, toDockerCreateBody, validateRunnerSpec, type ContainerEngine, type ContainerState, type RunnerSpec, type TranslateOptions } from '@qa/domain';
+import { LABEL, PlatformError, RUNNER_IMAGE_MISSING, containerName, materializeInlineFilesToEnv, requireConflict, stateOf, toDockerCreateBody, validateRunnerSpec, type ContainerEngine, type ContainerState, type RunnerSpec, type TranslateOptions } from '@qa/domain';
 
 export interface LauncherDeps {
   engine: ContainerEngine;
@@ -86,7 +86,7 @@ export function buildLauncherApp(deps: LauncherDeps): FastifyInstance {
 
   app.get('/v1/runner-image', async (_req, reply) => {
     const pin = await currentPin();
-    if (!pin) return reply.code(503).send(err('transient', 'The runner image is not on this machine yet. Rebuild the stack.'));
+    if (!pin) return reply.code(503).send(err('transient', RUNNER_IMAGE_MISSING));
     return { image: pin.image };
   });
 
@@ -108,7 +108,7 @@ export function buildLauncherApp(deps: LauncherDeps): FastifyInstance {
       return reply.code(403).send(err('denied', 'image registry is not approved for runners'));
     }
     const pin = deps.localImage ? await currentPin() : undefined;
-    if (deps.localImage && !pin) return reply.code(503).send(err('transient', 'The runner image is not on this machine yet. Rebuild the stack.'));
+    if (deps.localImage && !pin) return reply.code(503).send(err('transient', RUNNER_IMAGE_MISSING));
     if (pin && spec.image !== pin.image) return reply.code(403).send(err('denied', 'image is not the approved runner'));
     const name = containerName(spec.runId);
     await reclaimFinished();
@@ -167,10 +167,44 @@ export function buildLauncherApp(deps: LauncherDeps): FastifyInstance {
     return { text: await deps.engine.logs(req.params.id) };
   });
 
-  app.post<{ Params: { id: string }; Body: { reason?: string } }>('/v1/runners/:id/stop', async (req, reply) => {
+  app.post<{ Params: { id: string }; Body: { reason?: string; remove?: boolean } }>('/v1/runners/:id/stop', async (req, reply) => {
     const c = await managed(req.params.id);
     await deps.engine.stop(c.id, 10);
+    if (req.body?.remove) {
+      try {
+        await deps.engine.remove(c.id);
+      } catch {
+        /* already gone */
+      }
+    }
     return reply.code(200).send({ ok: true });
+  });
+
+  /**
+   * Cancel every managed runner for one execution (workflow or work-item run).
+   * Stops then removes so the concurrent pool frees immediately.
+   */
+  app.post<{ Body: { executionId?: string; reason?: string } }>('/v1/runners/cancel', async (req, reply) => {
+    const executionId = typeof req.body?.executionId === 'string' ? req.body.executionId.trim() : '';
+    if (!executionId) return reply.code(400).send(err('validation', 'executionId is required'));
+    const items = await deps.engine.list({ [LABEL.managed]: 'true', [LABEL.executionId]: executionId });
+    let stopped = 0;
+    for (const c of items) {
+      try {
+        if (c.status === 'running' || c.status === 'restarting' || c.status === 'paused' || c.status === 'created') {
+          await deps.engine.stop(c.id, 10);
+        }
+      } catch {
+        /* best-effort */
+      }
+      try {
+        await deps.engine.remove(c.id);
+        stopped += 1;
+      } catch {
+        /* already gone */
+      }
+    }
+    return reply.code(200).send({ stopped, executionId, reason: req.body?.reason ?? 'cancelled' });
   });
 
   app.get<{ Querystring: Record<string, string> }>('/v1/runners', async (req) => {

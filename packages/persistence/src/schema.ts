@@ -502,7 +502,7 @@ export const workItemExecution = pgTable(
   },
   (t) => [
     index('work_item_execution_created_idx').on(t.createdAt),
-    check('work_item_execution_status_ck', sql`${t.status} in ('prepared','queued','running','completed','failed')`),
+    check('work_item_execution_status_ck', sql`${t.status} in ('prepared','queued','running','completed','failed','cancelled')`),
   ],
 );
 

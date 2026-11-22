@@ -35,6 +35,8 @@ export interface TickOptions {
   leaseMs?: number;
   /** Commit the side effect, then die before the step is marked complete. */
   crashAfterEffect?: boolean;
+  /** Stop runner containers / free pool slots before the run is marked cancelled. */
+  onCancel?(runId: string): Promise<void> | void;
   /** Runs after a new effect is recorded. A repeated effect skips this so the work happens once. */
   perform?(step: { id: string; type: string; runId: string; params: Record<string, unknown>; prior: Record<string, Record<string, unknown>> }): Promise<{ summary: string; outputs?: Record<string, unknown> }>;
 }
@@ -56,6 +58,11 @@ export async function tick(store: EngineStore, opts: TickOptions): Promise<'busy
   if (!run) return 'idle';
   const clear = { leaseOwner: null, leaseUntil: null };
   if (run.control === 'cancel') {
+    try {
+      await opts.onCancel?.(run.id);
+    } catch {
+      /* best-effort runner cleanup — still mark cancelled and clear the lease */
+    }
     await store.save(run.id, { status: 'cancelled', control: null, ...clear });
     await store.append(run.id, 'cancelled', {});
     return 'busy';

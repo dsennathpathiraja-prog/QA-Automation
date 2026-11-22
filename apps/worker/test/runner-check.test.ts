@@ -43,7 +43,7 @@ describe('reachability through a runner', () => {
 
   it('treats a missing launcher as a reason to check from the worker', () => {
     expect(launcherDown(new PlatformError('transient', 'could not resolve runner-launcher'))).toBe(true);
-    expect(launcherDown(new PlatformError('transient', 'The runner image is not on this machine yet. Rebuild the stack.'))).toBe(false);
+    expect(launcherDown(new PlatformError('transient', 'The runner image qa-runner:local is not on this machine yet. In PowerShell from the repo root:\ndocker compose -f deploy/compose/local/docker-compose.local.yml up --build -d\nThen re-run.'))).toBe(false);
     expect(launcherDown(new PlatformError('auth', 'the runner launcher rejected our credentials'))).toBe(false);
   });
 });

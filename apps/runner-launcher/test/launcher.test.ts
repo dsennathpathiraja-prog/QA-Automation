@@ -127,6 +127,85 @@ describe('runner launcher service', () => {
     expect([...engine.containers.values()][0]!.state.status).toBe('running');
   });
 
+  it('cancels by execution id: stops, removes, and frees the pool for the next launch', async () => {
+    const engine = new FakeContainerEngine();
+    const app = buildLauncherApp(deps(engine, { maxConcurrent: 1 }));
+    const started = await app.inject({
+      method: 'POST',
+      url: '/v1/runners',
+      headers: auth,
+      payload: sampleRunnerSpec({ runId: 'live-a', executionId: 'ex-cancel-1' }),
+    });
+    expect(started.statusCode).toBe(201);
+    const id = started.json().id as string;
+    expect(engine.containers.get(id)!.state.status).toBe('running');
+
+    const full = await app.inject({ method: 'POST', url: '/v1/runners', headers: auth, payload: sampleRunnerSpec({ runId: 'live-b', executionId: 'ex-other' }) });
+    expect(full.statusCode).toBe(429);
+
+    const cancelled = await app.inject({
+      method: 'POST',
+      url: '/v1/runners/cancel',
+      headers: auth,
+      payload: { executionId: 'ex-cancel-1', reason: 'operator cancel' },
+    });
+    expect(cancelled.statusCode).toBe(200);
+    expect(cancelled.json()).toMatchObject({ stopped: 1, executionId: 'ex-cancel-1' });
+    expect(engine.containers.has(id)).toBe(false);
+
+    const next = await app.inject({
+      method: 'POST',
+      url: '/v1/runners',
+      headers: auth,
+      payload: sampleRunnerSpec({ runId: 'live-b', executionId: 'ex-other' }),
+    });
+    expect(next.statusCode).toBe(201);
+  });
+
+  it('accepts a large case payload (soak) via chunked inlineFiles without filling the pool twice', async () => {
+    const engine = new FakeContainerEngine();
+    const app = buildLauncherApp(deps(engine, { maxConcurrent: 1 }));
+    const cases = Array.from({ length: 250 }, (_, i) => ({
+      id: `c${i}`,
+      name: `Case ${i} — verify long prepared set packs for demos`,
+      steps: ['Open page', 'Capture evidence'],
+    }));
+    const content = JSON.stringify(cases);
+    expect(Buffer.byteLength(content, 'utf8')).toBeGreaterThan(8_000);
+    const launched = await app.inject({
+      method: 'POST',
+      url: '/v1/runners',
+      headers: auth,
+      payload: sampleRunnerSpec({
+        runId: 'soak-large',
+        executionId: 'ex-soak',
+        env: { QA_CASES_FILE: '/tmp/qa-cases.json' },
+        inlineFiles: [{ path: '/tmp/qa-cases.json', content }],
+      }),
+    });
+    expect(launched.statusCode).toBe(201);
+    const env = (engine.created[0]!.body as { Env: string[] }).Env;
+    expect(env.some((e) => e.startsWith('QA_CASES_PARTS='))).toBe(true);
+    expect(Number(env.find((e) => e.startsWith('QA_CASES_PARTS='))!.split('=')[1])).toBeGreaterThan(1);
+
+    await app.inject({ method: 'POST', url: '/v1/runners/cancel', headers: auth, payload: { executionId: 'ex-soak' } });
+    const again = await app.inject({
+      method: 'POST',
+      url: '/v1/runners',
+      headers: auth,
+      payload: sampleRunnerSpec({ runId: 'soak-again', executionId: 'ex-soak-2' }),
+    });
+    expect(again.statusCode).toBe(201);
+  });
+
+  it('explains a missing local image with a PowerShell rebuild hint', async () => {
+    const engine = new FakeContainerEngine();
+    const app = buildLauncherApp(deps(engine, { allowedImagePrefixes: ['qa-runner@'], localImage: { repository: 'qa-runner', ref: 'qa-runner:local' } }));
+    const missing = await app.inject({ method: 'GET', url: '/v1/runner-image', headers: auth });
+    expect(missing.statusCode).toBe(503);
+    expect(missing.json().error.message).toMatch(/PowerShell|docker compose -f deploy\/compose\/local/);
+  });
+
   it('cannot see, stop or list containers the platform did not create', async () => {
     const engine = new FakeContainerEngine();
     engine.add({ id: 'db-1', name: 'postgres', status: 'running', labels: {} });
