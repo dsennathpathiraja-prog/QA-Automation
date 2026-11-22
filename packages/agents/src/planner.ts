@@ -3,6 +3,7 @@ import { titledCaseName } from './case-template';
 import { PLAYWRIGHT_TEST_PLANNER, planHeuristically, workItemTitleFromStory } from './heuristic';
 import { MAX_PLAN_SCENARIOS } from './limits';
 import { planArtifactPath, renderPlanMarkdown } from './plan-markdown';
+import { assessExplorationCoverage } from './playwright-source';
 import { planStructured } from './schemas';
 import type { PlanRequest, PlanResult, PlannerScenario, TestPlannerPort } from './types';
 
@@ -15,7 +16,18 @@ const priorityOf = (kind: PlannerScenario['kind'], raw: unknown): PlannerScenari
 
 const PLAN_SYSTEM = [
   'You are playwright-test-planner for a connector-first QA platform used by non-technical users.',
-  'Read the work item story, Description paths, acceptance criteria, and exploration findings.',
+  'STEP 1 — Identify scenarios FIRST from the work item title, description, and acceptance criteria.',
+  'UI/code exploration only supplies selectors or secondary paths when the explored surface matches the scenario.',
+  'Each scenario must be a concrete, distinct user goal or data path',
+  '(happy path, validation/negative, edge amounts, template fields, notification content, etc.).',
+  'Do NOT invent title-only variants of one scenario (e.g. "happy path for Title" vs "repeat path for Title").',
+  'If Explore UI returns near-duplicate snapshots of the same URL for different AC labels',
+  '(e.g. every AC lands on /shop with the same catalog), do NOT invent distinct UI scenarios from those findings.',
+  'Prefer flagging weak explore coverage over fabricating Greeting/Title/template tests on a catalog page.',
+  'If only a shop/catalog host is reachable for a notification/email-template work item,',
+  'write honest order-placement → notification-trigger scenarios grounded in that shop UI + WI constraints —',
+  'not fake assertions of email template fields that were never explored.',
+  'STEP 2 — Plan test cases mapped 1:1 to those scenarios.',
   'Produce a solid, high-volume set of Positive, Negative, and Edge scenarios.',
   'Do NOT stop at one positive + one negative + one edge per criterion.',
   'Each acceptance criterion and each distinct Description path should yield multiple scenarios',
@@ -24,7 +36,7 @@ const PLAN_SYSTEM = [
   'Names must start with "Positive:", "Negative:", or "Edge:" and include the work item TITLE after the kind',
   '(e.g. "Positive: PayNSure checkout — saved card is listed"), not only the work item id.',
   'Steps and expected results must reference the criterion or path text — never generic placeholders alone.',
-  'Use exploration findings to name real pages and controls when present.',
+  'Use exploration findings to name real pages, URLs, and controls only when the surface matches.',
   'Reply with JSON only matching the schema.',
 ].join(' ');
 
@@ -40,6 +52,11 @@ export function createLlmTestPlanner(gateway: LlmGateway | undefined): TestPlann
   return {
     async plan(input: PlanRequest): Promise<PlanResult> {
       const workItemTitle = workItemTitleFromStory(input.story);
+      const coverage = assessExplorationCoverage({
+        findings: input.findings,
+        story: input.story,
+        criteria: input.criteria,
+      });
       const criteriaBlock = input.criteria.length > 0
         ? input.criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')
         : '(no separate acceptance criteria — derive scenarios from the story Description)';
@@ -51,8 +68,12 @@ export function createLlmTestPlanner(gateway: LlmGateway | undefined): TestPlann
             `Work item: ${input.workItem}`,
             workItemTitle ? `Work item title: ${workItemTitle}` : 'Work item title: (not provided — use the story headline)',
             `Application: ${input.application}`,
+            'Identify distinct scenarios first from WI description/AC, then map one plan entry per scenario.',
             'Write many Positive / Negative / Edge scenarios covering each acceptance criterion and Description path.',
             'Put the work item title in every scenario name after the kind prefix.',
+            coverage.warning
+              ? `Explore coverage warning: ${coverage.warning}`
+              : 'When findings include a matching URL or controls, put them in Steps.',
             'Acceptance criteria:',
             criteriaBlock,
             input.findings ? `Exploration findings:\n${input.findings}` : 'Exploration findings: (none yet)',
@@ -83,14 +104,17 @@ export function createLlmTestPlanner(gateway: LlmGateway | undefined): TestPlann
         criteria: input.criteria,
         findings: input.findings,
         source: 'model',
+        exploreWarning: coverage.warning || undefined,
       });
       const planArtifact = planArtifactPath(input.workItem, input.application);
+      const warn = coverage.warning ? ` ${coverage.warning}` : '';
       return {
-        summary: `${PLAYWRIGHT_TEST_PLANNER} wrote ${scenarios.length} scenario${scenarios.length === 1 ? '' : 's'} for ${input.workItem} with a model${result.repaired ? ' (repaired once)' : ''}. Plan artifact ${planArtifact}.`,
+        summary: `${PLAYWRIGHT_TEST_PLANNER} wrote ${scenarios.length} scenario${scenarios.length === 1 ? '' : 's'} for ${input.workItem} with a model${result.repaired ? ' (repaired once)' : ''}. Plan artifact ${planArtifact}.${warn}`,
         scenarios,
         planMarkdown,
         planArtifact,
         source: 'model',
+        exploreWarning: coverage.warning || undefined,
       };
     },
   };

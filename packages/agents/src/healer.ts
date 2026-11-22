@@ -1,12 +1,11 @@
 import type { LlmGateway } from '@qa/llm';
 import { PLAYWRIGHT_TEST_HEALER } from './heuristic';
 import { MAX_HEAL_CASES } from './limits';
+import { buildMeaningfulPlaywrightSource, isStubPlaywrightSource } from './playwright-source';
 import { healStructured } from './schemas';
-import type { GeneratedPlaywrightCase, HealRequest, HealResult, TestHealerPort } from './types';
+import type { GeneratedPlaywrightCase, HealRequest, HealResult, PlannerScenario, TestHealerPort } from './types';
 
-const clip = (value: string, max: number) => value.trim().slice(0, max);
-
-/** Detect obviously broken generated Playwright stubs that the healer can repair offline. */
+/** Detect obviously broken or stub-only generated Playwright that the healer can repair. */
 export function isBrokenPlaywrightCase(item: GeneratedPlaywrightCase): string | undefined {
   const src = item.steps ?? '';
   if (!src.includes('@playwright/test')) return 'missing @playwright/test import';
@@ -16,26 +15,40 @@ export function isBrokenPlaywrightCase(item: GeneratedPlaywrightCase): string | 
     return 'forbidden import or secret in generated source';
   }
   if (src.trim().length < 40) return 'source too short to be a real test';
+  if (isStubPlaywrightSource(src)) {
+    return 'stub-only body visibility assertion — needs scenario-specific steps';
+  }
   return undefined;
 }
 
-function repairStub(item: GeneratedPlaywrightCase, reason: string): GeneratedPlaywrightCase {
-  const name = item.name.replace(/'/g, "\\'");
-  const source = [
-    "import { test, expect } from '@playwright/test';",
-    '',
-    `test('${name}', async ({ page }) => {`,
-    "  await page.goto('/');",
-    `  // Healed (${reason}): ${clip(item.name, 160)}`,
-    `  // Expected: ${clip(item.expected, 160)}`,
-    "  await expect(page.locator('body')).toBeVisible();",
-    '});',
-    '',
-  ].join('\n');
-  return { ...item, steps: source, validationSteps: item.validationSteps };
+function scenarioFromCase(item: GeneratedPlaywrightCase): PlannerScenario {
+  return {
+    name: item.name,
+    kind: item.kind,
+    priority: item.priority,
+    criterion: item.name,
+    steps: item.validationSteps?.map((s) => s.action).join(' ') || item.expected,
+    expected: item.expected,
+  };
 }
 
-/** Offline healer: rewrite clearly broken platform-owned stubs; leave healthy cases alone. */
+function repairStub(item: GeneratedPlaywrightCase, reason: string, findings?: string, application = 'app'): GeneratedPlaywrightCase {
+  const source = buildMeaningfulPlaywrightSource({
+    scenario: scenarioFromCase(item),
+    application,
+    findings,
+    index: 0,
+  });
+  const healed = source.includes('// Steps:')
+    ? source.replace('// Steps:', `// Healed (${reason}):`).replace(
+      `// ${item.kind} (${item.priority}):`,
+      `// ${item.kind} (${item.priority}) healed:`,
+    )
+    : source;
+  return { ...item, steps: healed, validationSteps: item.validationSteps };
+}
+
+/** Offline healer: rewrite clearly broken / stub-only platform-owned cases; leave healthy cases alone. */
 export function healHeuristically(input: HealRequest): HealResult {
   const healed: GeneratedPlaywrightCase[] = [];
   let fixed = 0;
@@ -43,7 +56,7 @@ export function healHeuristically(input: HealRequest): HealResult {
     const failure = input.failures?.find((f) => f.testId === item.testId || f.name === item.name);
     const reason = failure?.error || isBrokenPlaywrightCase(item);
     if (reason) {
-      healed.push(repairStub(item, reason));
+      healed.push(repairStub(item, reason, input.findings, input.application));
       fixed += 1;
     } else {
       healed.push(item);
@@ -63,7 +76,10 @@ const HEAL_SYSTEM = [
   'You are playwright-test-healer for a connector-first QA platform.',
   'You may rewrite Playwright tests that live in the platform-owned workspace only.',
   'Never suggest commits, pushes, or edits to a connected source repository.',
-  'Fix broken imports, missing test/expect calls, and forbidden IO; keep @playwright/test only.',
+  'Fix broken imports, missing test/expect calls, forbidden IO, and stub-only body visibility assertions.',
+  'Every repaired test must use real navigation, interactions, and scenario-specific assertions',
+  'from exploration findings when present — never expect(page.locator("body")).toBeVisible() alone.',
+  'Keep @playwright/test only.',
   'Reply with JSON only matching the schema.',
 ].join(' ');
 
@@ -96,6 +112,7 @@ export function createLlmTestHealer(gateway: LlmGateway | undefined): TestHealer
             `Work item: ${input.workItem}`,
             `Application: ${input.application}`,
             'Repair each broken Playwright test. Return the full fixed cases array.',
+            'Do not return body-only stubs.',
             payload,
           ].join('\n'),
           context: [
@@ -112,9 +129,13 @@ export function createLlmTestHealer(gateway: LlmGateway | undefined): TestHealer
         const updated = byName.get(item.name);
         if (!updated) return item;
         fixed += 1;
+        const candidate = updated.steps.includes('@playwright/test') ? updated.steps : '';
+        const steps = candidate && !isStubPlaywrightSource(candidate)
+          ? candidate
+          : repairStub(item, 'model omitted meaningful steps', input.findings, input.application).steps;
         return {
           ...item,
-          steps: updated.steps.includes('@playwright/test') ? updated.steps : repairStub(item, 'model omitted import').steps,
+          steps,
           expected: updated.expected || item.expected,
           kind: updated.kind ?? item.kind,
           priority: updated.priority ?? item.priority,

@@ -49,6 +49,8 @@ describe('requirement validation stages', () => {
     expect(cases[0]?.workItem).toBe('QA-1');
     expect(cases[0]?.steps).toMatch(/@playwright\/test/);
     expect(cases[0]?.reference).toMatch(/^QAP-/);
+    expect(cases.every((c) => !/locator\(['"]body['"]\)/.test(c.steps))).toBe(true);
+    expect(cases.some((c) => /getByRole|getByText/.test(c.steps))).toBe(true);
 
     const healed = runFlowStep({
       id: 'heal_tests',

@@ -408,9 +408,15 @@ export function runFlowStep(step: FlowStep): FlowResult {
     case 'rv.consolidate-findings': {
       const ui = text(step.prior.explore_ui?.findings);
       const code = text(step.prior.explore_code?.findings);
-      const combined = [ui && `UI: ${ui}`, code && `Source: ${code}`].filter(Boolean).join('\n') || 'no exploration findings';
+      const codeRelevant = step.prior.explore_code?.relevant !== false
+        && !/Code explore not relevant|path-only|application-only/i.test(code);
+      const uiNote = ui ? `UI: ${ui}` : '';
+      const codeNote = code
+        ? (codeRelevant ? `Source: ${code}` : `Source (ignored — not relevant for scenarios): ${code.slice(0, 240)}`)
+        : '';
+      const combined = [uiNote, codeNote].filter(Boolean).join('\n') || 'no exploration findings';
       return {
-        summary: `Combined the story, the UI note, and the source note for the planner. ${criteria.length || 1} acceptance cue${(criteria.length || 1) === 1 ? '' : 's'} go forward.`,
+        summary: `Combined the story, the UI note, and the source note for the planner. ${criteria.length || 1} acceptance cue${(criteria.length || 1) === 1 ? '' : 's'} go forward.${code && !codeRelevant ? ' Code explore marked not relevant.' : ''}`,
         outputs: { workItem, findings: combined, combined, acceptanceCriteria: criteria },
       };
     }

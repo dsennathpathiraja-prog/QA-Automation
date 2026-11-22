@@ -1,13 +1,36 @@
 import { describe, expect, it } from 'vitest';
 import { PlatformError } from '@qa/domain';
-import { createCodeExplorer, displayFilePath, isExplorableSourcePath, isHumanFilePath, searchQueriesFor, sourceRepoPortFromInvoker } from '../src/code-explorer';
+import {
+  createCodeExplorer,
+  displayFilePath,
+  isExplorableSourcePath,
+  isHumanFilePath,
+  isMeaningfulCodeExcerpt,
+  searchQueriesFor,
+  sourceRepoPortFromInvoker,
+} from '../src/code-explorer';
 import type { SourceRepoPort } from '../src/types';
 
 describe('searchQueriesFor', () => {
-  it('extracts tokens from criteria and drops stop words', () => {
-    expect(searchQueriesFor('PayNSure', ['The saved card is listed on the payment page'])).toEqual(
-      expect.arrayContaining(['paynsure', 'saved', 'card', 'listed', 'payment', 'page']),
-    );
+  it('extracts tokens from criteria and drops stop words and product name', () => {
+    const q = searchQueriesFor('PayNSure', ['The saved card is listed on the payment page']);
+    expect(q).toEqual(expect.arrayContaining(['saved', 'card', 'listed', 'payment', 'page']));
+    expect(q).not.toContain('paynsure');
+  });
+
+  it('derives escrow/notification terms from story — never defaults to paynsure', () => {
+    const q = searchQueriesFor({
+      application: 'PayNSure',
+      workItemTitle: 'Order Amount Placement in Escrow Notification Template',
+      story: 'Email subject held in escrow. Paid Amount. Confirm Delivery.',
+      criteria: ['Greeting', 'Paid Amount'],
+    });
+    expect(q.some((t) => /escrow|notification|paid|amount|delivery|greeting/i.test(t))).toBe(true);
+    expect(q.every((t) => t.toLowerCase() !== 'paynsure')).toBe(true);
+  });
+
+  it('returns empty when only application name is available', () => {
+    expect(searchQueriesFor({ application: 'PayNSure', criteria: [] })).toEqual([]);
   });
 });
 
@@ -25,6 +48,12 @@ describe('human file paths', () => {
     expect(isExplorableSourcePath('docs/api/Client.html')).toBe(false);
     expect(isExplorableSourcePath('html-sdk/readme.md')).toBe(false);
   });
+
+  it('rejects empty path-only excerpts', () => {
+    expect(isMeaningfulCodeExcerpt('')).toBe(false);
+    expect(isMeaningfulCodeExcerpt('src/a.ts')).toBe(false);
+    expect(isMeaningfulCodeExcerpt('export function renderEscrowEmail() { return subject; }')).toBe(true);
+  });
 });
 
 describe('code explorer', () => {
@@ -36,7 +65,7 @@ describe('code explorer', () => {
     })).rejects.toMatchObject({ errorClass: 'denied' });
   });
 
-  it('searches the bound repo and records file excerpts', async () => {
+  it('searches the bound repo with story terms and records file excerpts', async () => {
     const calls: string[] = [];
     const source: SourceRepoPort = {
       async search({ query }) {
@@ -60,10 +89,47 @@ describe('code explorer', () => {
       maxFiles: 4,
     });
     expect(out.source).toBe('repo');
+    expect(out.relevant).toBe(true);
     expect(out.details[0]?.path).toBe('src/pay/CardList.tsx');
     expect(out.findings).toMatch(/CardList/);
     expect(out.summary).toMatch(/Visited files: src\/pay\/CardList\.tsx/);
     expect(calls.some((c) => c.startsWith('search:'))).toBe(true);
+    expect(calls.every((c) => c !== 'search:PayNSure' && c !== 'search:paynsure')).toBe(true);
+  });
+
+  it('refuses application-only query when story has no tokens', async () => {
+    const source: SourceRepoPort = {
+      async search() { return { items: [] }; },
+      async listTree() { return { entries: [] }; },
+      async readFile({ path }) { return { path, content: '', truncated: false }; },
+    };
+    const out = await createCodeExplorer(source).explore({
+      application: 'PayNSure',
+      criteria: [],
+    });
+    expect(out.relevant).toBe(false);
+    expect(out.findings).toMatch(/not relevant|application-only/i);
+  });
+
+  it('marks path-only empty excerpts as not relevant', async () => {
+    const source: SourceRepoPort = {
+      async search() {
+        return { items: [{ path: 'src/modal/paynsure-sdk.ts', snippet: '' }] };
+      },
+      async listTree() { return { entries: [] }; },
+      async readFile({ path }) {
+        return { path, content: '', truncated: false };
+      },
+    };
+    const out = await createCodeExplorer(source).explore({
+      application: 'PayNSure',
+      story: 'Escrow notification template Paid Amount Confirm Delivery',
+      workItemTitle: 'Order Amount Placement in Escrow Notification Template',
+      criteria: ['Paid Amount'],
+    });
+    expect(out.relevant).toBe(false);
+    expect(out.details).toEqual([]);
+    expect(out.findings).toMatch(/path-only|not relevant/i);
   });
 
   it('falls back to tree listing when search returns nothing', async () => {
@@ -73,16 +139,16 @@ describe('code explorer', () => {
         return { entries: [{ path: 'README.md', type: 'file' }, { path: 'src', type: 'dir' }] };
       },
       async readFile({ path }) {
-        return { path, content: '# Shop checkout', truncated: false };
+        return { path, content: '# Shop checkout escrow notification', truncated: false };
       },
     };
     const out = await createCodeExplorer(source).explore({
       application: 'checkout',
-      criteria: [],
+      criteria: ['escrow notification'],
     });
     expect(out.source).toBe('repo');
-    expect(out.details).toEqual([{ path: 'README.md', excerpt: '# Shop checkout' }]);
-    expect(out.summary).toMatch(/Visited files: README\.md/);
+    expect(out.details[0]?.path).toBe('README.md');
+    expect(out.relevant).toBe(true);
   });
 
   it('ignores commit SHAs from search and lists real files instead', async () => {
