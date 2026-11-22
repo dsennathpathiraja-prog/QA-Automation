@@ -167,16 +167,17 @@ describe('work-item Playwright run', () => {
     expect(out.results[0]).toMatchObject({ status: 'Passed', name: 'Login' });
     expect(launcher.specOf('runner-1').bundleRef).toBe('work-item');
     expect(launcher.specOf('runner-1').env?.QA_TARGET_URL).toBe('https://qa.shop.example/app');
-    expect(launcher.specOf('runner-1').env?.QA_CASES_FILE).toBe('/tmp/qa-cases.json');
     expect(launcher.specOf('runner-1').env?.QA_CASES_JSON).toBeUndefined();
-    expect(launcher.specOf('runner-1').inlineFiles?.[0]?.path).toBe('/tmp/qa-cases.json');
-    expect(JSON.parse(launcher.specOf('runner-1').inlineFiles![0]!.content)).toEqual([
+    expect(launcher.specOf('runner-1').env?.QA_CASES_FILE).toBeUndefined();
+    expect(launcher.specOf('runner-1').inlineFiles).toBeUndefined();
+    expect(launcher.specOf('runner-1').env?.QA_CASES_PARTS).toBe('1');
+    expect(JSON.parse(launcher.specOf('runner-1').env!.QA_CASES_P0!)).toEqual([
       { id: '33333333-3333-4333-8333-333333333333', name: 'Login', steps: ['Open page', 'Capture evidence'] },
     ]);
     expect(launcher.specOf('runner-1').limits.pids).toBeGreaterThanOrEqual(512);
   });
 
-  it('packs hundreds of cases into inlineFiles under the env size cap', async () => {
+  it('packs hundreds of cases into chunked env vars under the 4096-byte cap', async () => {
     const launcher = new FakeRunnerLauncher();
     const realLaunch = launcher.launch.bind(launcher);
     launcher.launch = async (spec, opts) => {
@@ -212,9 +213,16 @@ describe('work-item Playwright run', () => {
     });
     const spec = launcher.specOf('runner-1');
     expect(spec.env?.QA_CASES_JSON).toBeUndefined();
-    expect(spec.inlineFiles?.[0]?.content.length).toBeGreaterThan(10_000);
-    expect(spec.inlineFiles?.[0]?.content.length).toBeLessThan(2 * 1024 * 1024);
-    expect(JSON.parse(spec.inlineFiles![0]!.content)).toHaveLength(200);
+    expect(spec.inlineFiles).toBeUndefined();
+    const parts = Number(spec.env?.QA_CASES_PARTS);
+    expect(parts).toBeGreaterThan(1);
+    let raw = '';
+    for (let i = 0; i < parts; i += 1) {
+      const piece = spec.env?.[`QA_CASES_P${i}`];
+      expect(piece!.length).toBeLessThanOrEqual(4000);
+      raw += piece;
+    }
+    expect(JSON.parse(raw)).toHaveLength(200);
     expect(compactCasesForRunner(many)[0]?.steps).toEqual(['Open page', 'Capture evidence']);
     expect(out.results).toHaveLength(200);
     expect(out.results[0]).toMatchObject({ testCaseId: firstId, status: 'Passed' });

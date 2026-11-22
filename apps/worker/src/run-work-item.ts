@@ -1,8 +1,5 @@
-import { PlatformError, RUNNER_INLINE_FILES_MAX_BYTES, RUNNER_MAX, type RunnerLauncher, type RunnerSpec } from '@qa/domain';
+import { PlatformError, RUNNER_INLINE_FILES_MAX_BYTES, RUNNER_MAX, chunkEnvValue, type RunnerLauncher, type RunnerSpec } from '@qa/domain';
 import { isPlaceholderScreenshot, type CaseRunStatus, type CaseStepProgress, type TestCaseService, type WorkItemRunRecord } from '@qa/application';
-
-/** Injected into the runner via launcher putFiles (tmpfs) — not env (4096-byte cap). */
-const CASES_FILE = '/tmp/qa-cases.json';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const NO_RESULTS = 'The runner finished without case results.';
@@ -225,6 +222,14 @@ async function viaRunner(o: {
       `This work item’s case list is ${casesBytes} bytes and exceeds the ${RUNNER_INLINE_FILES_MAX_BYTES} byte runner input limit. Split the collection or shorten case names, then re-run.`,
     );
   }
+  // Chunk across env vars — Docker put-archive into /tmp fails (400) with ReadonlyRootfs before start.
+  let casesEnv: Record<string, string>;
+  try {
+    casesEnv = chunkEnvValue('QA_CASES', casesJson);
+  } catch (e) {
+    if (e instanceof PlatformError) throw e;
+    throw new PlatformError('validation', e instanceof Error ? e.message : 'Case list could not be packed for the runner.');
+  }
   // Per-case Playwright open+shot; scale wall clock for large prepared sets (hundreds of cases).
   const timeoutSeconds = Math.min(RUNNER_MAX.timeoutSeconds, Math.max(180, 90 + o.cases.length * 25));
   const spec: RunnerSpec = {
@@ -238,9 +243,8 @@ async function viaRunner(o: {
     allowedHosts: [target.port ? `${host}:${target.port}` : host],
     env: {
       QA_TARGET_URL: o.url,
-      QA_CASES_FILE: CASES_FILE,
+      ...casesEnv,
     },
-    inlineFiles: [{ path: CASES_FILE, content: casesJson }],
   };
   const handle = await launcher.launcher.launch(spec);
   const deadline = Date.now() + (spec.limits.timeoutSeconds + 10) * 1000;

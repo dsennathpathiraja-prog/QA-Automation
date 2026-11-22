@@ -20,8 +20,31 @@ const MAX_SCREENSHOT_B64 = 48_000;
 
 const finish = (code) => process.exit(code);
 
-/** Prefer QA_CASES_FILE (large sets via launcher inlineFiles); fall back to QA_CASES_JSON for older callers. */
+/**
+ * Load cases from chunked env (QA_CASES_PARTS + QA_CASES_P0…).
+ * Fallbacks: QA_CASES_FILE (legacy putFiles) then single QA_CASES_JSON.
+ */
 async function loadCases() {
+  const parts = Number(process.env.QA_CASES_PARTS ?? '');
+  if (Number.isInteger(parts) && parts >= 0 && process.env.QA_CASES_PARTS !== undefined && process.env.QA_CASES_PARTS !== '') {
+    if (parts === 0) return [];
+    let raw = '';
+    for (let i = 0; i < parts; i += 1) {
+      const piece = process.env[`QA_CASES_P${i}`];
+      if (piece === undefined) {
+        console.log(`cases chunk QA_CASES_P${i} missing`);
+        return [];
+      }
+      raw += piece;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      console.log(`cases chunks invalid JSON: ${e instanceof Error ? e.message : 'error'}`);
+      return [];
+    }
+  }
   const file = process.env.QA_CASES_FILE;
   if (file) {
     try {
