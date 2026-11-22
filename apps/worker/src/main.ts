@@ -27,10 +27,12 @@ import { ConnectorHealthScheduler } from './health-scheduler';
 import { WorkerLoop } from './loop';
 import { checkReachability } from './reachability';
 import { enrichStoryFromConnector } from './read-story';
+import { performExecuteTests } from './execute-tests';
 import { performResolveAutomation } from './resolve-automation';
 import { performRequirementStep } from './requirement-agents';
 import { launcherDown, runReachabilityCheck } from './runner-check';
 import { launcherDown as workItemLauncherDown, processWorkItemExecutions, runWorkItemCases } from './run-work-item';
+import { performSelectEnvironment } from './select-environment';
 import { squashIdFromSummary, syncCaseResultsToSquash } from './sync-execution';
 
 const env = process.env;
@@ -208,6 +210,65 @@ const loop = new WorkerLoop({
       perform: async (step) => {
         if (step.type === 'rg.resolve-automation') {
           return performResolveAutomation(step, automation);
+        }
+        if (step.type === 'rg.select-environment') {
+          return performSelectEnvironment(
+            step,
+            environments
+              ? async (id) => {
+                  const row = await environments.get(id);
+                  if (!row?.applicationUrl) return undefined;
+                  return { id: row.id, name: row.name, applicationUrl: row.applicationUrl };
+                }
+              : undefined,
+          );
+        }
+        if (step.type === 'rg.execute-tests') {
+          return performExecuteTests(step, {
+            testCases,
+            resolveEnvironment: environments
+              ? async (id) => {
+                  const row = await environments.get(id);
+                  if (!row?.applicationUrl) return undefined;
+                  return { id: row.id, name: row.name, applicationUrl: row.applicationUrl };
+                }
+              : undefined,
+            runCases: async ({ run, cases, url, onProgress }) => {
+              const launcherUrl = env.RUNNER_LAUNCHER_URL;
+              const launcherToken = env.RUNNER_LAUNCHER_TOKEN_FILE ? readSecretFile(env.RUNNER_LAUNCHER_TOKEN_FILE) : env.RUNNER_LAUNCHER_TOKEN;
+              if (!launcherUrl || !launcherToken) {
+                return runWorkItemCases({ run, cases, url, onProgress });
+              }
+              try {
+                const launcherHost = new URL(launcherUrl);
+                const http = new HardenedHttpClient({
+                  egress: new EgressPolicy({
+                    rules: [{ hostPattern: launcherHost.hostname, purpose: 'platform', internal: true, allowHttp: launcherHost.protocol === 'http:', allowLoopback: launcherHost.hostname === 'localhost' || launcherHost.hostname === '127.0.0.1' }],
+                    profile,
+                    platformEnv,
+                  }),
+                  allowedMethods: ['GET', 'POST'],
+                  timeoutMs: 60_000,
+                  maxBodyBytes: 32 * 1024 * 1024,
+                });
+                const launcher = new RemoteRunnerLauncher({ baseUrl: launcherUrl, token: () => launcherToken, http });
+                const image = await launcher.image();
+                return await runWorkItemCases({
+                  run,
+                  cases,
+                  url,
+                  onProgress,
+                  launcher: { launcher, image, logs: (id) => launcher.logs(id) },
+                });
+              } catch (e) {
+                if (workItemLauncherDown(e) || launcherDown(e)) {
+                  return runWorkItemCases({ run, cases, url, onProgress });
+                }
+                if (e instanceof PlatformError) throw e;
+                throw new PlatformError('internal', 'The runner could not be started.');
+              }
+            },
+          });
         }
         let params = step.params;
         if (step.type === 'rv.read-user-story') {

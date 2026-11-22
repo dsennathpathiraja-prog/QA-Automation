@@ -470,3 +470,29 @@ export type ResolvedAutomation = z.infer<typeof ResolvedAutomationSchema>;
 export type NotAutomatedCase = z.infer<typeof NotAutomatedCaseSchema>;
 export type RegressionResolveRequest = z.infer<typeof RegressionResolveRequest>;
 export type RegressionResolveResponse = z.infer<typeof RegressionResolveResponse>;
+
+/** Phase 9 E2 — compact `rg.execute-tests` step outputs (screenshots live on evidenceExecutionId). */
+export const RegressionCaseResultSchema = z.object({
+  testCaseId: z.string(),
+  name: z.string(),
+  status: z.enum(['Queued', 'Running', 'Passed', 'Failed', 'Blocked', 'Skipped']),
+  message: z.string(),
+  hasScreenshot: z.boolean().optional(),
+  squashCaseId: z.string().optional(),
+  squashExecutionId: z.string().optional(),
+  steps: z.array(z.object({ name: z.string(), status: z.enum(['Queued', 'Running', 'Passed', 'Failed', 'Blocked', 'Skipped']) })).optional(),
+});
+export const RegressionExecuteResponse = z.object({
+  results: z.array(RegressionCaseResultSchema),
+  notAutomated: z.array(NotAutomatedCaseSchema),
+  viaRunner: z.boolean(),
+  executed: z.number().int().nonnegative(),
+  evidenceExecutionId: z.string().uuid().optional(),
+  environment: z.object({
+    id: z.string(),
+    name: z.string(),
+    applicationUrl: z.string(),
+  }).optional(),
+});
+export type RegressionCaseResult = z.infer<typeof RegressionCaseResultSchema>;
+export type RegressionExecuteResponse = z.infer<typeof RegressionExecuteResponse>;

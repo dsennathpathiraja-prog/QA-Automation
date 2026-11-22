@@ -8,7 +8,7 @@ Regression may run only **approved** Squash↔platform script mappings. Draft, u
 |------|------|
 | `GET /api/v1/automation/resolve?squashCaseId=` | Seed lookup (draft or approved) — Automation Mapping |
 | `POST /api/v1/automation/resolve-regression` | Regression prep: body `{ "squashCaseIds": ["…"] }` → `resolved` + `notAutomated` |
-| Worker step `rg.resolve-automation` | Same approved-only rules; outputs `{ resolved, notAutomated }` for later `rg.execute-tests` |
+| Worker step `rg.resolve-automation` | Same approved-only rules; outputs `{ resolved, notAutomated }` for [`rg.execute-tests`](./phase9-e2-regression-execute.md) |
 
 **Not Automated reasons:** `mapping-unapproved` | `no-mapping` | `asset-missing`
 

@@ -210,12 +210,15 @@ Optional browser MCP (Explore UI / connector Test connection) still uses `--prof
 
 After cases are published to Squash, the worker seeds a **draft** automation asset and Squash↔script mapping. Open **Automation Mapping** (QA Lead / Engineer), **Approve** a draft, then **Resolve** a Squash case id — or call `GET /api/v1/automation/resolve?squashCaseId=<id>`. For Regression prep (approved-only vs Not Automated), use **Preview Regression resolve** or `POST /api/v1/automation/resolve-regression`. Details: [`docs/phase8-e6-regression-seed.md`](../../../docs/phase8-e6-regression-seed.md), [`docs/phase9-e1-approved-resolve.md`](../../../docs/phase9-e1-approved-resolve.md).
 
+**Regression execute (Phase 9 E2):** after approve, a Regression workflow’s `rg.execute-tests` step runs only approved assets via the Playwright runner (live progress + screenshots on Executions as `rg:<runId>`). Draft/unmapped stay Skipped / Not Automated — no explore or generate. See [`docs/phase9-e2-regression-execute.md`](../../../docs/phase9-e2-regression-execute.md).
+
 PowerShell-safe check:
 
 ```powershell
 pnpm check
 docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
 # Sign in as trial-lead → Automation Mapping → Approve → Resolve
+# Regression run → Executions → rg:<runId> for evidence
 ```
 
 ## Stop or reset

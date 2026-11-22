@@ -143,8 +143,9 @@ export function AutomationMapping() {
 
       <Card label="Regression prep (approved-only)">
         <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
-          Preview what <code className="text-xs">rg.resolve-automation</code> will run before execute. Only approved mappings are resolved;
-          draft, unmapped, or missing assets are Not Automated (
+          Preview what <code className="text-xs">rg.resolve-automation</code> will hand to <code className="text-xs">rg.execute-tests</code>.
+          Only approved mappings run (Playwright + screenshots on Executions as <code className="text-xs">rg:&lt;runId&gt;</code>);
+          draft, unmapped, or missing assets are Not Automated / Skipped (
           <code className="text-xs">mapping-unapproved</code> | <code className="text-xs">no-mapping</code> | <code className="text-xs">asset-missing</code>
           ). Nothing is generated or explored.
         </p>
