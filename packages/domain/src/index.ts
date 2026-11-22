@@ -5,4 +5,5 @@ export * from './identity';
 export * from './ids';
 export * from './runner';
 export * from './container-engine';
+export * from './tar';
 export * from './hosts';

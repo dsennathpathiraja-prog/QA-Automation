@@ -62,6 +62,25 @@ describe('runner launcher service', () => {
     expect([...engine.containers.values()][0]!.state.status).toBe('running');
   });
 
+  it('injects inlineFiles into the container before start', async () => {
+    const engine = new FakeContainerEngine();
+    const app = buildLauncherApp(deps(engine));
+    const cases = JSON.stringify([{ id: 'a', name: 'Login', steps: ['Open page', 'Capture evidence'] }]);
+    const r = await app.inject({
+      method: 'POST',
+      url: '/v1/runners',
+      headers: auth,
+      payload: sampleRunnerSpec({
+        env: { QA_CASES_FILE: '/tmp/qa-cases.json' },
+        inlineFiles: [{ path: '/tmp/qa-cases.json', content: cases }],
+      }),
+    });
+    expect(r.statusCode).toBe(201);
+    const id = r.json().id as string;
+    expect(engine.files.get(id)).toEqual([{ path: '/tmp/qa-cases.json', content: cases }]);
+    expect([...engine.containers.values()][0]!.state.status).toBe('running');
+  });
+
   it('returns the existing runner for a repeated runId, also when creation races', async () => {
     const engine = new FakeContainerEngine();
     const app = buildLauncherApp(deps(engine));

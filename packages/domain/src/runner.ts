@@ -31,7 +31,16 @@ export interface RunnerSpec {
   /** Plain, non-secret settings only. */
   env?: Record<string, string>;
   labels?: Record<string, string>;
+  /**
+   * Small text files the launcher writes under `/tmp` before start (tmpfs). Used for large case lists
+   * that cannot fit in env (Docker/env caps). Paths must be `/tmp/<name>` only — no host mounts.
+   */
+  inlineFiles?: Array<{ path: string; content: string }>;
 }
+
+/** Max total UTF-8 bytes for all inlineFiles (cases JSON for hundreds of work-item cases). */
+export const RUNNER_INLINE_FILES_MAX_BYTES = 2 * 1024 * 1024;
+const INLINE_TMP_PATH = /^\/tmp\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 export type RunnerState = 'starting' | 'running' | 'exited' | 'failed' | 'stopped' | 'unknown';
 
@@ -89,6 +98,23 @@ export function validateRunnerSpec(spec: RunnerSpec): string[] {
   }
   for (const k of Object.keys(spec.labels ?? {})) {
     if (k.startsWith(RESERVED_LABEL_PREFIX)) p.push(`label ${k} uses the reserved prefix ${RESERVED_LABEL_PREFIX}`);
+  }
+  const files = spec.inlineFiles ?? [];
+  if (files.length > 8) p.push('inlineFiles may list at most 8 files');
+  let inlineBytes = 0;
+  const seen = new Set<string>();
+  for (const file of files) {
+    if (!file || typeof file.path !== 'string' || typeof file.content !== 'string') {
+      p.push('inlineFiles entries need path and content strings');
+      continue;
+    }
+    if (!INLINE_TMP_PATH.test(file.path)) p.push(`inlineFiles path "${file.path}" must be /tmp/<safe-name>`);
+    if (seen.has(file.path)) p.push(`inlineFiles path "${file.path}" is duplicated`);
+    seen.add(file.path);
+    inlineBytes += Buffer.byteLength(file.content, 'utf8');
+  }
+  if (inlineBytes > RUNNER_INLINE_FILES_MAX_BYTES) {
+    p.push(`inlineFiles total ${inlineBytes} bytes exceeds the ${RUNNER_INLINE_FILES_MAX_BYTES} byte limit; split the work item or shorten case payloads`);
   }
   return p;
 }

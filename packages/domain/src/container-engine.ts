@@ -31,6 +31,11 @@ export interface ContainerEngine {
   inspectImage(ref: string): Promise<{ id: string } | undefined>;
   /** The runner's own stdout and stderr, as text. */
   logs(id: string): Promise<string>;
+  /**
+   * Writes text files into the container before start (Docker archive API). Paths are absolute inside
+   * the container; the launcher only allows `/tmp/...` via RunnerSpec validation.
+   */
+  putFiles?(id: string, files: Array<{ path: string; content: string }>): Promise<void>;
 }
 
 export interface TranslateOptions {
