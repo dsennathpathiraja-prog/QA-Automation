@@ -525,6 +525,36 @@ export class TestCaseService {
     })));
   }
 
+  /**
+   * Phase 9 E2 — open an Executions row for Regression evidence (live progress + screenshots).
+   * Does not require platform test-case library rows; case ids are asset UUIDs (or synthetic).
+   */
+  async beginRegressionEvidenceRun(input: {
+    label: string;
+    environmentId: string;
+    environmentName: string;
+    cases: Array<{ testCaseId: string; name: string; steps?: string; message?: string; status?: CaseRunStatus }>;
+  }) {
+    const label = this.summary(input.label) || 'rg';
+    const row = await this.d.cases.insertWorkItemRun({
+      id: randomUUID(),
+      workItem: label,
+      environmentId: input.environmentId,
+      environmentName: input.environmentName,
+      caseCount: input.cases.length,
+    });
+    await this.d.cases.replaceCaseResults(row.id, input.cases.map((c) => ({
+      id: randomUUID(),
+      testCaseId: c.testCaseId,
+      name: c.name,
+      status: c.status ?? 'Queued',
+      message: c.message ?? 'Waiting to run',
+      steps: stepLabelsFromText(c.steps ?? ''),
+    })));
+    const running = await this.d.cases.updateWorkItemRun(row.id, { status: 'running' });
+    return runOf(running, await this.d.cases.listCaseResults(row.id));
+  }
+
   /** Persists partial case outcomes while the runner is still going (polled by the UI). */
   async reportWorkItemProgress(id: string, results: Array<{
     testCaseId: string;
