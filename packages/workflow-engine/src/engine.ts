@@ -44,9 +44,23 @@ export interface TickOptions {
 /** Requirement validation ends when the cases are stored. Execution is a later action on the work item. */
 const AFTER_CASES = new Set(['rv.execute-tests', 'rv.sync-results', 'rv.qa-report']);
 
-const enabledSteps = (definition: unknown): { id: string; type: string }[] => {
-  const steps = (definition as { spec?: { steps?: { id?: string; type?: string; enabled?: boolean }[] } } | null)?.spec?.steps ?? [];
-  return steps.filter((s) => s && s.enabled !== false && s.id && !AFTER_CASES.has(String(s.type ?? s.id))).map((s) => ({ id: String(s.id), type: String(s.type ?? s.id) }));
+const enabledSteps = (definition: unknown): { id: string; type: string; pause?: string }[] => {
+  const steps = (definition as { spec?: { steps?: { id?: string; type?: string; enabled?: boolean; pause?: string }[] } } | null)?.spec?.steps ?? [];
+  return steps
+    .filter((s) => s && s.enabled !== false && s.id && !AFTER_CASES.has(String(s.type ?? s.id)))
+    .map((s) => ({
+      id: String(s.id),
+      type: String(s.type ?? s.id),
+      ...(typeof s.pause === 'string' ? { pause: s.pause } : {}),
+    }));
+};
+
+/** Optional human “accept plan” before generate (Phase 8 E3) — only when run param is truthy. */
+const wantsAcceptPlan = (params?: Record<string, unknown>): boolean => {
+  const raw = params?.acceptPlan;
+  if (raw === true || raw === 1) return true;
+  if (typeof raw === 'string') return /^(1|true|yes|on)$/i.test(raw.trim());
+  return false;
 };
 
 /**
@@ -100,8 +114,24 @@ export async function tick(store: EngineStore, opts: TickOptions): Promise<'busy
   }
   const next = run.stepIndex + 1;
   const done = next >= steps.length;
-  await store.save(run.id, { stepIndex: next, phase: 'pending', status: done ? 'succeeded' : 'running', ...(done ? clear : {}) });
+  const pauseForPlan = !done
+    && step.type === 'rv.generate-test-plan'
+    && (step.pause === 'boundary' || step.pause === undefined)
+    && wantsAcceptPlan(run.params);
+  await store.save(run.id, {
+    stepIndex: next,
+    phase: 'pending',
+    status: done ? 'succeeded' : pauseForPlan ? 'paused' : 'running',
+    ...((done || pauseForPlan) ? clear : {}),
+  });
   await store.append(run.id, 'step.completed', { stepId: step.id, repeated: effect === 'exists', summary, outputs });
+  if (pauseForPlan) {
+    await store.append(run.id, 'paused', {
+      reason: 'accept-plan',
+      stepId: step.id,
+      message: 'Paused after the test plan so you can review AC coverage / explore gaps. Resume to generate cases.',
+    });
+  }
   if (done) await store.append(run.id, 'succeeded', {});
   return 'busy';
 }

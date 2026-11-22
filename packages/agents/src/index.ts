@@ -1,6 +1,7 @@
 export * from './types';
 export * from './limits';
 export * from './case-template';
+export * from './case-quality-gate';
 export * from './heuristic';
 export * from './playwright-source';
 export * from './story-scenarios';

@@ -9,7 +9,7 @@ interface Run extends ClaimedRun {
 class MemoryStore implements EngineStore {
   runs: Run[] = [];
   effects: { id: string; stepId: string }[] = [];
-  events: { id: string; kind: string }[] = [];
+  events: { id: string; kind: string; payload?: Record<string, unknown> }[] = [];
   claims = 0;
   failClaims = 0;
 
@@ -44,8 +44,8 @@ class MemoryStore implements EngineStore {
     if (patch.leaseUntil !== undefined) run.leaseUntil = patch.leaseUntil;
   }
 
-  async append(id: string, kind: string) {
-    this.events.push({ id, kind });
+  async append(id: string, kind: string, payload: Record<string, unknown> = {}) {
+    this.events.push({ id, kind, payload });
   }
 }
 
@@ -105,6 +105,47 @@ describe('workflow engine chaos', () => {
     expect(store.runs[0]?.status).toBe('cancelled');
     expect(cleaned).toEqual(['run-1']);
     expect(store.effects.map((e) => e.stepId)).toEqual(['a']);
+  });
+
+  it('pauses after plan when acceptPlan is set (human accept before generate)', async () => {
+    const store = new MemoryStore();
+    store.add({
+      spec: {
+        steps: [
+          { id: 'plan', type: 'rv.generate-test-plan', pause: 'boundary' },
+          { id: 'generate_tests', type: 'rv.generate-tests' },
+        ],
+      },
+    });
+    store.runs[0]!.params = { acceptPlan: true };
+    expect(await tick(store, {
+      owner: 'w1',
+      now: at,
+      perform: async () => ({ summary: 'plan ready', outputs: { planMarkdown: '# plan' } }),
+    })).toBe('busy');
+    expect(store.runs[0]?.status).toBe('paused');
+    expect(store.runs[0]?.stepIndex).toBe(1);
+    expect(store.events.some((e) => e.kind === 'paused' && e.payload?.reason === 'accept-plan')).toBe(true);
+    expect(store.effects.map((e) => e.stepId)).toEqual(['plan']);
+  });
+
+  it('does not pause after plan when acceptPlan is unset', async () => {
+    const store = new MemoryStore();
+    store.add({
+      spec: {
+        steps: [
+          { id: 'plan', type: 'rv.generate-test-plan', pause: 'boundary' },
+          { id: 'generate_tests', type: 'rv.generate-tests' },
+        ],
+      },
+    });
+    expect(await tick(store, {
+      owner: 'w1',
+      now: at,
+      perform: async () => ({ summary: 'plan ready' }),
+    })).toBe('busy');
+    expect(store.runs[0]?.status).toBe('running');
+    expect(store.events.some((e) => e.kind === 'paused')).toBe(false);
   });
 
   it('survives a dropped database connection on the next tick', async () => {

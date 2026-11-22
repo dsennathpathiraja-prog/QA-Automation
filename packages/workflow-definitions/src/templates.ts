@@ -72,6 +72,7 @@ function rvSteps(mode: 'standard' | 'ui' | 'code' | 'both'): WfStep[] {
     step('plan', 'rv.generate-test-plan', {
       locked: true,
       dependsOn: ['consolidate'],
+      pause: 'boundary',
       config: { maxScenarios: 200 },
       inputs: {
         story: '${steps.read_story.outputs.storyArtifact}',
@@ -118,6 +119,8 @@ const rvParams: WfParameter[] = [
   { name: 'story', type: 'work-item-ref', required: true },
   { name: 'environment', type: 'environment-ref', required: false },
   { name: 'applicationName', type: 'string', required: true },
+  /** When true, the run pauses after Plan so a human can accept the MD plan before Generate. */
+  { name: 'acceptPlan', type: 'boolean', required: false, default: false },
 ];
 
 function rvConnectors(browser: boolean | 'off' | 'optional', repo: boolean | 'off' | 'optional'): WfConnector[] {

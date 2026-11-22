@@ -60,10 +60,10 @@ const STEP_HELP: Record<string, string> = {
   'rv.explore-ui': 'Opens the environment and records UI findings for the planner.',
   'rv.explore-code': 'Reads matching source files from the bound Azure DevOps Repos (preferred) or GitHub connector.',
   'rv.consolidate-findings': 'Merges UI and code notes into one findings blob.',
-  'rv.generate-test-plan': 'Writes the Markdown test plan artifact with many scenarios.',
-  'rv.generate-tests': 'Turns each planned scenario into a Playwright case.',
+  'rv.generate-test-plan': 'Writes the Markdown test plan artifact with many scenarios and AC coverage gaps.',
+  'rv.generate-tests': 'Turns each planned scenario into a Playwright case (quality gate forbids body-only stubs).',
   'rv.heal-tests': 'Rewrites broken platform-owned stubs only.',
-  'rv.publish-testcases': 'Stores cases under the work item and upserts Squash when writable.',
+  'rv.publish-testcases': 'Stores cases under the work item and upserts Squash when writable; refuses stub-only cases.',
 };
 
 type WfTab = 'steps' | 'flow' | 'connectors' | 'check' | 'run';
@@ -141,10 +141,15 @@ export function WorkflowPage() {
   const runParams = (def?.spec?.parameters ?? []).filter((p) => {
     if (p.pinned !== undefined && p.pinned !== null) return false;
     if (p.name === 'environment') return exploreUiOn;
+    if (p.name === 'acceptPlan') return false; // dedicated checkbox below
     return p.required;
   });
   const missingEnvironment = exploreUiOn && !params.environment;
   const canStartRun = !start.isPending && !(exploreUiOn && !params.environment);
+  const acceptPlanOn = params.acceptPlan === 'true' || params.acceptPlan === '1';
+  const pausedForPlan = run.data?.status === 'paused'
+    && stepEvents.some((event) => event.kind === 'step.completed' && String(event.payload.stepType ?? '') === 'rv.generate-test-plan')
+    && !stepEvents.some((event) => event.kind === 'step.completed' && String(event.payload.stepType ?? '') === 'rv.generate-tests');
 
   return (
     <>
@@ -344,6 +349,22 @@ export function WorkflowPage() {
                       {' '}Running the work item against an environment is a separate action on Executions.
                     </Alert>
                   )}
+                  {generation && (
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={acceptPlanOn}
+                          onChange={(e) => setParams({ ...params, acceptPlan: e.target.checked ? 'true' : 'false' })}
+                        />
+                      }
+                      label="Pause after plan (accept before generate)"
+                    />
+                  )}
+                  {generation && (
+                    <Typography variant="caption" color="text.secondary">
+                      Publish refuses body-only stubs. Explore-gap / needs-surface cases are flagged; AC coverage gaps appear in the plan Markdown.
+                    </Typography>
+                  )}
                   {runParams.map((p) => (
                     p.name === 'environment' || p.type === 'environment-ref' ? (
                       <FormControl key={p.name} fullWidth required={exploreUiOn} error={missingEnvironment}>
@@ -397,6 +418,11 @@ export function WorkflowPage() {
                   Run {run.data.id.slice(0, 8)} is {run.data.status}, at step {run.data.stepIndex}. A queued run moves when the worker is up.
                 </Alert>
               )}
+              {pausedForPlan && (
+                <Alert severity="warning" sx={{ mb: 2 }}>
+                  Paused after the test plan so you can review AC coverage and explore-gap notes in the Markdown artifact. Resume on Executions (or send resume) to generate cases.
+                </Alert>
+              )}
               {stepEvents.length === 0 && activeId && (
                 <Alert severity="info">No step outputs yet. They appear here as each step completes.</Alert>
               )}
@@ -409,6 +435,7 @@ export function WorkflowPage() {
                   const message = typeof event.payload.message === 'string' ? event.payload.message : '';
                   const failed = event.kind === 'step.failed';
                   const output = summary || message;
+                  const qualityRefuse = failed && /quality gate|stub-forbidden|Publish refused/i.test(output);
                   const artifact = markdownFromStepPayload(event.payload);
                   return (
                     <Paper key={event.seq} variant="outlined" sx={{ p: 1.5 }}>
@@ -418,6 +445,11 @@ export function WorkflowPage() {
                         <Typography variant="caption" color="text.secondary">step #{event.seq}</Typography>
                       </Stack>
                       <Typography variant="subtitle2" color="text.secondary">Output</Typography>
+                      {qualityRefuse && (
+                        <Alert severity="error" sx={{ mb: 1 }}>
+                          Case quality gate refused this step. Fix stub / body-only cases (or regenerate) before publish.
+                        </Alert>
+                      )}
                       <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
                         {output || (failed ? 'This step failed without a summary.' : 'This step completed without a summary.')}
                       </Typography>

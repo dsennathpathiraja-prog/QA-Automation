@@ -1,4 +1,5 @@
 import {
+  evaluateCaseQualityGate,
   exploreCodeArtifactPath,
   exploreUiArtifactPath,
   parsePlanMarkdown,
@@ -300,14 +301,38 @@ export async function performRequirementStep(
       executionId: step.runId,
       stepId: step.id,
     });
+    const planBlocking = step.prior.plan?.blockingGap === true;
+    const quality = evaluateCaseQualityGate({
+      cases: generated.cases,
+      criteria,
+      scenarios: source,
+      planMarkdown: planMarkdown || undefined,
+      blockingGap: planBlocking,
+    });
+    // Soft check on generate: stubs should already be replaced; refuse early if any remain.
+    if (!quality.ok) {
+      throw new PlatformError('validation', `Generate refused by case quality gate. ${quality.summary}`, {
+        qualityGate: { stubCount: quality.stubCount, issues: quality.issues },
+      });
+    }
+    const qualityNote = quality.needsSurfaceCount > 0 || quality.acCoverage.some((r) => !r.covered)
+      ? ` ${quality.summary}`
+      : '';
     return {
-      summary: generated.summary,
+      summary: `${generated.summary}${qualityNote}`,
       outputs: {
         cases: generated.cases,
         workItem,
         planArtifact: planArtifact || undefined,
         agent: 'playwright-test-generator',
         source: generated.source,
+        qualityGate: {
+          ok: quality.ok,
+          summary: quality.summary,
+          stubCount: quality.stubCount,
+          needsSurfaceCount: quality.needsSurfaceCount,
+          acGaps: quality.acCoverage.filter((r) => !r.covered).map((r) => r.criterion),
+        },
       },
     };
   }
@@ -322,6 +347,18 @@ export async function performRequirementStep(
       executionId: step.runId,
       stepId: step.id,
     });
+    const quality = evaluateCaseQualityGate({
+      cases: healed.cases,
+      criteria,
+      scenarios: scenariosOf(step.prior.plan?.scenarios),
+      planMarkdown: planMarkdown || undefined,
+      blockingGap: step.prior.plan?.blockingGap === true,
+    });
+    if (!quality.ok) {
+      throw new PlatformError('validation', `Heal left stub cases; publish would refuse. ${quality.summary}`, {
+        qualityGate: { stubCount: quality.stubCount, issues: quality.issues },
+      });
+    }
     return {
       summary: healed.summary,
       outputs: {
@@ -330,6 +367,12 @@ export async function performRequirementStep(
         workItem,
         agent: 'playwright-test-healer',
         source: healed.source,
+        qualityGate: {
+          ok: quality.ok,
+          summary: quality.summary,
+          stubCount: quality.stubCount,
+          needsSurfaceCount: quality.needsSurfaceCount,
+        },
       },
     };
   }

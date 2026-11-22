@@ -1,9 +1,12 @@
 import {
+  assertPublishQualityGate,
   isNeedsSurfaceCase,
   NEEDS_SURFACE_TAG,
   toSquashUpsertInput,
   type CaseKind,
   type CasePriority,
+  type CaseQualityReport,
+  type PlannerScenario,
   type SurfaceKind,
   type ValidationStep,
 } from '@qa/agents';
@@ -37,15 +40,28 @@ interface SquashResult {
  * Saves each generated case in Test Cases and, when a Squash connector is bound, stores it there
  * with a meaningful name, automated_test_reference, description, and action steps.
  * A repeated reference is kept as the same Squash case (PATCH + replace steps).
+ * Body-only / stub cases are refused by the case quality gate (Phase 8 E3).
  */
 export async function publishGeneratedCases(input: {
   workItem: string;
   cases: GeneratedCase[];
   testCases: TestCaseService;
   squash?: (item: GeneratedCase, upsert: ReturnType<typeof toSquashUpsertInput>) => Promise<SquashResult>;
-}): Promise<{ summary: string }> {
+  /** Acceptance criteria for AC coverage warnings (from Read story / plan). */
+  criteria?: string[];
+  scenarios?: PlannerScenario[];
+  planMarkdown?: string;
+  blockingGap?: boolean;
+}): Promise<{ summary: string; quality?: CaseQualityReport }> {
   const workItem = input.workItem || 'work-item';
   if (input.cases.length === 0) return { summary: `No test cases were generated for ${workItem}. Nothing was sent to Squash.` };
+  const quality = assertPublishQualityGate({
+    cases: input.cases,
+    criteria: input.criteria,
+    scenarios: input.scenarios,
+    planMarkdown: input.planMarkdown,
+    blockingGap: input.blockingGap,
+  });
   const squashIds: string[] = [];
   const references: string[] = [];
   let projectId = '';
@@ -107,11 +123,15 @@ export async function publishGeneratedCases(input: {
   const gapNote = needsSurfaceCount > 0
     ? ` ${needsSurfaceCount} marked Blocked (${NEEDS_SURFACE_TAG}) for explore surface gap.`
     : '';
-  const kept = `Stored ${count} ${noun} for ${workItem} under that work item${gapNote}`;
-  if (!input.squash) return { summary: `${kept} in Test Cases. No Squash connector is selected on this workflow.` };
-  if (squashError && squashIds.length === 0) return { summary: `${kept} in Test Cases. Squash did not store them: ${squashError}` };
-  if (squashError) return { summary: `${kept} in Test Cases. Squash stored ${squashIds.length} and then stopped: ${squashError}` };
+  const acGaps = quality.acCoverage.filter((r) => !r.covered).length;
+  const coverageNote = acGaps > 0
+    ? ` Quality gate: ${acGaps} AC coverage gap${acGaps === 1 ? '' : 's'} flagged (publish allowed).`
+    : ' Quality gate: ok.';
+  const kept = `Stored ${count} ${noun} for ${workItem} under that work item${gapNote}${coverageNote}`;
+  if (!input.squash) return { summary: `${kept} in Test Cases. No Squash connector is selected on this workflow.`, quality };
+  if (squashError && squashIds.length === 0) return { summary: `${kept} in Test Cases. Squash did not store them: ${squashError}`, quality };
+  if (squashError) return { summary: `${kept} in Test Cases. Squash stored ${squashIds.length} and then stopped: ${squashError}`, quality };
   const where = projectId ? `Squash project ${projectId}` : 'Squash';
   const refs = references.length > 0 ? ` References: ${references.join(', ')}. Squash ids: ${squashIds.join(', ')}.` : '';
-  return { summary: `${kept} in Test Cases and in ${where}.${refs}` };
+  return { summary: `${kept} in Test Cases and in ${where}.${refs}`, quality };
 }
