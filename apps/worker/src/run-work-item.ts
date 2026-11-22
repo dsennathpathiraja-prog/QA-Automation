@@ -1,9 +1,49 @@
-import { PlatformError, type RunnerLauncher, type RunnerSpec } from '@qa/domain';
-import type { CaseRunStatus, TestCaseService, WorkItemRunRecord } from '@qa/application';
+import { isNeedsSurfaceCase, NEEDS_SURFACE_TAG } from '@qa/agents';
+import {
+  PlatformError,
+  RUNNER_CANCELLED,
+  RUNNER_INLINE_FILES_MAX_BYTES,
+  RUNNER_LAUNCHER_REQUIRED,
+  RUNNER_MAX,
+  RUNNER_POOL_STAYED_FULL,
+  RUNNER_REBUILD_PS,
+  chunkEnvValue,
+  type RunnerLauncher,
+  type RunnerSpec,
+} from '@qa/domain';
+import { isPlaceholderScreenshot, type CaseRunStatus, type CaseStepProgress, type TestCaseService, type WorkItemRunRecord } from '@qa/application';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const STUB_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const NO_RESULTS = 'The runner finished without case results.';
+/** Shown when Executions cannot use Playwright (no silent HTTP “Passed” without evidence). */
+export const RUNNER_REQUIRED = RUNNER_LAUNCHER_REQUIRED;
+
+export const NEEDS_SURFACE_BLOCKED =
+  `Blocked (${NEEDS_SURFACE_TAG}): Explore did not reach the required notification/template surface. Do not treat shop/catalog as successful coverage.`;
+
+function realScreenshot(b64: string | undefined): string | undefined {
+  return b64 && !isPlaceholderScreenshot(b64) ? b64 : undefined;
+}
+
+function blockedRunnerRequired(cases: WorkItemCaseInput[]): CaseOutcome[] {
+  return cases.map((c) => ({
+    testCaseId: c.id,
+    name: c.name,
+    status: 'Blocked' as const,
+    message: RUNNER_REQUIRED,
+    steps: defaultSteps(c.steps, 'Blocked'),
+  }));
+}
+
+function blockedNeedsSurface(cases: WorkItemCaseInput[]): CaseOutcome[] {
+  return cases.map((c) => ({
+    testCaseId: c.id,
+    name: c.name,
+    status: 'Blocked' as const,
+    message: NEEDS_SURFACE_BLOCKED,
+    steps: defaultSteps(c.steps, 'Blocked'),
+  }));
+}
 
 export interface CaseOutcome {
   testCaseId: string;
@@ -12,59 +52,88 @@ export interface CaseOutcome {
   message: string;
   screenshotPng?: string;
   squashExecutionId?: string;
+  steps?: CaseStepProgress[];
+}
+
+export interface WorkItemCaseInput {
+  id: string;
+  name: string;
+  steps?: string;
+  summary?: string;
+  expected?: string;
 }
 
 /**
- * Runs the cases of one prepared work-item execution through the runner (or a direct probe when the launcher is down).
+ * Runs prepared work-item cases through the Playwright runner only.
+ * Never HTTP probe-falls back to a fake Passed without screenshots (QA-54).
+ * Cases tagged needs-surface (explore surface gap) are Blocked without running on the wrong host.
  */
 export async function runWorkItemCases(o: {
   run: WorkItemRunRecord;
-  cases: Array<{ id: string; name: string }>;
+  cases: WorkItemCaseInput[];
   url: string;
   launcher?: { launcher: RunnerLauncher; image: string; logs(id: string): Promise<string> };
-  probe?: (url: string) => Promise<{ status: number }>;
   now?: number;
+  onProgress?: (results: CaseOutcome[]) => Promise<void> | void;
+  isCancelled?: () => Promise<boolean> | boolean;
 }): Promise<{ viaRunner: boolean; results: CaseOutcome[] }> {
   if (o.cases.length === 0) return { viaRunner: false, results: [] };
-  if (o.launcher) {
-    try {
-      const results = await viaRunner(o);
-      if (!isEmptyRunnerResult(results) || !o.probe) return { viaRunner: true, results };
-      // Runner container finished but emitted no RESULT_JSON (stale image, truncated logs, crash).
-      // Fall back to a direct probe so the board still shows Passed/Failed instead of all Blocked.
-      const probed = await viaDirect(o);
-      return { viaRunner: true, results: probed };
-    } catch (e) {
-      if (!launcherDown(e)) throw e;
-    }
+  const gapCases = o.cases.filter((c) => isNeedsSurfaceCase({
+    steps: c.steps,
+    summary: c.summary,
+    expected: c.expected,
+  }));
+  const runnable = o.cases.filter((c) => !isNeedsSurfaceCase({
+    steps: c.steps,
+    summary: c.summary,
+    expected: c.expected,
+  }));
+  const gapResults = blockedNeedsSurface(gapCases);
+  if (runnable.length === 0) {
+    if (o.onProgress) await o.onProgress(gapResults);
+    return { viaRunner: false, results: gapResults };
   }
-  return { viaRunner: false, results: await viaDirect(o) };
+  if (!o.launcher) {
+    const results = [...gapResults, ...blockedRunnerRequired(runnable)];
+    if (o.onProgress) await o.onProgress(results);
+    return { viaRunner: false, results };
+  }
+  try {
+    const ran = await viaRunner({ ...o, cases: runnable });
+    const byId = new Map(ran.map((r) => [r.testCaseId, r]));
+    for (const g of gapResults) byId.set(g.testCaseId, g);
+    const results = o.cases.map((c) => byId.get(c.id) ?? {
+      testCaseId: c.id,
+      name: c.name,
+      status: 'Blocked' as const,
+      message: NO_RESULTS,
+      steps: defaultSteps(c.steps, 'Blocked'),
+    });
+    if (o.onProgress) await o.onProgress(results);
+    return { viaRunner: true, results };
+  } catch (e) {
+    if (e instanceof PlatformError && e.errorClass === 'cancelled') throw e;
+    if (!launcherDown(e)) throw e;
+    const results = [...gapResults, ...blockedRunnerRequired(runnable)];
+    if (o.onProgress) await o.onProgress(results);
+    return { viaRunner: false, results };
+  }
 }
 
-export function parseCaseResults(text: string, fallback: Array<{ id: string; name: string }>): CaseOutcome[] {
-  const found: CaseOutcome[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    const idx = line.indexOf('RESULT_JSON ');
-    if (idx < 0) continue;
-    const raw = line.slice(idx + 'RESULT_JSON '.length).trim();
-    if (!raw) continue;
-    try {
-      const row = JSON.parse(raw) as Partial<CaseOutcome>;
-      if (typeof row.testCaseId !== 'string' || typeof row.name !== 'string') continue;
-      const status = asStatus(row.status);
-      if (!status) continue;
-      found.push({
-        testCaseId: row.testCaseId,
-        name: row.name,
-        status,
-        message: typeof row.message === 'string' ? row.message : '',
-        screenshotPng: typeof row.screenshotPng === 'string' ? row.screenshotPng : STUB_PNG,
-      });
-    } catch {
-      /* ignore bad lines */
-    }
+export function parseCaseResults(text: string, fallback: WorkItemCaseInput[]): CaseOutcome[] {
+  const found = parseResultLines(text);
+  if (found.length > 0) return attachScreenshots(found, text);
+
+  // Truncated RESULT_JSON used to put huge base64 before status/message; do not treat fragments as a
+  // clean legacy reachability log — that hid missing screenshots behind a probe fallback.
+  if (/\bRESULT_JSON\b|\bSCREENSHOT_JSON\b|\bRUNNER_MODE\b|\bPROGRESS_JSON\b/.test(text)) {
+    const excerpt = text.replace(/\s+/g, ' ').trim().slice(0, 240);
+    const rebuild = `Rebuild qa-runner:local in PowerShell:\n${RUNNER_REBUILD_PS}`;
+    const message = excerpt
+      ? `${NO_RESULTS} Runner log markers were present but RESULT_JSON could not be parsed (often a truncated log line). ${rebuild}\nLog: ${excerpt}`
+      : `${NO_RESULTS} Runner log markers were present but RESULT_JSON could not be parsed. ${rebuild}`;
+    return fallback.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message, steps: defaultSteps(c.steps, 'Blocked') }));
   }
-  if (found.length > 0) return found;
 
   // Older runner images only printed reachability-style "answered N" with no RESULT_JSON.
   const answered = Number(/answered (\d{3})\b/.exec(text)?.[1]);
@@ -75,100 +144,410 @@ export function parseCaseResults(text: string, fallback: Array<{ id: string; nam
       name: c.name,
       status,
       message: `answered ${answered}`,
-      screenshotPng: STUB_PNG,
+      steps: defaultSteps(c.steps, status === 'Passed' ? 'Passed' : 'Failed'),
     }));
   }
 
   const excerpt = text.replace(/\s+/g, ' ').trim().slice(0, 240);
+  const rebuild = `Rebuild qa-runner:local in PowerShell if the image predates work-item execute:\n${RUNNER_REBUILD_PS}`;
   const message = excerpt
-    ? `${NO_RESULTS} Rebuild qa-runner:local with the runners compose profile if the image predates work-item execute. Log: ${excerpt}`
-    : `${NO_RESULTS} Rebuild qa-runner:local with the runners compose profile if the image predates work-item execute.`;
-  return fallback.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message, screenshotPng: STUB_PNG }));
+    ? `${NO_RESULTS} ${rebuild}\nLog: ${excerpt}`
+    : `${NO_RESULTS} ${rebuild}`;
+  return fallback.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message, steps: defaultSteps(c.steps, 'Blocked') }));
+}
+
+/** Merge seeded placeholders with PROGRESS_JSON / RESULT_JSON / SCREENSHOT_JSON lines for live UI updates. */
+export function mergeLiveProgress(text: string, seeded: CaseOutcome[]): CaseOutcome[] {
+  const byId = new Map(seeded.map((row) => [row.testCaseId, { ...row, steps: row.steps?.map((s) => ({ ...s })) }]));
+  for (const line of text.split(/\r?\n/)) {
+    const progressIdx = line.indexOf('PROGRESS_JSON ');
+    if (progressIdx >= 0) {
+      const raw = line.slice(progressIdx + 'PROGRESS_JSON '.length).trim();
+      try {
+        const row = JSON.parse(raw) as Partial<CaseOutcome> & { stepIndex?: number; stepStatus?: CaseRunStatus };
+        if (typeof row.testCaseId !== 'string') continue;
+        const current: CaseOutcome = byId.get(row.testCaseId) ?? {
+          testCaseId: row.testCaseId,
+          name: typeof row.name === 'string' ? row.name : row.testCaseId,
+          status: 'Queued' as const,
+          message: '',
+          steps: undefined,
+          screenshotPng: undefined,
+        };
+        const status = asStatus(row.status) ?? current.status;
+        const steps = mergeStepProgress(current.steps, row.steps, row.stepIndex, row.stepStatus);
+        byId.set(row.testCaseId, {
+          ...current,
+          name: typeof row.name === 'string' ? row.name : current.name,
+          status,
+          message: typeof row.message === 'string' ? row.message : current.message,
+          steps: steps ?? current.steps,
+          screenshotPng: realScreenshot(typeof row.screenshotPng === 'string' ? row.screenshotPng : current.screenshotPng),
+        });
+      } catch {
+        /* ignore bad progress lines */
+      }
+      continue;
+    }
+    const shotIdx = line.indexOf('SCREENSHOT_JSON ');
+    if (shotIdx >= 0) {
+      const raw = line.slice(shotIdx + 'SCREENSHOT_JSON '.length).trim();
+      try {
+        const row = JSON.parse(raw) as { testCaseId?: string; screenshotPng?: string };
+        if (typeof row.testCaseId !== 'string') continue;
+        const shot = realScreenshot(typeof row.screenshotPng === 'string' ? row.screenshotPng : undefined);
+        if (!shot) continue;
+        const current = byId.get(row.testCaseId) ?? {
+          testCaseId: row.testCaseId,
+          name: row.testCaseId,
+          status: 'Running' as const,
+          message: '',
+          steps: undefined,
+        };
+        byId.set(row.testCaseId, { ...current, screenshotPng: shot });
+      } catch {
+        /* ignore bad screenshot lines */
+      }
+      continue;
+    }
+    const resultIdx = line.indexOf('RESULT_JSON ');
+    if (resultIdx < 0) continue;
+    const raw = line.slice(resultIdx + 'RESULT_JSON '.length).trim();
+    if (!raw) continue;
+    try {
+      const row = JSON.parse(raw) as Partial<CaseOutcome>;
+      if (typeof row.testCaseId !== 'string' || typeof row.name !== 'string') continue;
+      const status = asStatus(row.status);
+      if (!status || status === 'Queued' || status === 'Running') continue;
+      const prior = byId.get(row.testCaseId);
+      byId.set(row.testCaseId, {
+        testCaseId: row.testCaseId,
+        name: row.name,
+        status,
+        message: typeof row.message === 'string' ? row.message : '',
+        screenshotPng: realScreenshot(typeof row.screenshotPng === 'string' ? row.screenshotPng : prior?.screenshotPng),
+        // Prefer seeded/full step labels when present; runner may only send compact Open/Capture names.
+        steps: prior?.steps?.length ? markStepsDone(prior.steps, status) : Array.isArray(row.steps) ? parseSteps(row.steps) : markStepsDone(prior?.steps, status),
+        squashExecutionId: prior?.squashExecutionId,
+      });
+    } catch {
+      /* ignore bad result lines */
+    }
+  }
+  return seeded.map((row) => byId.get(row.testCaseId) ?? row).concat([...byId.values()].filter((row) => !seeded.some((s) => s.testCaseId === row.testCaseId)));
 }
 
 export function launcherDown(e: unknown): boolean {
   return e instanceof PlatformError && e.errorClass === 'transient' && /could not resolve|network error|timed out|not reachable/.test(e.message);
 }
 
-function isEmptyRunnerResult(results: CaseOutcome[]): boolean {
-  return results.length > 0 && results.every((r) => r.status === 'Blocked' && r.message.startsWith(NO_RESULTS));
+/** Compact case payloads for the runner (id/name + short labels). Full step text stays in UI seed. */
+export function compactCasesForRunner(cases: WorkItemCaseInput[]): Array<{ id: string; name: string; steps: string[] }> {
+  return cases.map((c) => ({
+    id: c.id,
+    name: c.name.length > 240 ? `${c.name.slice(0, 237)}...` : c.name,
+    steps: ['Open page', 'Capture evidence'],
+  }));
+}
+
+const POOL_FULL = /pool is full/i;
+/** How long Execute waits for a free runner slot before failing clearly (not instant Blocked). */
+export const RUNNER_POOL_WAIT_MS = 180_000;
+
+/** Retry launcher.launch while the pool is full; one work-item run uses a single batch container. */
+export async function launchWhenPoolFree(
+  launcher: RunnerLauncher,
+  spec: RunnerSpec,
+  o: { waitMs?: number; now?: () => number; sleep?: (ms: number) => Promise<void> } = {},
+) {
+  const waitMs = o.waitMs ?? RUNNER_POOL_WAIT_MS;
+  const now = o.now ?? Date.now;
+  const pause = o.sleep ?? sleep;
+  const deadline = now() + waitMs;
+  let attempt = 0;
+  while (true) {
+    try {
+      return await launcher.launch(spec);
+    } catch (e) {
+      const full = e instanceof PlatformError && e.errorClass === 'transient' && POOL_FULL.test(e.message);
+      if (!full) throw e;
+      if (now() >= deadline) {
+        throw new PlatformError('transient', RUNNER_POOL_STAYED_FULL);
+      }
+      attempt += 1;
+      await pause(Math.min(8_000, 400 * 2 ** Math.min(attempt, 4)));
+    }
+  }
 }
 
 async function viaRunner(o: {
   run: WorkItemRunRecord;
-  cases: Array<{ id: string; name: string }>;
+  cases: WorkItemCaseInput[];
   url: string;
   launcher?: { launcher: RunnerLauncher; image: string; logs(id: string): Promise<string> };
   now?: number;
+  onProgress?: (results: CaseOutcome[]) => Promise<void> | void;
+  /** Returns true when the operator cancelled this work-item run. */
+  isCancelled?: () => Promise<boolean> | boolean;
 }): Promise<CaseOutcome[]> {
   const launcher = o.launcher!;
   const target = new URL(o.url);
   const host = target.hostname.toLowerCase();
+  const seeded = o.cases.map((c) => ({
+    testCaseId: c.id,
+    name: c.name,
+    status: 'Queued' as const,
+    message: 'Waiting to run',
+    steps: defaultSteps(c.steps, 'Queued'),
+  }));
+  const casesJson = JSON.stringify(compactCasesForRunner(o.cases));
+  const casesBytes = Buffer.byteLength(casesJson, 'utf8');
+  if (casesBytes > RUNNER_INLINE_FILES_MAX_BYTES) {
+    throw new PlatformError(
+      'validation',
+      `This work item’s case list is ${casesBytes} bytes and exceeds the ${RUNNER_INLINE_FILES_MAX_BYTES} byte runner input limit. Split the collection or shorten case names, then re-run.`,
+    );
+  }
+  // Chunk across env vars — Docker put-archive into /tmp fails (400) with ReadonlyRootfs before start.
+  let casesEnv: Record<string, string>;
+  try {
+    casesEnv = chunkEnvValue('QA_CASES', casesJson);
+  } catch (e) {
+    if (e instanceof PlatformError) throw e;
+    throw new PlatformError('validation', e instanceof Error ? e.message : 'Case list could not be packed for the runner.');
+  }
+  // Per-case Playwright open+shot; scale wall clock for large prepared sets (hundreds of cases).
+  const timeoutSeconds = Math.min(RUNNER_MAX.timeoutSeconds, Math.max(180, 90 + o.cases.length * 25));
+  const executionId = o.run.id.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 128) || 'workitem';
   const spec: RunnerSpec = {
     runId: `wi-${o.run.id.replace(/[^A-Za-z0-9]/g, '')}-${o.now ?? Date.now()}`,
-    executionId: o.run.id.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 128) || 'workitem',
+    executionId,
     image: launcher.image,
     bundleRef: 'work-item',
     environmentId: o.run.environmentId.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 128) || 'environment',
     // Chromium needs headroom; the old 128 pid cap could kill the browser before RESULT_JSON was printed.
-    limits: { cpus: 1, memoryMb: 2048, timeoutSeconds: 180, pids: 512 },
+    limits: { cpus: 1, memoryMb: 2048, timeoutSeconds, pids: 512 },
     allowedHosts: [target.port ? `${host}:${target.port}` : host],
     env: {
       QA_TARGET_URL: o.url,
-      QA_CASES_JSON: JSON.stringify(o.cases.map((c) => ({ id: c.id, name: c.name }))),
+      ...casesEnv,
     },
   };
-  const handle = await launcher.launcher.launch(spec);
+  if (o.onProgress) {
+    await o.onProgress(seeded.map((row) => ({ ...row, status: 'Queued' as const, message: 'Waiting for a runner slot' })));
+  }
+  if (o.isCancelled && (await o.isCancelled())) {
+    throw new PlatformError('cancelled', RUNNER_CANCELLED);
+  }
+  const handle = await launchWhenPoolFree(launcher.launcher, spec);
   const deadline = Date.now() + (spec.limits.timeoutSeconds + 10) * 1000;
   let state = await launcher.launcher.status(handle.id);
+  let lastFingerprint = '';
   while (state.state === 'starting' || state.state === 'running') {
+    if (o.isCancelled && (await o.isCancelled())) {
+      await launcher.launcher.cancelByExecution(executionId, 'work-item run cancelled');
+      throw new PlatformError('cancelled', RUNNER_CANCELLED);
+    }
     if (Date.now() > deadline) {
       await launcher.launcher.stop(handle.id, 'the work-item run took too long');
       throw new PlatformError('internal', 'The runner did not finish in time.');
+    }
+    if (o.onProgress) {
+      try {
+        const partial = await launcher.logs(handle.id);
+        const merged = mergeLiveProgress(partial, seeded);
+        const fingerprint = merged
+          .map((r) => `${r.testCaseId}:${r.status}:${r.message}:${r.screenshotPng?.length ?? 0}:${r.steps?.map((s) => s.status).join(',') ?? ''}`)
+          .join('|');
+        if (fingerprint !== lastFingerprint) {
+          lastFingerprint = fingerprint;
+          await o.onProgress(merged);
+        }
+      } catch {
+        /* log tail can race while the container is starting */
+      }
     }
     await sleep(250);
     state = await launcher.launcher.status(handle.id);
   }
   const text = await launcher.logs(handle.id);
-  return parseCaseResults(text, o.cases);
+  const live = mergeLiveProgress(text, seeded);
+  const finalResults = parseCaseResults(text, o.cases).map((row) => {
+    const prior = seeded.find((s) => s.testCaseId === row.testCaseId);
+    const fromLive = live.find((s) => s.testCaseId === row.testCaseId);
+    return {
+      ...row,
+      // Prefer freshly parsed shot; keep any shot already merged from SCREENSHOT_JSON during the run.
+      screenshotPng: row.screenshotPng ?? fromLive?.screenshotPng,
+      // Keep seeded step labels (full case text); runner only sends compact Open/Capture labels.
+      steps: markStepsDone(prior?.steps, row.status) ?? row.steps,
+    };
+  });
+  if (o.onProgress) await o.onProgress(finalResults);
+  return finalResults;
 }
 
-async function viaDirect(o: {
-  cases: Array<{ id: string; name: string }>;
-  url: string;
-  probe?: (url: string) => Promise<{ status: number }>;
-}): Promise<CaseOutcome[]> {
-  if (!o.probe) {
-    return o.cases.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message: 'No probe was configured for a direct run.', screenshotPng: STUB_PNG }));
+function parseResultLines(text: string): CaseOutcome[] {
+  const found: CaseOutcome[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const idx = line.indexOf('RESULT_JSON ');
+    if (idx < 0) continue;
+    const raw = line.slice(idx + 'RESULT_JSON '.length).trim();
+    if (!raw) continue;
+    try {
+      const row = JSON.parse(raw) as Partial<CaseOutcome>;
+      if (typeof row.testCaseId !== 'string' || typeof row.name !== 'string') continue;
+      const status = asStatus(row.status);
+      if (!status || status === 'Queued' || status === 'Running') continue;
+      found.push({
+        testCaseId: row.testCaseId,
+        name: row.name,
+        status,
+        message: typeof row.message === 'string' ? row.message : '',
+        screenshotPng: realScreenshot(typeof row.screenshotPng === 'string' ? row.screenshotPng : undefined),
+        steps: Array.isArray(row.steps) ? parseSteps(row.steps) : undefined,
+      });
+    } catch {
+      /* ignore bad lines */
+    }
   }
-  try {
-    const res = await o.probe(o.url);
-    const status: CaseRunStatus = res.status >= 500 ? 'Failed' : res.status >= 200 ? 'Passed' : 'Failed';
-    const message = `answered ${res.status}`;
-    return o.cases.map((c) => ({ testCaseId: c.id, name: c.name, status, message, screenshotPng: STUB_PNG }));
-  } catch (e) {
-    const message = e instanceof PlatformError ? e.message : 'did not answer';
-    return o.cases.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked', message, screenshotPng: STUB_PNG }));
+  return found;
+}
+
+function parseScreenshotLines(text: string): Map<string, string> {
+  const shots = new Map<string, string>();
+  for (const line of text.split(/\r?\n/)) {
+    const idx = line.indexOf('SCREENSHOT_JSON ');
+    if (idx < 0) continue;
+    const raw = line.slice(idx + 'SCREENSHOT_JSON '.length).trim();
+    if (!raw) continue;
+    try {
+      const row = JSON.parse(raw) as { testCaseId?: string; screenshotPng?: string };
+      if (typeof row.testCaseId !== 'string') continue;
+      const shot = realScreenshot(typeof row.screenshotPng === 'string' ? row.screenshotPng : undefined);
+      if (shot) shots.set(row.testCaseId, shot);
+    } catch {
+      /* ignore bad screenshot lines */
+    }
   }
+  return shots;
+}
+
+function attachScreenshots(rows: CaseOutcome[], text: string): CaseOutcome[] {
+  const shots = parseScreenshotLines(text);
+  if (shots.size === 0) return rows;
+  return rows.map((row) => ({
+    ...row,
+    screenshotPng: row.screenshotPng ?? shots.get(row.testCaseId),
+  }));
+}
+
+function defaultSteps(stepsText: string | undefined, fill: CaseStepProgress['status']): CaseStepProgress[] {
+  const lines = (stepsText ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*\d+[.)]\s*/, '').replace(/^[-*]\s*/, '').trim())
+    .filter(Boolean)
+    .slice(0, 12);
+  const names = lines.length > 0 ? lines : ['Open page', 'Capture evidence'];
+  return names.map((name) => ({ name, status: fill }));
+}
+
+function parseSteps(raw: unknown): CaseStepProgress[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: CaseStepProgress[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const name = typeof (item as { name?: unknown }).name === 'string'
+      ? (item as { name: string }).name
+      : typeof item === 'string'
+        ? item
+        : '';
+    const status = asStatus((item as { status?: unknown }).status) ?? 'Queued';
+    if (!name) continue;
+    out.push({ name, status });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/** Keep seeded/full step names; copy status from compact runner progress by index when possible. */
+function mergeStepProgress(
+  current: CaseStepProgress[] | undefined,
+  incoming: unknown,
+  stepIndex: unknown,
+  stepStatus: unknown,
+): CaseStepProgress[] | undefined {
+  if (current?.length && Array.isArray(incoming)) {
+    return current.map((step, i) => {
+      const row = incoming[i];
+      const next = row && typeof row === 'object' ? asStatus((row as { status?: unknown }).status) : undefined;
+      return next ? { ...step, status: next } : step;
+    });
+  }
+  if (Array.isArray(incoming)) return parseSteps(incoming);
+  return applyStepIndex(current, stepIndex, stepStatus);
+}
+
+function applyStepIndex(steps: CaseStepProgress[] | undefined, stepIndex: unknown, stepStatus: unknown): CaseStepProgress[] | undefined {
+  if (!steps || typeof stepIndex !== 'number' || stepIndex < 0 || stepIndex >= steps.length) return steps;
+  const status = asStatus(stepStatus);
+  if (!status) return steps;
+  return steps.map((step, i) => {
+    if (i < stepIndex) return { ...step, status: step.status === 'Queued' || step.status === 'Running' ? 'Passed' : step.status };
+    if (i === stepIndex) return { ...step, status };
+    return step;
+  });
+}
+
+function markStepsDone(steps: CaseStepProgress[] | undefined, status: CaseRunStatus): CaseStepProgress[] | undefined {
+  if (!steps) return undefined;
+  const fill: CaseStepProgress['status'] = status === 'Passed' ? 'Passed' : status === 'Skipped' ? 'Skipped' : status === 'Failed' ? 'Failed' : status === 'Blocked' ? 'Blocked' : 'Passed';
+  return steps.map((s) => ({ ...s, status: fill }));
 }
 
 function asStatus(v: unknown): CaseRunStatus | undefined {
-  return v === 'Passed' || v === 'Failed' || v === 'Blocked' || v === 'Skipped' ? v : undefined;
+  return v === 'Queued' || v === 'Running' || v === 'Passed' || v === 'Failed' || v === 'Blocked' || v === 'Skipped' ? v : undefined;
 }
 
 /** One queued work-item run per tick. */
 export async function processWorkItemExecutions(o: {
   testCases: TestCaseService;
   resolveUrl: (environmentId: string) => Promise<string>;
-  run: (input: { run: WorkItemRunRecord; cases: Array<{ id: string; name: string }>; url: string }) => Promise<{ viaRunner: boolean; results: CaseOutcome[] }>;
+  run: (input: {
+    run: WorkItemRunRecord;
+    cases: Array<{ id: string; name: string; steps?: string }>;
+    url: string;
+    onProgress?: (results: CaseOutcome[]) => Promise<void> | void;
+    isCancelled?: () => Promise<boolean> | boolean;
+  }) => Promise<{ viaRunner: boolean; results: CaseOutcome[] }>;
   syncSquash?: (results: CaseOutcome[], workItem: string) => Promise<{ results: CaseOutcome[]; summary: string }>;
 }): Promise<'busy' | 'idle'> {
   const claimed = await o.testCases.claimQueuedWorkItemExecution();
   if (!claimed) return 'idle';
   try {
     const cases = await o.testCases.casesForWorkItem(claimed.workItem);
+    const listed = cases.map((c) => ({
+      id: c.id,
+      name: c.name,
+      steps: c.steps,
+      summary: c.summary,
+      expected: c.expected,
+    }));
+    if ((await o.testCases.getWorkItemExecution(claimed.id)).results?.length === 0) {
+      await o.testCases.seedQueuedCaseProgress(claimed.id, claimed.workItem);
+    }
     const url = await o.resolveUrl(claimed.environmentId);
-    const ran = await o.run({ run: claimed, cases: cases.map((c) => ({ id: c.id, name: c.name })), url });
+    const ran = await o.run({
+      run: claimed,
+      cases: listed,
+      url,
+      onProgress: async (results) => {
+        await o.testCases.reportWorkItemProgress(claimed.id, results);
+      },
+      isCancelled: async () => {
+        const row = await o.testCases.getWorkItemExecution(claimed.id);
+        return row.status === 'cancelled';
+      },
+    });
     let results = ran.results;
     let squashSync: string | undefined;
     if (o.syncSquash) {
@@ -185,12 +564,18 @@ export async function processWorkItemExecutions(o: {
       results,
     });
   } catch (e) {
+    const cancelled = e instanceof PlatformError && e.errorClass === 'cancelled';
     const message = e instanceof PlatformError ? e.message : 'The work item run failed.';
     const cases = await o.testCases.casesForWorkItem(claimed.workItem);
     await o.testCases.completeWorkItemExecution(claimed.id, {
-      status: 'failed',
+      status: cancelled ? 'cancelled' : 'failed',
       squashSync: message,
-      results: cases.map((c) => ({ testCaseId: c.id, name: c.name, status: 'Blocked' as const, message, screenshotPng: STUB_PNG })),
+      results: cases.map((c) => ({
+        testCaseId: c.id,
+        name: c.name,
+        status: cancelled ? ('Skipped' as const) : ('Blocked' as const),
+        message,
+      })),
     });
   }
   return 'busy';

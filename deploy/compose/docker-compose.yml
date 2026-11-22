@@ -90,6 +90,7 @@ services:
   worker:
     <<: *common
     build: { context: ../.., dockerfile: deploy/images/worker.Dockerfile }
+    # Shares `app` with playwright-mcp so Compose DNS name playwright-mcp resolves.
     networks: [app, data, llm]
     environment:
       PLATFORM_ENV: ${PLATFORM_ENV:-production}
@@ -105,6 +106,8 @@ services:
       BAO_SECRET_ID_FILE: /run/secrets/bao_worker_secret_id
       HTTPS_PROXY: http://egress-proxy:3128
       NO_PROXY: postgres,openbao,keycloak,ollama,playwright-mcp,localhost
+      # Browser MCP as seen from this container (Compose DNS on `app`). Host machine needs a published port + http://127.0.0.1:8931.
+      PLAYWRIGHT_MCP_URL: ${PLAYWRIGHT_MCP_URL:-http://playwright-mcp:8931}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     secrets: [platform_db_password, bao_worker_role_id, bao_worker_secret_id]
     depends_on: { postgres: { condition: service_healthy }, openbao: { condition: service_started } }
@@ -116,22 +119,36 @@ services:
       timeout: 5s
       retries: 5
 
-  # Managed Playwright MCP. Start with --profile browser. Connector URL: http://playwright-mcp:8931
+  # Managed Playwright MCP. Start with --profile browser. Connector URL from worker: http://playwright-mcp:8931
+  # Rebuild after Dockerfile changes: docker compose --profile browser up --build -d playwright-mcp
+  # Image name qa-playwright-mcp:local is not a DNS name — keep service name / alias playwright-mcp.
   playwright-mcp:
     <<: *common
     profiles: [browser]
-    image: mcr.microsoft.com/playwright:v1.55.0-noble
-    command: ["bash", "-lc", "npx --yes @playwright/mcp@latest --headless --port 8931 --host 0.0.0.0 --allowed-hosts '*'"]
-    networks: [app]
+    image: qa-playwright-mcp:local
+    build: { context: ../.., dockerfile: deploy/images/playwright-mcp.Dockerfile }
+    hostname: playwright-mcp
+    # Same user-defined network as worker (`app`) with an explicit alias so rebuilds keep DNS stable.
+    networks:
+      app:
+        aliases: [playwright-mcp]
+    shm_size: "256mb"
     read_only: true
     tmpfs: [/tmp]
     expose: ["8931"]
+    # Private app hosts that resolve on the Docker host are invisible here unless listed.
+    # Mapping form required (Compose on Windows rejects list/"host:ip" strings).
+    # Do NOT default sdk.paynsure.internal → host-gateway (wrong HTTP status / VirtualHost).
+    # PayNSure: set PLAYWRIGHT_MCP_SHOP_IP and also use docker-compose.playwright-shop.yml.
+    extra_hosts:
+      host.docker.internal: host-gateway
     healthcheck:
       test: ["CMD", "node", "-e", "require('net').connect(8931,'127.0.0.1',()=>process.exit(0)).on('error',()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 10
       start_period: 60s
+
 
   runner-launcher:
     <<: *common

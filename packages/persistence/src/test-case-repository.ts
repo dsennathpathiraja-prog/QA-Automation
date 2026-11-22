@@ -1,11 +1,31 @@
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { PlatformError } from '@qa/domain';
-import type { CaseRunStatus, CollectionCaseRecord, TestCaseInsert, TestCaseKind, TestCasePriority, TestCaseRecord, TestCaseRepository, TestCaseVersionRecord, TestCollectionRecord, WorkItemCaseResultRecord, WorkItemRunRecord, WorkItemRunStatus } from '@qa/application';
+import type { CaseRunStatus, CaseStepProgress, CollectionCaseRecord, TestCaseInsert, TestCaseKind, TestCasePriority, TestCaseRecord, TestCaseRepository, TestCaseVersionRecord, TestCollectionRecord, WorkItemCaseResultRecord, WorkItemRunRecord, WorkItemRunStatus } from '@qa/application';
 import type { Db } from './db';
 import { testCase, testCaseVersion, testCollection, testCollectionCase, workItemCaseResult, workItemExecution } from './schema';
 
 const asKind = (value: string): TestCaseKind => (value === 'negative' || value === 'edge' ? value : 'positive');
 const asPriority = (value: string): TestCasePriority => (value === 'high' || value === 'low' ? value : 'medium');
+const STEP_STATUSES = new Set(['Queued', 'Running', 'Passed', 'Failed', 'Blocked', 'Skipped']);
+
+function parseStepsJson(raw: string | null): CaseStepProgress[] | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return undefined;
+    const steps: CaseStepProgress[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue;
+      const name = typeof (item as { name?: unknown }).name === 'string' ? (item as { name: string }).name : '';
+      const status = (item as { status?: unknown }).status;
+      if (!name || typeof status !== 'string' || !STEP_STATUSES.has(status)) continue;
+      steps.push({ name, status: status as CaseStepProgress['status'] });
+    }
+    return steps.length > 0 ? steps : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 const caseOf = (r: typeof testCase.$inferSelect): TestCaseRecord => ({
   id: r.id,
@@ -271,7 +291,7 @@ export class PgTestCaseRepository implements TestCaseRepository {
     return saved && this.runOf(saved);
   }
 
-  async replaceCaseResults(executionId: string, results: Array<{ id: string; testCaseId: string; name: string; status: CaseRunStatus; message: string; screenshotPng?: string; squashExecutionId?: string }>) {
+  async replaceCaseResults(executionId: string, results: Array<{ id: string; testCaseId: string; name: string; status: CaseRunStatus; message: string; screenshotPng?: string; squashExecutionId?: string; steps?: CaseStepProgress[] }>) {
     await this.db.transaction(async (tx) => {
       await tx.delete(workItemCaseResult).where(eq(workItemCaseResult.executionId, executionId));
       if (results.length === 0) return;
@@ -284,21 +304,14 @@ export class PgTestCaseRepository implements TestCaseRepository {
         message: r.message,
         screenshotPng: r.screenshotPng,
         squashExecutionId: r.squashExecutionId,
+        stepsJson: r.steps ? JSON.stringify(r.steps) : null,
       })));
     });
   }
 
   async listCaseResults(executionId: string) {
     const rows = await this.db.select().from(workItemCaseResult).where(eq(workItemCaseResult.executionId, executionId)).orderBy(asc(workItemCaseResult.createdAt));
-    return rows.map((r): WorkItemCaseResultRecord => ({
-      id: r.id,
-      testCaseId: r.testCaseId,
-      name: r.name,
-      status: r.status as CaseRunStatus,
-      message: r.message,
-      screenshotPng: r.screenshotPng ?? undefined,
-      squashExecutionId: r.squashExecutionId ?? undefined,
-    }));
+    return rows.map((r): WorkItemCaseResultRecord => this.caseResultOf(r));
   }
 
   async getCaseResult(executionId: string, testCaseId: string) {
@@ -307,16 +320,20 @@ export class PgTestCaseRepository implements TestCaseRepository {
       .from(workItemCaseResult)
       .where(and(eq(workItemCaseResult.executionId, executionId), eq(workItemCaseResult.testCaseId, testCaseId)))
       .limit(1);
-    if (!row) return undefined;
+    return row ? this.caseResultOf(row) : undefined;
+  }
+
+  private caseResultOf(r: typeof workItemCaseResult.$inferSelect): WorkItemCaseResultRecord {
     return {
-      id: row.id,
-      testCaseId: row.testCaseId,
-      name: row.name,
-      status: row.status as CaseRunStatus,
-      message: row.message,
-      screenshotPng: row.screenshotPng ?? undefined,
-      squashExecutionId: row.squashExecutionId ?? undefined,
-    } satisfies WorkItemCaseResultRecord;
+      id: r.id,
+      testCaseId: r.testCaseId,
+      name: r.name,
+      status: r.status as CaseRunStatus,
+      message: r.message,
+      screenshotPng: r.screenshotPng ?? undefined,
+      squashExecutionId: r.squashExecutionId ?? undefined,
+      steps: parseStepsJson(r.stepsJson),
+    };
   }
 
   private runOf(r: typeof workItemExecution.$inferSelect): WorkItemRunRecord {

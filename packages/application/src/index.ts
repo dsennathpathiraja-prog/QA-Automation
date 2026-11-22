@@ -5,3 +5,4 @@ export * from './environment-config';
 export * from './environment-rules';
 export * from './workflow-service';
 export * from './test-case-service';
+export * from './automation-service';

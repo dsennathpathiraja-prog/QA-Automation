@@ -1,8 +1,94 @@
 import { describe, expect, it } from 'vitest';
-import type { TestGeneratorPort, TestHealerPort, TestPlannerPort } from '@qa/agents';
+import type { BrowserExplorerPort, CodeExplorerPort, TestGeneratorPort, TestHealerPort, TestPlannerPort } from '@qa/agents';
 import { performRequirementStep } from '../src/requirement-agents';
 
 describe('performRequirementStep', () => {
+  it('requires a browser explorer for rv.explore-ui and resolves the environment URL', async () => {
+    await expect(performRequirementStep(
+      {
+        id: 'explore_ui',
+        type: 'rv.explore-ui',
+        runId: 'run-1',
+        params: { applicationName: 'PayNSure', environment: 'env-qa' },
+        prior: { read_story: { workItem: '7189', acceptanceCriteria: ['listed'] } },
+      },
+      {},
+    )).rejects.toMatchObject({ errorClass: 'denied' });
+
+    let seenUrl: string | undefined;
+    const explorer: BrowserExplorerPort = {
+      async explore(input) {
+        seenUrl = input.url;
+        return {
+          summary: `Visited ${input.url} (1 page snapshot) for ${input.application} before planning.`,
+          findings: `page @ ${input.url}`,
+          details: [{ scenarioName: 'home', url: input.url ?? '', snapshotExcerpt: 'button Pay' }],
+          source: 'browser',
+        };
+      },
+    };
+    const out = await performRequirementStep(
+      {
+        id: 'explore_ui',
+        type: 'rv.explore-ui',
+        runId: 'run-1',
+        params: { applicationName: 'PayNSure', environment: 'env-qa' },
+        prior: { read_story: { workItem: '7189', acceptanceCriteria: ['listed'] } },
+      },
+      {
+        explorer,
+        resolveEnvironmentUrl: async (id) => (id === 'env-qa' ? 'https://qa.shop.example/' : undefined),
+      },
+    );
+    expect(seenUrl).toBe('https://qa.shop.example/');
+    expect(out.summary).toMatch(/Visited/);
+    expect(out.outputs.source).toBe('browser');
+    expect(out.outputs.findings).toMatch(/qa\.shop\.example/);
+    expect(String(out.outputs.artifactMarkdown)).toMatch(/Explore UI/);
+    expect(String(out.outputs.artifactPath)).toMatch(/\.ui\.md$/);
+  });
+
+  it('requires a code explorer for rv.explore-code and records file findings', async () => {
+    await expect(performRequirementStep(
+      {
+        id: 'explore_code',
+        type: 'rv.explore-code',
+        runId: 'run-1',
+        params: { applicationName: 'PayNSure' },
+        prior: { read_story: { workItem: '7189', acceptanceCriteria: ['listed'] } },
+      },
+      {},
+    )).rejects.toMatchObject({ errorClass: 'denied' });
+
+    const codeExplorer: CodeExplorerPort = {
+      async explore(input) {
+        return {
+          summary: `Visited files: src/pay.ts for ${input.application} before planning.`,
+          findings: '- src/pay.ts\n  export function pay()',
+          details: [{ path: 'src/pay.ts', excerpt: 'export function pay()' }],
+          source: 'repo',
+          repo: 'shop',
+        };
+      },
+    };
+    const out = await performRequirementStep(
+      {
+        id: 'explore_code',
+        type: 'rv.explore-code',
+        runId: 'run-1',
+        params: { applicationName: 'PayNSure' },
+        prior: { read_story: { workItem: '7189', acceptanceCriteria: ['pay'] } },
+      },
+      { codeExplorer },
+    );
+    expect(out.summary).toMatch(/Visited files: src\/pay\.ts/);
+    expect(out.outputs.source).toBe('repo');
+    expect(out.outputs.findings).toMatch(/pay\.ts/);
+    expect(String(out.outputs.artifactMarkdown)).toMatch(/Explore code/);
+    expect(String(out.outputs.artifactMarkdown)).toMatch(/src\/pay\.ts/);
+    expect(String(out.outputs.artifactPath)).toMatch(/\.code\.md$/);
+  });
+
   it('uses the planner port for rv.generate-test-plan and persists MD outputs', async () => {
     const planner: TestPlannerPort = {
       async plan(input) {
@@ -96,13 +182,14 @@ describe('performRequirementStep', () => {
   });
 
   it('uses the healer port for rv.heal-tests', async () => {
+    const healedSteps = "import { test, expect } from '@playwright/test';\ntest('x', async ({ page }) => {\n  await page.goto('/');\n  await expect(page.getByRole('button', { name: 'Pay' })).toBeVisible();\n});\n";
     const healer: TestHealerPort = {
       async heal(input) {
         return {
           summary: `healed ${input.cases.length}`,
           source: 'heuristic',
           fixed: 1,
-          cases: input.cases,
+          cases: input.cases.map((c) => ({ ...c, steps: healedSteps })),
         };
       },
     };

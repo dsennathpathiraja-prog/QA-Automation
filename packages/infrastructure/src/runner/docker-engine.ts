@@ -1,5 +1,5 @@
 import { request, Agent } from 'undici';
-import { PlatformError, type ContainerEngine, type ContainerState } from '@qa/domain';
+import { PlatformError, tarUtf8File, type ContainerEngine, type ContainerState } from '@qa/domain';
 
 interface Inspect {
   Id: string;
@@ -60,6 +60,11 @@ export class DockerEngine implements ContainerEngine {
     if (r.status !== 304 && r.status !== 404) this.ok(r, 'stop');
   }
 
+  async remove(id: string) {
+    const r = await this.call('DELETE', `/containers/${encodeURIComponent(id)}?force=true&v=true`);
+    if (r.status !== 404) this.ok(r, 'remove');
+  }
+
   async inspectImage(ref: string) {
     const r = await this.call('GET', `/images/${encodeURIComponent(ref)}/json`);
     if (r.status === 404) return undefined;
@@ -92,11 +97,37 @@ export class DockerEngine implements ContainerEngine {
     return states.filter((s): s is ContainerState => !!s);
   }
 
+  /** Inject text files under an absolute directory (used for `/tmp/qa-cases.json` before start). */
+  async putFiles(id: string, files: Array<{ path: string; content: string }>) {
+    for (const file of files) {
+      const dir = file.path.includes('/') ? file.path.slice(0, file.path.lastIndexOf('/')) || '/' : '/';
+      const base = file.path.slice(file.path.lastIndexOf('/') + 1);
+      const tar = tarUtf8File(base, file.content);
+      try {
+        const res = await request(`${this.base}/containers/${encodeURIComponent(id)}/archive?path=${encodeURIComponent(dir)}`, {
+          method: 'PUT',
+          dispatcher: this.dispatcher,
+          headers: { 'content-type': 'application/x-tar' },
+          body: tar,
+          headersTimeout: 30_000,
+          bodyTimeout: 60_000,
+        });
+        await res.body.arrayBuffer();
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          throw new PlatformError(res.statusCode >= 500 ? 'transient' : 'validation', `container engine refused putFiles (${res.statusCode})`);
+        }
+      } catch (e) {
+        if (e instanceof PlatformError) throw e;
+        throw new PlatformError('transient', 'the container engine is not reachable', undefined, e);
+      }
+    }
+  }
+
   async close() {
     await this.dispatcher.close();
   }
 
-  private async call(method: 'GET' | 'POST', path: string, body?: unknown): Promise<{ status: number; json: unknown; text: string }> {
+  private async call(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<{ status: number; json: unknown; text: string }> {
     try {
       const res = await request(`${this.base}${path}`, {
         method,

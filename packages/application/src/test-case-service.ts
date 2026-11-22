@@ -3,8 +3,14 @@ import { PlatformError } from '@qa/domain';
 import type { ActorRef } from './connector-service';
 import type { AuditSink } from './ports';
 
-export type WorkItemRunStatus = 'prepared' | 'queued' | 'running' | 'completed' | 'failed';
-export type CaseRunStatus = 'Passed' | 'Failed' | 'Blocked' | 'Skipped';
+export type WorkItemRunStatus = 'prepared' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type CaseRunStatus = 'Queued' | 'Running' | 'Passed' | 'Failed' | 'Blocked' | 'Skipped';
+export type CaseStepStatus = 'Queued' | 'Running' | 'Passed' | 'Failed' | 'Blocked' | 'Skipped';
+
+export interface CaseStepProgress {
+  name: string;
+  status: CaseStepStatus;
+}
 export type TestCaseKind = 'positive' | 'negative' | 'edge';
 export type TestCasePriority = 'high' | 'medium' | 'low';
 
@@ -51,6 +57,7 @@ export interface WorkItemCaseResultRecord {
   message: string;
   screenshotPng?: string;
   squashExecutionId?: string;
+  steps?: CaseStepProgress[];
 }
 
 export interface TestCaseInsert {
@@ -90,7 +97,7 @@ export interface TestCaseRepository {
   insertWorkItemRun(row: { id: string; workItem: string; environmentId: string; environmentName: string; caseCount: number }): Promise<WorkItemRunRecord>;
   updateWorkItemRun(id: string, patch: { status: WorkItemRunStatus; squashSync?: string; finishedAt?: Date }): Promise<WorkItemRunRecord>;
   claimQueuedWorkItemRun(): Promise<WorkItemRunRecord | undefined>;
-  replaceCaseResults(executionId: string, results: Array<{ id: string; testCaseId: string; name: string; status: CaseRunStatus; message: string; screenshotPng?: string; squashExecutionId?: string }>): Promise<void>;
+  replaceCaseResults(executionId: string, results: Array<{ id: string; testCaseId: string; name: string; status: CaseRunStatus; message: string; screenshotPng?: string; squashExecutionId?: string; steps?: CaseStepProgress[] }>): Promise<void>;
   listCaseResults(executionId: string): Promise<WorkItemCaseResultRecord[]>;
   getCaseResult(executionId: string, testCaseId: string): Promise<WorkItemCaseResultRecord | undefined>;
 }
@@ -158,6 +165,40 @@ const itemOf = (r: TestCaseRecord): TestCaseListItem => ({
   updatedAt: r.updatedAt.toISOString(),
 });
 
+const countsOf = (caseCount: number, results?: WorkItemCaseResultRecord[]) => {
+  if (!results) return undefined;
+  const tally = { queued: 0, running: 0, passed: 0, failed: 0, blocked: 0, skipped: 0 };
+  for (const r of results) {
+    if (r.status === 'Queued') tally.queued += 1;
+    else if (r.status === 'Running') tally.running += 1;
+    else if (r.status === 'Passed') tally.passed += 1;
+    else if (r.status === 'Failed') tally.failed += 1;
+    else if (r.status === 'Blocked') tally.blocked += 1;
+    else if (r.status === 'Skipped') tally.skipped += 1;
+  }
+  return {
+    total: caseCount,
+    ...tally,
+    completed: tally.passed + tally.failed + tally.blocked + tally.skipped,
+  };
+};
+
+/** Historic 1×1 red placeholder wrongly shown as “evidence” when capture failed or was size-capped. */
+export const PLACEHOLDER_SCREENSHOT_B64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+/** True when base64 is missing, the known red stub, or too small to be a real viewport capture. */
+export function isPlaceholderScreenshot(b64: string | undefined | null): boolean {
+  if (!b64) return true;
+  if (b64 === PLACEHOLDER_SCREENSHOT_B64) return true;
+  return b64.length < 200;
+}
+
+/** Sniff JPEG (`/9j/`) vs PNG (`iVBOR`) so the UI data-URI MIME matches the bytes. */
+export function screenshotContentType(b64: string): 'image/jpeg' | 'image/png' {
+  return b64.startsWith('/9j') ? 'image/jpeg' : 'image/png';
+}
+
 const runOf = (row: WorkItemRunRecord, results?: WorkItemCaseResultRecord[]) => ({
   id: row.id,
   workItem: row.workItem,
@@ -168,16 +209,29 @@ const runOf = (row: WorkItemRunRecord, results?: WorkItemCaseResultRecord[]) => 
   createdAt: row.createdAt.toISOString(),
   finishedAt: row.finishedAt?.toISOString(),
   squashSync: row.squashSync,
+  counts: countsOf(row.caseCount, results),
   results: results?.map((r) => ({
     id: r.id,
     testCaseId: r.testCaseId,
     name: r.name,
     status: r.status,
     message: r.message,
-    hasScreenshot: Boolean(r.screenshotPng),
+    hasScreenshot: Boolean(r.screenshotPng) && !isPlaceholderScreenshot(r.screenshotPng),
     squashExecutionId: r.squashExecutionId,
+    steps: r.steps,
   })),
 });
+
+/** Split a free-text steps field into short progress labels (one per non-empty line). */
+export function stepLabelsFromText(steps: string, fallback: string[] = ['Open page', 'Capture evidence']): CaseStepProgress[] {
+  const lines = steps
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*\d+[.)]\s*/, '').replace(/^[-*]\s*/, '').trim())
+    .filter(Boolean)
+    .slice(0, 12);
+  const names = lines.length > 0 ? lines : fallback;
+  return names.map((name) => ({ name, status: 'Queued' as const }));
+}
 
 export class TestCaseService {
   constructor(private readonly d: { cases: TestCaseRepository; audit: AuditSink }) {}
@@ -312,7 +366,7 @@ export class TestCaseService {
     reference?: string;
     kind?: TestCaseKind;
     priority?: TestCasePriority;
-  }): Promise<void> {
+  }): Promise<{ id: string }> {
     const workItem = this.summary(input.workItem ?? '');
     if (!workItem) throw new PlatformError('validation', 'A generated case needs a work item.');
     const name = this.name(input.name);
@@ -356,6 +410,7 @@ export class TestCaseService {
     }
     const collection = await this.ensureWorkItemCollection(actor, workItem.slice(0, 120));
     await this.d.cases.addCase(collection.id, id);
+    return { id };
   }
 
   async executionBoard() {
@@ -369,8 +424,9 @@ export class TestCaseService {
     workItems.sort((a, b) => a.workItem.localeCompare(b.workItem));
     const items = [];
     for (const row of await this.d.cases.listWorkItemRuns()) {
-      const results = row.status === 'prepared' || row.status === 'queued' ? undefined : await this.d.cases.listCaseResults(row.id);
-      items.push(runOf(row, results));
+      // Include results for queued/running so the UI can poll live progress after seed.
+      const results = row.status === 'prepared' ? undefined : await this.d.cases.listCaseResults(row.id);
+      items.push(runOf(row, results && results.length > 0 ? results : undefined));
     }
     return { workItems, items };
   }
@@ -397,29 +453,123 @@ export class TestCaseService {
     const row = await this.d.cases.getWorkItemRun(id);
     if (!row) throw new PlatformError('not-found', 'Work item execution not found');
     if (row.status !== 'prepared' && row.status !== 'failed') throw new PlatformError('conflict', 'That execution is already running or finished.');
+    await this.seedQueuedCaseProgress(id, row.workItem);
     const updated = await this.d.cases.updateWorkItemRun(id, { status: 'queued' });
     await this.d.audit.append({ actorId: actor.id, action: 'workitem.execution.queue', subjectType: 'work_item_execution', subjectId: id, detail: { workItem: row.workItem } });
-    return runOf(updated);
+    return runOf(updated, await this.d.cases.listCaseResults(id));
+  }
+
+  /**
+   * Requests cancel for a queued/running work-item run. The worker stops the runner
+   * container (frees the pool) and finalizes case rows as Skipped.
+   */
+  async cancelWorkItemExecution(actor: ActorRef, id: string) {
+    const row = await this.d.cases.getWorkItemRun(id);
+    if (!row) throw new PlatformError('not-found', 'Work item execution not found');
+    if (row.status === 'cancelled' || row.status === 'completed' || row.status === 'failed') {
+      return runOf(row, await this.d.cases.listCaseResults(id));
+    }
+    if (row.status !== 'queued' && row.status !== 'running') {
+      throw new PlatformError('conflict', 'Only a queued or running work-item execution can be cancelled.');
+    }
+    const prior = await this.d.cases.listCaseResults(id);
+    const cases = prior.length > 0
+      ? prior
+      : (await this.casesForWorkItem(row.workItem)).map((c) => ({
+          id: randomUUID(),
+          testCaseId: c.id,
+          name: c.name,
+          status: 'Queued' as const,
+          message: 'Waiting to run',
+          steps: stepLabelsFromText(c.steps),
+        }));
+    const message = 'Cancelled — runner stopped and pool slot freed.';
+    await this.d.cases.replaceCaseResults(id, cases.map((c) => ({
+      id: randomUUID(),
+      testCaseId: c.testCaseId,
+      name: c.name,
+      status: c.status === 'Passed' || c.status === 'Failed' || c.status === 'Blocked' || c.status === 'Skipped'
+        ? c.status
+        : 'Skipped' as const,
+      message: c.status === 'Passed' || c.status === 'Failed' || c.status === 'Blocked' || c.status === 'Skipped' ? c.message : message,
+      screenshotPng: 'screenshotPng' in c ? c.screenshotPng : undefined,
+      squashExecutionId: 'squashExecutionId' in c ? c.squashExecutionId : undefined,
+      steps: c.steps?.map((s) => ({
+        ...s,
+        status: s.status === 'Passed' || s.status === 'Failed' || s.status === 'Blocked' || s.status === 'Skipped' ? s.status : 'Skipped' as const,
+      })),
+    })));
+    const updated = await this.d.cases.updateWorkItemRun(id, {
+      status: 'cancelled',
+      squashSync: 'Cancelled — stopping the runner and freeing the pool slot.',
+      finishedAt: new Date(),
+    });
+    await this.d.audit.append({ actorId: actor.id, action: 'workitem.execution.cancel', subjectType: 'work_item_execution', subjectId: id, detail: { workItem: row.workItem } });
+    return runOf(updated, await this.d.cases.listCaseResults(id));
   }
 
   async claimQueuedWorkItemExecution() {
     return this.d.cases.claimQueuedWorkItemRun();
   }
 
+  /** Seeds Queued placeholders (with step labels) so the Execution UI can show live progress immediately. */
+  async seedQueuedCaseProgress(executionId: string, workItem: string) {
+    const cases = await this.casesForWorkItem(workItem);
+    await this.d.cases.replaceCaseResults(executionId, cases.map((c) => ({
+      id: randomUUID(),
+      testCaseId: c.id,
+      name: c.name,
+      status: 'Queued' as const,
+      message: 'Waiting to run',
+      steps: stepLabelsFromText(c.steps),
+    })));
+  }
+
+  /** Persists partial case outcomes while the runner is still going (polled by the UI). */
+  async reportWorkItemProgress(id: string, results: Array<{
+    testCaseId: string;
+    name: string;
+    status: CaseRunStatus;
+    message: string;
+    screenshotPng?: string;
+    squashExecutionId?: string;
+    steps?: CaseStepProgress[];
+  }>) {
+    const row = await this.d.cases.getWorkItemRun(id);
+    if (!row) throw new PlatformError('not-found', 'Work item execution not found');
+    if (row.status !== 'queued' && row.status !== 'running') return runOf(row, await this.d.cases.listCaseResults(id));
+    await this.d.cases.replaceCaseResults(id, results.map((r) => ({ id: randomUUID(), ...r })));
+    return runOf(row, await this.d.cases.listCaseResults(id));
+  }
+
   async completeWorkItemExecution(id: string, input: {
-    status: 'completed' | 'failed';
+    status: 'completed' | 'failed' | 'cancelled';
     squashSync?: string;
-    results: Array<{ testCaseId: string; name: string; status: CaseRunStatus; message: string; screenshotPng?: string; squashExecutionId?: string }>;
+    results: Array<{ testCaseId: string; name: string; status: CaseRunStatus; message: string; screenshotPng?: string; squashExecutionId?: string; steps?: CaseStepProgress[] }>;
   }) {
+    const current = await this.d.cases.getWorkItemRun(id);
+    // Cancel wins if the operator already requested it while the worker was finishing.
+    const status = current?.status === 'cancelled' ? 'cancelled' : input.status;
     await this.d.cases.replaceCaseResults(id, input.results.map((r) => ({ id: randomUUID(), ...r })));
-    const updated = await this.d.cases.updateWorkItemRun(id, { status: input.status, squashSync: input.squashSync, finishedAt: new Date() });
+    const updated = await this.d.cases.updateWorkItemRun(id, {
+      status,
+      squashSync: input.squashSync,
+      finishedAt: new Date(),
+    });
     return runOf(updated, await this.d.cases.listCaseResults(id));
   }
 
   async caseScreenshot(executionId: string, testCaseId: string) {
     const row = await this.d.cases.getCaseResult(executionId, testCaseId);
-    if (!row?.screenshotPng) throw new PlatformError('not-found', 'Screenshot not found');
-    return { testCaseId: row.testCaseId, name: row.name, contentType: 'image/png' as const, pngBase64: row.screenshotPng };
+    if (!row?.screenshotPng || isPlaceholderScreenshot(row.screenshotPng)) {
+      throw new PlatformError('not-found', 'Screenshot not found');
+    }
+    return {
+      testCaseId: row.testCaseId,
+      name: row.name,
+      contentType: screenshotContentType(row.screenshotPng),
+      pngBase64: row.screenshotPng,
+    };
   }
 
   /** Live cases that belong to the work-item collection (excludes soft-deleted and uncollected orphans). */

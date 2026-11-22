@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { PlatformError, isPlatformError } from '@qa/domain';
 import type {
@@ -13,6 +14,9 @@ import type {
 } from '@qa/connector-sdk';
 import { htmlToText } from './html';
 import { normalizeSquashToken, parseSquashSecrets, readTokenClaims, scrubSquashBaseUrl } from './token';
+
+/** Squash attachment upload limit (bytes). Catalog constraint `size.max`. */
+const ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
 
 const blankToUndef = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
 
@@ -60,6 +64,7 @@ export const SQUASH_SUPPORTED_CAPABILITIES = [
   'tm.execution.history',
   'tm.execution.upsert',
   'tm.execution.status.update',
+  'tm.attachment.upload',
   'tm.campaign.list',
   'tm.iteration.list',
 ] as const;
@@ -253,6 +258,13 @@ class SquashClient implements ConnectorClient {
       support: canWrite ? 'supported' : 'partial',
       reason: canWrite ? 'PATCH /executions/{id} sets Passed/Failed/Blocked/Skipped' : 'Needs a READ_WRITE token',
     });
+    out.push({
+      capability: 'tm.attachment.upload',
+      support: canWrite ? 'supported' : 'partial',
+      reason: canWrite
+        ? 'POST /executions/{id}/attachments (multipart) uploads run screenshots when the token is READ_WRITE'
+        : 'The token does not show WRITE. Screenshots stay on the platform until the token is READ_WRITE.',
+    });
     for (const [capability, reason] of Object.entries(NOT_AVAILABLE)) out.push({ capability, support: 'unsupported', reason });
     return out;
   }
@@ -324,6 +336,8 @@ class SquashClient implements ConnectorClient {
         return this.upsertExecution(i, signal);
       case 'tm.execution.status.update':
         return this.updateExecutionStatus(i, signal);
+      case 'tm.attachment.upload':
+        return this.uploadAttachment(i, signal);
       case 'tm.campaign.list':
         return this.list(project ? `/projects/${project}/campaigns` : '/campaigns', 'campaigns', i, signal, (c) => ({ id: String(c.id), name: String(c.name) }));
       case 'tm.iteration.list':
@@ -599,6 +613,47 @@ class SquashClient implements ConnectorClient {
     return { ok: true };
   }
 
+  /**
+   * SquashTM REST: POST /executions/{id}/attachments or /test-cases/{id}/attachments
+   * multipart/form-data field name `files` (vendor curl / forum).
+   */
+  private async uploadAttachment(i: Record<string, any>, signal?: AbortSignal): Promise<{ id: string }> {
+    const entityType = i.entityType === 'testcase' ? 'testcase' : i.entityType === 'execution' ? 'execution' : '';
+    if (!entityType) throw new PlatformError('validation', 'Attachment entityType must be execution or testcase.');
+    const entityId = idOf(i.entityId, 'entityId');
+    const name = sanitizeAttachmentName(String(i.name ?? ''));
+    const contentBase64 = String(i.contentBase64 ?? '').trim();
+    const sha256 = String(i.sha256 ?? '').trim().toLowerCase();
+    if (!contentBase64) throw new PlatformError('validation', 'Attachment content is required.');
+    if (!/^[a-f0-9]{64}$/.test(sha256)) throw new PlatformError('validation', 'Attachment sha256 must be a 64-character hex digest.');
+    let bytes: Buffer;
+    try {
+      bytes = Buffer.from(contentBase64, 'base64');
+    } catch {
+      throw new PlatformError('validation', 'Attachment content is not valid base64.');
+    }
+    if (bytes.byteLength === 0) throw new PlatformError('validation', 'Attachment content is empty.');
+    if (bytes.byteLength > ATTACHMENT_MAX_BYTES) {
+      throw new PlatformError('validation', `Attachment is larger than ${ATTACHMENT_MAX_BYTES / (1024 * 1024)} MB.`);
+    }
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    if (digest !== sha256) throw new PlatformError('validation', 'Attachment sha256 does not match the content.');
+    const path = entityType === 'execution' ? `/executions/${entityId}/attachments` : `/test-cases/${entityId}/attachments`;
+    const mime = mimeForAttachment(name, bytes);
+    const multipart = buildMultipartFiles(name, mime, bytes);
+    const authorization = this.bearerAuthorization();
+    const res = await this.deps.http.request({
+      method: 'POST',
+      url: `${this.api}${path}`,
+      headers: { accept: 'application/json', Authorization: authorization, 'content-type': multipart.contentType },
+      body: multipart.body,
+      signal,
+    });
+    const body = this.parse(res, path, 'POST');
+    const id = attachmentIdFromResponse(body) ?? digest.slice(0, 16);
+    return { id };
+  }
+
   private async firstIterationId(signal?: AbortSignal): Promise<string> {
     try {
       const items = await this.collect('/iterations', 'iterations', signal);
@@ -652,11 +707,22 @@ class SquashClient implements ConnectorClient {
 
   private parse(res: HttpResponse, path: string, method = 'GET'): Json {
     if (res.status >= 200 && res.status < 300) {
-      // DELETE often returns 204 with an empty body.
+      // DELETE / attachment create often return 204 or an empty 201 body.
       if (res.status === 204 || method === 'DELETE') return {};
+      let text = '';
+      try {
+        text = res.text();
+      } catch {
+        return {};
+      }
+      if (!text.trim()) return {};
       const type = res.headers['content-type'] ?? '';
       if (!type.includes('json')) throw new PlatformError('auth', 'SquashTM answered with a web page instead of data; the address or the token is wrong');
-      return res.json<Json>();
+      try {
+        return JSON.parse(text) as Json;
+      } catch {
+        throw new PlatformError('auth', 'SquashTM answered with a web page instead of data; the address or the token is wrong');
+      }
     }
     const where = path.split('?')[0];
     if (res.status === 401) {
@@ -716,3 +782,37 @@ class SquashClient implements ConnectorClient {
 }
 
 const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+function sanitizeAttachmentName(raw: string): string {
+  const base = raw.trim().split(/[/\\]/).pop() ?? '';
+  const cleaned = base.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/^\.+/, '').slice(0, 120);
+  return cleaned || 'screenshot.jpg';
+}
+
+function mimeForAttachment(name: string, bytes: Buffer): string {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.png') || (bytes[0] === 0x89 && bytes[1] === 0x50)) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || (bytes[0] === 0xff && bytes[1] === 0xd8)) return 'image/jpeg';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  return 'application/octet-stream';
+}
+
+/** Squash expects multipart field name `files` (same as vendor curl examples). */
+function buildMultipartFiles(fileName: string, contentType: string, bytes: Buffer): { body: Uint8Array; contentType: string } {
+  const boundary = `----qa-squash-${randomBytes(12).toString('hex')}`;
+  const head = `--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="${fileName}"\r\nContent-Type: ${contentType}\r\n\r\n`;
+  const tail = `\r\n--${boundary}--\r\n`;
+  const headBytes = Buffer.from(head, 'utf8');
+  const tailBytes = Buffer.from(tail, 'utf8');
+  const body = Buffer.concat([headBytes, bytes, tailBytes]);
+  return { body, contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
+function attachmentIdFromResponse(body: Json): string | undefined {
+  const embedded = body._embedded?.attachments;
+  if (Array.isArray(embedded) && embedded[0] && embedded[0].id != null) return String(embedded[0].id);
+  if (Array.isArray(body) && body[0] && (body[0] as Json).id != null) return String((body[0] as Json).id);
+  if (body.id != null) return String(body.id);
+  return undefined;
+}

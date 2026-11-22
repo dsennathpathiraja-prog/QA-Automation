@@ -99,6 +99,34 @@
       "when": 1795083000000,
       "tag": "0013_test_case_kind_priority",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1795320000000,
+      "tag": "0014_work_item_live_progress",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1795350000000,
+      "tag": "0015_work_item_cancelled",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1795360000000,
+      "tag": "0016_template_preview_url",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1795370000000,
+      "tag": "0017_automation_assets",
+      "breakpoints": true
     }
   ]
 }

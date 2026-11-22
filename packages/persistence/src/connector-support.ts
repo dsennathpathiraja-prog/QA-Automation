@@ -1,5 +1,6 @@
 import { and, desc, eq, isNull, lt } from 'drizzle-orm';
 import type { InstanceResolver, ResolvedInstance, CapabilityId, ConnectorCategory, ConnectorScope } from '@qa/connector-sdk';
+import { withBrowserExploreHelpers } from '@qa/connector-sdk';
 import { connectorSecretLocator, type OperationLogReader, type OperationLogRow } from '@qa/application';
 import type { AuditSink } from '@qa/application';
 import type { AuditEntryInput } from '@qa/security';
@@ -39,12 +40,12 @@ export class PgInstanceResolver implements InstanceResolver {
       config: r.config,
       scope: scopeOf(r.config),
       secretLocator: (await this.secretExists(locator)) ? locator : undefined,
-      effectiveCapabilities: new Set([
+      effectiveCapabilities: withBrowserExploreHelpers(new Set([
         ...states.filter((s) => s.granted && s.support !== 'unsupported').map((s) => s.capabilityId as CapabilityId),
         ...(r.category === 'test-management' && r.accessMode === 'read_write'
-          ? (['tm.testcase.upsert', 'tm.execution.upsert', 'tm.execution.status.update'] as CapabilityId[])
+          ? (['tm.testcase.upsert', 'tm.execution.upsert', 'tm.execution.status.update', 'tm.attachment.upload'] as CapabilityId[])
           : []),
-      ]),
+      ])),
     };
   }
 }

@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
-import { EgressPolicy, HardenedHttpClient, acceptanceCriteriaFromDescription, adfToText, azureBoardsProvider, azureDevOpsProvider, githubProvider, githubWriteScopes, azureDevOpsWriteScopes, jiraProvider, playwrightMcpProvider, scenarioCuesFromDescription, splitAcceptanceCriteria } from '@qa/infrastructure';
-import { assertProviderContract } from '../src';
+import { EgressPolicy, HardenedHttpClient, acceptanceCriteriaFromDescription, adfToText, azureBoardsProvider, azureDevOpsProvider, azureFieldString, azureReposSourceScore, azureWorkItemFields, azureWorkItemTitle, githubProvider, githubWriteScopes, azureDevOpsWriteScopes, jiraProvider, PLAYWRIGHT_MCP_SESSION_MODE, playwrightMcpProvider, resetPlaywrightMcpSessionPoolForTests, scenarioCuesFromDescription, splitAcceptanceCriteria } from '@qa/infrastructure';
+import { assertProviderContract, createHarness, execPolicy, makeInstance } from '../src';
 
 const TOKEN = 'readonly-token-value-0001';
 const lease = { value: { token: TOKEN }, expiresAt: new Date(Date.now() + 60_000), release() {} };
@@ -12,6 +12,13 @@ let closeServer: (() => Promise<void>) | undefined;
 afterEach(async () => {
   await closeServer?.();
   closeServer = undefined;
+  resetPlaywrightMcpSessionPoolForTests();
+});
+
+/** Playwright MCP initialize must return mcp-session-id so Explore can reattach across invokes. */
+const mcpInit = (session = 'mcp-sess-1') => ({
+  headers: { 'mcp-session-id': session },
+  body: { result: { serverInfo: { name: 'playwright', version: '1.2.3' } } },
 });
 
 async function mock(handle: (hit: Hit) => { status?: number; headers?: Record<string, string>; body: unknown; raw?: string }) {
@@ -105,6 +112,9 @@ describe('source and work-item providers', () => {
     expect(m.hits[1]?.path).not.toContain('preview');
     expect((await client.inspectPermissions()).writePermissionsDetected).toEqual([]);
     expect(await client.handle({ id: 'scm.branch.list' } as never, {}, {} as never)).toMatchObject({ items: [{ name: 'main' }] });
+    expect(await client.handle({ id: 'scm.code.search' } as never, { query: 'readme' }, {} as never)).toMatchObject({
+      items: [{ path: 'README.md', snippet: 'README.md' }],
+    });
     expect(m.hits.every((h) => h.method === 'GET')).toBe(true);
   });
 
@@ -167,22 +177,210 @@ describe('source and work-item providers', () => {
     const m = await mock((hit) => {
       const path = pathOf(hit);
       if (hit.method === 'POST' && path.endsWith('/_apis/wit/wiql')) return { body: { workItems: [{ id: 12 }] } };
-      if (path.endsWith('/workitems/12')) return { body: { id: 12, fields: { 'System.Title': 'Checkout', 'System.State': 'New', 'System.WorkItemType': 'User Story', 'System.Description': '<p>Pay</p>', 'Microsoft.VSTS.Common.AcceptanceCriteria': 'The saved card is listed' } } };
+      // Org-scoped expand=All (no project segment), matching Dasun's verified curl.
+      if (path === '/_apis/wit/workitems/12') return { body: { id: 12, fields: { 'System.Title': 'Checkout', 'System.State': 'New', 'System.WorkItemType': 'User Story', 'System.Description': '<p>Pay</p>', 'Microsoft.VSTS.Common.AcceptanceCriteria': 'The saved card is listed' } } };
       if (path.endsWith('/workitems')) return { body: { value: [{ id: 12, fields: { 'System.Title': 'Checkout', 'System.State': 'New', 'System.WorkItemType': 'User Story' } }] } };
       if (path.endsWith('/projects')) return { body: { count: 1, value: [{ id: 'p', name: 'Web' }] } };
       return { status: 404, body: {} };
     });
     const client = azureBoardsProvider.create({ organization: 'contoso', project: 'Web', baseUrl: m.baseUrl }, lease, { http: m.http });
     expect((await client.testConnection()).ok).toBe(true);
-    expect(await client.handle({ id: 'workitem.read' } as never, { id: '12' }, {} as never)).toMatchObject({ title: 'Checkout', acceptanceCriteria: 'The saved card is listed', description: 'Pay' });
+    expect(await client.handle({ id: 'workitem.read' } as never, { id: '12' }, {} as never)).toMatchObject({
+      title: 'Checkout',
+      acceptanceCriteria: 'The saved card is listed',
+      description: '<p>Pay</p>',
+    });
     expect(await client.handle({ id: 'workitem.search' } as never, { query: 'Checkout' }, {} as never)).toMatchObject({ items: [{ id: '12', title: 'Checkout' }] });
     expect(m.hits.some((h) => h.method === 'POST' && h.path.includes('wiql'))).toBe(true);
+    const readHit = m.hits.find((h) => h.method === 'GET' && pathOf(h) === '/_apis/wit/workitems/12');
+    // Org-only path + expand=All + Bearer PAT (Dasun; %24expand also OK; never Cookie/Basic).
+    expect(readHit?.path).toMatch(/(\$|%24)expand=All/);
+    expect(readHit?.path).toMatch(/api-version=7\.1/);
+    expect(readHit?.path).not.toMatch(/\/Web\//);
+    expect(readHit?.auth).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it('builds org-scoped workitem.read URL for organization trafforge (no project segment)', async () => {
+    const m = await mock((hit) => {
+      if (pathOf(hit) === '/_apis/wit/workitems/2357') {
+        return {
+          body: {
+            id: 2357,
+            fields: {
+              'System.Title': 'Settlement reasons for payment ledger',
+              'System.Description': '<p>Body</p>',
+              'System.State': 'Active',
+              'System.WorkItemType': 'User Story',
+            },
+          },
+        };
+      }
+      return { status: 404, body: {} };
+    });
+    // Same shape as production when Organisation = trafforge (baseUrl derived from org).
+    const client = azureBoardsProvider.create(
+      { organization: 'trafforge', project: 'PayNSure', baseUrl: `${m.baseUrl}` },
+      lease,
+      { http: m.http },
+    );
+    const item = await client.handle({ id: 'workitem.read' } as never, { id: '2357' }, {} as never);
+    expect(item).toMatchObject({
+      id: '2357',
+      title: 'Settlement reasons for payment ledger',
+      description: '<p>Body</p>',
+    });
+    const readHit = m.hits.find((h) => h.method === 'GET' && pathOf(h) === '/_apis/wit/workitems/2357');
+    expect(readHit?.path).toMatch(/(\$|%24)expand=All/);
+    expect(readHit?.path).not.toMatch(/\/PayNSure\//);
+    expect(readHit?.auth).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it('reads System.Title from nested fields.fields, value wrappers, and field arrays', async () => {
+    const nested = {
+      id: 3421,
+      fields: {
+        fields: {
+          'System.Title': { value: 'Order transactions calculation flow update to match new payment settlement and reasons' },
+          'System.State': 'Active',
+          'System.WorkItemType': 'User Story',
+          'System.Description': '<p>Settle ledger rows with the new payment reasons.</p>',
+        },
+      },
+    };
+    const flat = azureWorkItemFields(nested);
+    expect(azureFieldString(flat, 'System.Title')).toMatch(/Order transactions calculation flow/);
+    expect(azureWorkItemTitle(nested)).toMatch(/Order transactions calculation flow/);
+    const asArray = {
+      id: 3421,
+      fields: [
+        { referenceName: 'System.Title', value: 'Order transactions calculation flow update to match new payment settlement and reasons' },
+        { referenceName: 'System.Description', value: '<p>Settle ledger rows with the new payment reasons.</p>' },
+      ],
+    };
+    expect(azureWorkItemTitle(asArray)).toMatch(/Order transactions calculation flow/);
+    expect(azureWorkItemFields(asArray)['System.Description']).toMatch(/Settle ledger rows/);
+    const m = await mock((hit) => {
+      const path = pathOf(hit);
+      if (path === '/_apis/wit/workitems/3421') return { body: nested };
+      return { status: 404, body: {} };
+    });
+    const client = azureBoardsProvider.create({ organization: 'contoso', project: 'PayNSure', baseUrl: m.baseUrl }, lease, { http: m.http });
+    expect(await client.handle({ id: 'workitem.read' } as never, { id: '3421' }, {} as never)).toMatchObject({
+      title: 'Order transactions calculation flow update to match new payment settlement and reasons',
+      description: '<p>Settle ledger rows with the new payment reasons.</p>',
+    });
+  });
+
+  it('parses title and description HTML from expand=All only — no fields= on workitem.read (WI 2357)', async () => {
+    const m = await mock((hit) => {
+      const path = pathOf(hit);
+      const raw = hit.path;
+      if (path === '/_apis/wit/workitems/2357') {
+        expect(raw).toMatch(/(\$|%24)expand=All/);
+        expect(raw).not.toMatch(/[?&]fields=/);
+        return {
+          body: {
+            id: 2357,
+            fields: {
+              'System.Title': 'Settlement reasons for payment ledger',
+              'System.Description': '<p>Body</p>',
+              'System.State': 'Active',
+              'System.WorkItemType': 'User Story',
+              'Microsoft.VSTS.Common.AcceptanceCriteria': '<div>Ledger settles</div>',
+            },
+          },
+        };
+      }
+      return { status: 404, body: {} };
+    });
+    const client = azureBoardsProvider.create({ organization: 'contoso', project: 'PayNSure', baseUrl: m.baseUrl }, lease, { http: m.http });
+    expect(await client.handle({ id: 'workitem.read' } as never, { id: '2357' }, {} as never)).toMatchObject({
+      id: '2357',
+      title: 'Settlement reasons for payment ledger',
+      description: '<p>Body</p>',
+      acceptanceCriteria: 'Ledger settles',
+    });
+    expect(m.hits).toHaveLength(1);
+    expect(m.hits[0]?.path).not.toMatch(/[?&]fields=/);
+  });
+
+  it('maps WI 2357 sample fields and { data } wrappers into expand=All context fields', async () => {
+    const sample = {
+      id: 2357,
+      rev: 7,
+      fields: {
+        'System.Id': 2357,
+        'System.TeamProject': 'PayNSure',
+        'System.WorkItemType': 'Requirement',
+        'System.State': 'Proposed',
+        'System.AreaPath': 'PayNSure\\Escrow',
+        'System.IterationPath': 'PayNSure\\Sprint 12',
+        'System.Title': 'Order Amount Placement in Escrow Notification Template',
+        'System.Description': '<div><h2>1. Title</h2><p>Amount Placement in escrow Notification</p></div>',
+        'Microsoft.VSTS.Common.AcceptanceCriteria': '<div><img src="https://example.com/ac.png" alt="Image"></div>',
+        'Microsoft.VSTS.Common.Priority': 2,
+        'Microsoft.VSTS.Common.ValueArea': 'Business',
+        'Microsoft.VSTS.Common.RequirementType': 'Feature',
+        'System.Parent': 2353,
+      },
+      multilineFieldsFormat: {
+        'System.Description': 'html',
+        'Microsoft.VSTS.Common.AcceptanceCriteria': 'html',
+      },
+    };
+    expect(azureWorkItemTitle(sample)).toBe('Order Amount Placement in Escrow Notification Template');
+    expect(azureWorkItemFields(sample)['System.Description']).toMatch(/<div>/);
+    expect(azureWorkItemTitle({ data: sample })).toBe('Order Amount Placement in Escrow Notification Template');
+    expect(azureWorkItemTitle({ data: sample.fields })).toBe('Order Amount Placement in Escrow Notification Template');
+
+    const m = await mock((hit) => {
+      if (pathOf(hit) === '/_apis/wit/workitems/2357') return { body: { data: sample } };
+      return { status: 404, body: {} };
+    });
+    const client = azureBoardsProvider.create({ organization: 'trafforge', project: 'PayNSure', baseUrl: m.baseUrl }, lease, { http: m.http });
+    expect(await client.handle({ id: 'workitem.read' } as never, { id: '2357' }, {} as never)).toMatchObject({
+      id: '2357',
+      title: 'Order Amount Placement in Escrow Notification Template',
+      type: 'Requirement',
+      state: 'Proposed',
+      areaPath: 'PayNSure\\Escrow',
+      iterationPath: 'PayNSure\\Sprint 12',
+      priority: '2',
+      valueArea: 'Business',
+      requirementType: 'Feature',
+      parentId: '2353',
+      description: '<div><h2>1. Title</h2><p>Amount Placement in escrow Notification</p></div>',
+      acceptanceCriteriaHtml: '<div><img src="https://example.com/ac.png" alt="Image"></div>',
+    });
+  });
+
+  it('fails workitem.read clearly when expand=All Succeeds without System.Title', async () => {
+    const m = await mock((hit) => {
+      if (pathOf(hit) === '/_apis/wit/workitems/2357') {
+        return { body: { id: 2357, fields: { 'System.State': 'Proposed', 'System.WorkItemType': 'Requirement' } } };
+      }
+      return { status: 404, body: {} };
+    });
+    const client = azureBoardsProvider.create({ organization: 'trafforge', project: 'PayNSure', baseUrl: m.baseUrl }, lease, { http: m.http });
+    await expect(client.handle({ id: 'workitem.read' } as never, { id: '2357' }, {} as never)).rejects.toMatchObject({
+      errorClass: 'validation',
+      message: expect.stringMatching(/no System\.Title after expand=All/),
+    });
+  });
+
+  it('scores Azure Repos source paths above HTML/SDK noise', () => {
+    expect(azureReposSourceScore('src/pay/CardList.tsx', 'card')).toBeGreaterThan(azureReposSourceScore('docs/readme.md', 'card'));
+    expect(azureReposSourceScore('README.md', 'readme')).toBeGreaterThan(0);
+    expect(azureReposSourceScore('sdk/html/index.html', 'index')).toBe(0);
+    expect(azureReposSourceScore('wwwroot/lib/jquery.js', 'jquery')).toBe(0);
+    expect(azureReposSourceScore('src/pay/CardList.tsx', 'missing')).toBe(0);
   });
 
   it('reads Azure Boards acceptance criteria from Description HTML when the field is empty', async () => {
     const m = await mock((hit) => {
       const path = pathOf(hit);
-      if (path.endsWith('/workitems/7189')) {
+      if (path === '/_apis/wit/workitems/7189') {
+        expect(hit.path).toMatch(/(\$|%24)expand=All/);
         return {
           body: {
             id: 7189,
@@ -199,7 +397,7 @@ describe('source and work-item providers', () => {
     });
     const client = azureBoardsProvider.create({ organization: 'contoso', project: 'PayNSure', baseUrl: m.baseUrl }, lease, { http: m.http });
     const item = await client.handle({ id: 'workitem.read' } as never, { id: '7189' }, {} as never) as { description?: string; acceptanceCriteria?: string };
-    expect(item.description).toMatch(/Acceptance Criteria/);
+    expect(item.description).toMatch(/<b>Acceptance Criteria<\/b>/);
     expect(item.description).toMatch(/The saved card is listed/);
     expect(item.acceptanceCriteria).toMatch(/The saved card is listed/);
     expect(item.acceptanceCriteria).toMatch(/The total includes tax/);
@@ -220,13 +418,19 @@ describe('source and work-item providers', () => {
   });
 
   it('talks to the managed Playwright server and refuses an unlisted origin', async () => {
+    const pageState = `### Page state\n- Page URL: https://shop.example.com/cart\n- Page Title: Cart\n- Page Snapshot:\n\`\`\`yaml\n- button "Checkout" [ref=e1]\n\`\`\`\n`;
     const m = await mock((hit) => {
-      const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string; arguments?: { url?: string } } };
-      if (body.method === 'initialize') return { body: { result: { serverInfo: { name: 'playwright', version: '1.2.3' } } } };
-      if (body.method === 'tools/list') return { body: { result: { tools: ['browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_select_option', 'browser_press_key', 'browser_take_screenshot', 'browser_network_requests', 'browser_close'].map((name) => ({ name })) } } };
-      if (body.params?.name === 'browser_snapshot') return { body: { result: { content: [{ text: 'button Checkout' }], url: 'https://shop.example.com/cart' } } };
-      if (body.params?.name === 'browser_navigate') return { body: { result: { content: [] } } };
-      return { body: { result: { content: [{ data: 'aW1n' }], requests: [] } } };
+      const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string; arguments?: { url?: string; fullPage?: boolean; type?: string } } };
+      if (body.method === 'initialize') return mcpInit('sess-shop');
+      if (body.method === 'tools/list') return { body: { result: { tools: ['browser_navigate', 'browser_snapshot', 'browser_wait_for', 'browser_evaluate', 'browser_click', 'browser_type', 'browser_select_option', 'browser_press_key', 'browser_take_screenshot', 'browser_network_requests', 'browser_close'].map((name) => ({ name })) } } };
+      if (body.params?.name === 'browser_snapshot' || body.params?.name === 'browser_wait_for' || body.params?.name === 'browser_navigate') {
+        return { body: { result: { content: [{ type: 'text', text: pageState }] } } };
+      }
+      if (body.params?.name === 'browser_take_screenshot') {
+        expect(body.params.arguments?.fullPage).toBeUndefined();
+        return { body: { result: { content: [{ type: 'image', data: 'aW1n', mimeType: 'image/png' }] } } };
+      }
+      return { body: { result: { content: [], requests: [] } } };
     });
     const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'https://shop.example.com', savedSessionName: 'ada-signed-in' }, undefined, { http: m.http });
     const conn = await client.testConnection();
@@ -235,9 +439,260 @@ describe('source and work-item providers', () => {
     expect(m.hits[0]?.accept).toContain('text/event-stream');
     const probes = await client.probeCapabilities();
     expect(probes.find((p) => p.capability === 'browser.navigate')).toMatchObject({ support: 'supported' });
-    expect(await client.handle({ id: 'browser.navigate' } as never, { url: 'https://shop.example.com/cart' }, {} as never)).toMatchObject({ finalUrl: 'https://shop.example.com/cart' });
-    await expect(client.handle({ id: 'browser.navigate' } as never, { url: 'https://evil.example/phish' }, {} as never)).rejects.toMatchObject({ errorClass: 'denied' });
-    expect(await client.handle({ id: 'browser.snapshot' } as never, {}, {} as never)).toMatchObject({ accessibilityTree: 'button Checkout' });
+    const opened = await client.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
+    expect(opened.sessionId).toBe('sess-shop');
+    const nav = await client.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'https://shop.example.com/cart' }, {} as never) as { finalUrl: string; title?: string; accessibilityTree?: string };
+    expect(nav).toMatchObject({ finalUrl: 'https://shop.example.com/cart', title: 'Cart' });
+    expect(nav.accessibilityTree).toMatch(/Checkout/);
+    await expect(client.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'https://evil.example/phish' }, {} as never)).rejects.toMatchObject({ errorClass: 'denied' });
+    expect(await client.handle({ id: 'browser.snapshot' } as never, { sessionId: opened.sessionId }, {} as never)).toMatchObject({
+      accessibilityTree: expect.stringMatching(/Checkout/),
+      url: 'https://shop.example.com/cart',
+      title: 'Cart',
+    });
+    expect(await client.handle({ id: 'browser.screenshot' } as never, { sessionId: opened.sessionId }, {} as never)).toMatchObject({ artifactBase64: 'aW1n' });
+  });
+
+  it('reattaches mcp-session-id across fresh clients (manager invoke pattern)', async () => {
+    const pageState = `### Page state\n- Page URL: http://sdk.paynsure.internal/shop\n- Page Title: Shop\n- Page Snapshot:\n\`\`\`yaml\n- button "Add to cart" [ref=e1]\n\`\`\`\n`;
+    const evalOk = `### Result\n${JSON.stringify({ url: 'http://sdk.paynsure.internal/shop', title: 'Shop', buttons: ['Add to cart'], headings: [], links: [], fields: [], bodyText: 'Add to cart', readyState: 'complete', iframes: [], frameDocs: [] }, null, 2)}\n`;
+    let initializes = 0;
+    let creates = 0;
+    const m = await mock((hit) => {
+      const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string } };
+      if (body.method === 'initialize') {
+        initializes += 1;
+        return mcpInit('sess-cross');
+      }
+      if (body.params?.name === 'browser_navigate' || body.params?.name === 'browser_wait_for') {
+        expect(hit.session).toBe('sess-cross');
+        return { body: { result: { content: [{ type: 'text', text: pageState }] } } };
+      }
+      if (body.params?.name === 'browser_evaluate') {
+        // Critical: evaluate must reuse the open session, not a blank initialize.
+        expect(hit.session).toBe('sess-cross');
+        expect(initializes).toBe(1);
+        return { body: { result: { content: [{ type: 'text', text: evalOk }] } } };
+      }
+      return { body: { result: { content: [] } } };
+    });
+    const wrapCreate = () => {
+      creates += 1;
+      return playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'http://sdk.paynsure.internal' }, undefined, { http: m.http });
+    };
+    const openClient = wrapCreate();
+    const opened = await openClient.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string; sessionMode?: string };
+    expect(opened.sessionId).toBe('sess-cross');
+    expect(opened.sessionMode).toBe(PLAYWRIGHT_MCP_SESSION_MODE);
+    await openClient.dispose();
+
+    const navClient = wrapCreate();
+    await navClient.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'http://sdk.paynsure.internal/shop' }, {} as never);
+    await navClient.dispose();
+
+    const evalClient = wrapCreate();
+    const evaluated = await evalClient.handle({ id: 'browser.evaluate' } as never, { sessionId: opened.sessionId, script: '() => ({ ok: true })' }, {} as never) as { resultText: string };
+    expect(evaluated.resultText).toMatch(/Add to cart/);
+    expect(initializes).toBe(1);
+    expect(creates).toBe(3);
+  });
+
+  it('Manager invoke open → navigate → evaluate uses one MCP initialize across three clients', async () => {
+    const pageState = `### Page state\n- Page URL: http://sdk.paynsure.internal/shop\n- Page Title: Shop\n- Page Snapshot:\n\`\`\`yaml\n- button "Add to cart" [ref=e1]\n\`\`\`\n`;
+    const evalOk = `### Result\n${JSON.stringify({ url: 'http://sdk.paynsure.internal/shop', title: 'Shop', buttons: ['Add to cart'], headings: [], links: [], fields: [], bodyText: 'Add to cart', readyState: 'complete', iframes: [], frameDocs: [] }, null, 2)}\n`;
+    let initializes = 0;
+    let providerCreates = 0;
+    const m = await mock((hit) => {
+      const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string } };
+      if (body.method === 'initialize') {
+        initializes += 1;
+        return mcpInit('sess-mgr');
+      }
+      if (body.params?.name === 'browser_navigate' || body.params?.name === 'browser_wait_for') {
+        expect(hit.session).toBe('sess-mgr');
+        return { body: { result: { content: [{ type: 'text', text: pageState }] } } };
+      }
+      if (body.params?.name === 'browser_evaluate') {
+        expect(hit.session).toBe('sess-mgr');
+        expect(initializes).toBe(1);
+        return { body: { result: { content: [{ type: 'text', text: evalOk }] } } };
+      }
+      if (body.params?.name === 'browser_close') return { body: { result: { content: [] } } };
+      return { body: { result: { content: [] } } };
+    });
+    const countingProvider = {
+      ...playwrightMcpProvider,
+      create(config: unknown, secrets: unknown, deps: unknown) {
+        providerCreates += 1;
+        return playwrightMcpProvider.create(config as never, secrets as never, deps as never);
+      },
+    };
+    const caps = ['browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.wait', 'browser.evaluate', 'browser.screenshot', 'browser.session.close'];
+    const h = createHarness({
+      providers: [countingProvider],
+      instances: [makeInstance({
+        id: 'br1',
+        providerKey: 'playwright-mcp',
+        category: 'browser-automation',
+        config: { baseUrl: m.baseUrl, allowedOrigins: 'http://sdk.paynsure.internal' },
+      }, caps)],
+      policies: { ex1: execPolicy({
+        boundRoles: { browserAutomation: 'br1' },
+        allowedOrigins: ['http://sdk.paynsure.internal', 'sdk.paynsure.internal'],
+      }) },
+      adapterDeps: { http: m.http } as never,
+    });
+    const actor = { type: 'step' as const, id: 'explore', executionId: 'ex1', stepId: 's1' };
+    const opened = await h.manager.invoke<{ sessionId: string; sessionMode?: string }>({
+      role: 'browserAutomation',
+      capability: 'browser.session.open',
+      input: {},
+      actor,
+    });
+    expect(opened.sessionId).toBe('sess-mgr');
+    expect(opened.sessionMode).toBe(PLAYWRIGHT_MCP_SESSION_MODE);
+    await h.manager.invoke({
+      role: 'browserAutomation',
+      capability: 'browser.navigate',
+      input: { sessionId: opened.sessionId, url: 'http://sdk.paynsure.internal/shop' },
+      actor,
+    });
+    const evaluated = await h.manager.invoke<{ resultText: string }>({
+      role: 'browserAutomation',
+      capability: 'browser.evaluate',
+      input: { sessionId: opened.sessionId, script: '() => ({ ok: true })' },
+      actor,
+    });
+    expect(evaluated.resultText).toMatch(/Add to cart/);
+    await h.manager.invoke({
+      role: 'browserAutomation',
+      capability: 'browser.session.close',
+      input: { sessionId: opened.sessionId },
+      actor,
+    });
+    expect(initializes).toBe(1);
+    expect(providerCreates).toBeGreaterThanOrEqual(3);
+  });
+
+  it('rewrites ERR_HTTP_RESPONSE_CODE_FAILURE with shop IP guidance', async () => {
+    const m = await mock((hit) => {
+      const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string } };
+      if (body.method === 'initialize') return mcpInit('sess-http');
+      if (body.params?.name === 'browser_navigate') {
+        return {
+          body: {
+            result: {
+              isError: true,
+              content: [{
+                type: 'text',
+                text: '### Result\nError: page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE at http://sdk.paynsure.internal/shop\nCall log:\n  - navigating to "http://sdk.paynsure.internal/shop", waiting until "domcontentloaded"',
+              }],
+            },
+          },
+        };
+      }
+      return { body: { result: { content: [] } } };
+    });
+    const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'http://sdk.paynsure.internal' }, undefined, { http: m.http });
+    const opened = await client.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
+    await expect(client.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'http://sdk.paynsure.internal/shop' }, {} as never)).rejects.toMatchObject({
+      errorClass: 'transient',
+      message: expect.stringMatching(/ERR_HTTP_RESPONSE_CODE_FAILURE|PLAYWRIGHT_MCP_SHOP_IP|VirtualHost|wrong IP/i),
+    });
+  });
+
+  it('retries navigate once when Chromium profile is already in use', async () => {
+    const pageState = `### Page state\n- Page URL: http://sdk.paynsure.internal/shop\n- Page Title: Shop\n- Page Snapshot:\n\`\`\`yaml\n- button "Add to cart" [ref=e1]\n\`\`\`\n`;
+    let navigates = 0;
+    let closes = 0;
+    const m = await mock((hit) => {
+      const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string } };
+      if (body.method === 'initialize') return mcpInit('sess-busy');
+      if (body.params?.name === 'browser_close') {
+        closes += 1;
+        return { body: { result: { content: [] } } };
+      }
+      if (body.params?.name === 'browser_navigate') {
+        navigates += 1;
+        if (navigates === 1) {
+          return {
+            body: {
+              result: {
+                isError: true,
+                content: [{ type: 'text', text: '### Result\nError: Browser is already in use for /ms-playwright/mcp-chromium, use --isolated to run multiple instances of the same browser' }],
+              },
+            },
+          };
+        }
+        return { body: { result: { content: [{ type: 'text', text: pageState }] } } };
+      }
+      if (body.params?.name === 'browser_wait_for') {
+        return { body: { result: { content: [{ type: 'text', text: pageState }] } } };
+      }
+      return { body: { result: { content: [] } } };
+    });
+    const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'http://sdk.paynsure.internal' }, undefined, { http: m.http });
+    const opened = await client.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
+    await expect(client.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'http://sdk.paynsure.internal/shop' }, {} as never)).resolves.toMatchObject({
+      finalUrl: 'http://sdk.paynsure.internal/shop',
+    });
+    expect(navigates).toBe(2);
+    expect(closes).toBeGreaterThanOrEqual(1);
+  });
+
+  it('returns an empty accessibility tree when MCP snapshot content is empty (no circuit-trip throw)', async () => {
+    const m = await mock((hit) => {
+      const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string } };
+      if (body.method === 'initialize') return mcpInit();
+      if (body.params?.name === 'browser_snapshot') return { body: { result: { content: [] } } };
+      return { body: { result: { content: [] } } };
+    });
+    const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'https://shop.example.com' }, undefined, { http: m.http });
+    const opened = await client.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
+    await expect(client.handle({ id: 'browser.snapshot' } as never, { sessionId: opened.sessionId }, {} as never)).resolves.toMatchObject({
+      accessibilityTree: '',
+      url: '',
+    });
+  });
+
+  it('waits and evaluates through Playwright MCP tools for SPA / DOM probe', async () => {
+    const pageState = `### Page state\n- Page URL: http://sdk.paynsure.internal/shop\n- Page Title: Metro Mobile Store\n- Page Snapshot:\n\`\`\`yaml\n- button "Add to cart" [ref=e1]\n\`\`\`\n`;
+    const evalBody = `### Result\n${JSON.stringify({ url: 'http://sdk.paynsure.internal/shop', title: 'Metro Mobile Store', buttons: ['Add to cart'] }, null, 2)}\n\n${pageState}`;
+    const m = await mock((hit) => {
+      const body = JSON.parse(hit.body || '{}') as { method?: string; params?: { name?: string; arguments?: Record<string, unknown> } };
+      if (body.method === 'initialize') return mcpInit();
+      if (body.params?.name === 'browser_wait_for') {
+        expect(body.params.arguments?.text === 'Add to cart' || typeof body.params.arguments?.time === 'number').toBe(true);
+        return { body: { result: { content: [{ type: 'text', text: pageState }] } } };
+      }
+      if (body.params?.name === 'browser_evaluate') {
+        expect(String(body.params.arguments?.function || '')).toMatch(/=>/);
+        return { body: { result: { content: [{ type: 'text', text: evalBody }] } } };
+      }
+      return { body: { result: { content: [] } } };
+    });
+    const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'http://sdk.paynsure.internal' }, undefined, { http: m.http });
+    const opened = await client.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
+    await expect(client.handle({ id: 'browser.wait' } as never, { sessionId: opened.sessionId, text: 'Add to cart' }, {} as never)).resolves.toMatchObject({
+      ok: true,
+      title: 'Metro Mobile Store',
+    });
+    const evaluated = await client.handle({ id: 'browser.evaluate' } as never, { sessionId: opened.sessionId, script: '() => ({ ok: true })' }, {} as never) as { resultText: string; title?: string };
+    expect(evaluated.resultText).toMatch(/Add to cart/);
+    expect(evaluated.title).toBe('Metro Mobile Store');
+  });
+
+  it('accepts a bare host in Playwright allowedOrigins (URL vs host)', async () => {
+    const m = await mock((hit) => {
+      const body = JSON.parse(hit.body || '{}') as { method?: string };
+      if (body.method === 'initialize') return mcpInit();
+      return { body: { result: { content: [] } } };
+    });
+    const client = playwrightMcpProvider.create({ baseUrl: m.baseUrl, allowedOrigins: 'sdk.paynsure.internal' }, undefined, { http: m.http });
+    const opened = await client.handle({ id: 'browser.session.open' } as never, {}, {} as never) as { sessionId: string };
+    await expect(client.handle({ id: 'browser.navigate' } as never, { sessionId: opened.sessionId, url: 'https://sdk.paynsure.internal/app' }, {} as never)).resolves.toMatchObject({
+      finalUrl: 'https://sdk.paynsure.internal/app',
+    });
   });
 
   it('explains a Playwright 403 as a host-name refusal', async () => {
@@ -256,8 +711,26 @@ describe('source and work-item providers', () => {
     const client = playwrightMcpProvider.create({ baseUrl: 'http://playwright-mcp:8931', allowedOrigins: 'https://shop.example.com' }, undefined, { http });
     const result = await client.testConnection();
     expect(result.ok).toBe(false);
-    expect(result.message).toMatch(/profile "browser"/);
+    expect(result.message).toMatch(/DNS could not resolve Playwright/);
     expect(result.message).toMatch(/http:\/\/playwright-mcp:8931/);
+    expect(result.message).toMatch(/PLAYWRIGHT_MCP_URL|Compose profile "browser"/);
+    await expect(client.handle({ id: 'browser.session.open' } as never, {}, {} as never)).rejects.toMatchObject({
+      message: expect.stringMatching(/DNS could not resolve Playwright host for http:\/\/playwright-mcp:8931/i),
+    });
+  });
+
+  it('explains connection refused as MCP not listening (crash loop / bad flags)', async () => {
+    const { PlatformError } = await import('@qa/domain');
+    const http = {
+      request: async () => {
+        throw new PlatformError('transient', 'connection refused: connect ECONNREFUSED 172.18.0.8:8931');
+      },
+    };
+    const client = playwrightMcpProvider.create({ baseUrl: 'http://playwright-mcp:8931', allowedOrigins: 'https://shop.example.com' }, undefined, { http });
+    const result = await client.testConnection();
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/refused the TCP connection/);
+    expect(result.message).toMatch(/--allowed-hosts|unknown option|logs playwright-mcp/);
   });
 
   it('reads a Playwright event-stream reply', async () => {

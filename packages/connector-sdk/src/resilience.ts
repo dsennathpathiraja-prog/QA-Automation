@@ -33,13 +33,22 @@ export class CircuitBreaker {
     if (this.clock.now().getTime() - this.openedAt >= this.cooldownMs) return; // half-open: allow a probe
     throw new PlatformError('transient', 'circuit breaker is open for this connector');
   }
-  success(): void {
+  /** Close the breaker and clear failure counts (e.g. after a successful Test connection). */
+  reset(): void {
     this.failures = 0;
     this.openedAt = undefined;
+  }
+  success(): void {
+    this.reset();
   }
   failure(err: unknown): void {
     if (err instanceof PlatformError && !['transient', 'rate-limited'].includes(err.errorClass)) return;
     this.failures += 1;
     if (this.failures >= this.threshold) this.openedAt = this.clock.now().getTime();
+  }
+  /** Test helper / diagnostics. */
+  isOpen(now = this.clock.now().getTime()): boolean {
+    if (this.openedAt === undefined) return false;
+    return now - this.openedAt < this.cooldownMs;
   }
 }

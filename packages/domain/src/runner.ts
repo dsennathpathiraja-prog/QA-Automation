@@ -31,6 +31,55 @@ export interface RunnerSpec {
   /** Plain, non-secret settings only. */
   env?: Record<string, string>;
   labels?: Record<string, string>;
+  /**
+   * Small text files the launcher writes under `/tmp` before start (tmpfs). Used for large case lists
+   * that cannot fit in env (Docker/env caps). Paths must be `/tmp/<name>` only — no host mounts.
+   */
+  inlineFiles?: Array<{ path: string; content: string }>;
+}
+
+/** Max total UTF-8 bytes for work-item case payloads (chunked across env parts). */
+export const RUNNER_INLINE_FILES_MAX_BYTES = 2 * 1024 * 1024;
+/** Stay under validateRunnerSpec's 4096-byte per-env cap (and Docker's practical limits). */
+export const RUNNER_ENV_CHUNK_SIZE = 4000;
+/** Safety valve for enormous case lists after compacting. */
+export const RUNNER_ENV_CHUNK_MAX_PARTS = 256;
+const INLINE_TMP_PATH = /^\/tmp\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/**
+ * Split a large string into env vars `PREFIX_PARTS` + `PREFIX_P0`… that each stay under the per-value cap.
+ * Used for work-item cases: Docker put-archive into /tmp fails with ReadonlyRootfs (400) before start.
+ */
+export function chunkEnvValue(prefix: string, value: string, chunkSize = RUNNER_ENV_CHUNK_SIZE): Record<string, string> {
+  if (!/^[A-Z][A-Z0-9_]*$/.test(prefix)) throw new Error('chunkEnvValue prefix must be an uppercase env name stem');
+  if (value.length === 0) return { [`${prefix}_PARTS`]: '0' };
+  const parts: string[] = [];
+  for (let i = 0; i < value.length; i += chunkSize) parts.push(value.slice(i, i + chunkSize));
+  if (parts.length > RUNNER_ENV_CHUNK_MAX_PARTS) {
+    throw new PlatformError(
+      'validation',
+      `Payload needs ${parts.length} env chunks but the limit is ${RUNNER_ENV_CHUNK_MAX_PARTS}. Split the work item or shorten case names.`,
+    );
+  }
+  const env: Record<string, string> = { [`${prefix}_PARTS`]: String(parts.length) };
+  parts.forEach((part, i) => {
+    env[`${prefix}_P${i}`] = part;
+  });
+  return env;
+}
+
+/** Reassemble values produced by chunkEnvValue (runner / tests). */
+export function joinEnvChunks(env: Record<string, string | undefined>, prefix: string): string | undefined {
+  const n = Number(env[`${prefix}_PARTS`] ?? '');
+  if (!Number.isInteger(n) || n < 0) return undefined;
+  if (n === 0) return '';
+  let out = '';
+  for (let i = 0; i < n; i += 1) {
+    const part = env[`${prefix}_P${i}`];
+    if (part === undefined) return undefined;
+    out += part;
+  }
+  return out;
 }
 
 export type RunnerState = 'starting' | 'running' | 'exited' | 'failed' | 'stopped' | 'unknown';
@@ -57,6 +106,11 @@ export interface RunnerLauncher {
   stop(runnerId: string, reason: string): Promise<void>;
   /** Finds runners by label, for the reaper that cleans up after a crashed worker. */
   list(labels: Record<string, string>): Promise<RunnerStatus[]>;
+  /**
+   * Stops and removes every managed runner for an execution id (workflow run or work-item run).
+   * Frees pool slots immediately so Cancel does not leave orphans until the reclaim sweep.
+   */
+  cancelByExecution(executionId: string, reason?: string): Promise<{ stopped: number }>;
 }
 
 export const RUNNER_MAX = { cpus: 8, memoryMb: 16_384, timeoutSeconds: 4 * 3600, pids: 4096 } as const;
@@ -89,6 +143,23 @@ export function validateRunnerSpec(spec: RunnerSpec): string[] {
   }
   for (const k of Object.keys(spec.labels ?? {})) {
     if (k.startsWith(RESERVED_LABEL_PREFIX)) p.push(`label ${k} uses the reserved prefix ${RESERVED_LABEL_PREFIX}`);
+  }
+  const files = spec.inlineFiles ?? [];
+  if (files.length > 8) p.push('inlineFiles may list at most 8 files');
+  let inlineBytes = 0;
+  const seen = new Set<string>();
+  for (const file of files) {
+    if (!file || typeof file.path !== 'string' || typeof file.content !== 'string') {
+      p.push('inlineFiles entries need path and content strings');
+      continue;
+    }
+    if (!INLINE_TMP_PATH.test(file.path)) p.push(`inlineFiles path "${file.path}" must be /tmp/<safe-name>`);
+    if (seen.has(file.path)) p.push(`inlineFiles path "${file.path}" is duplicated`);
+    seen.add(file.path);
+    inlineBytes += Buffer.byteLength(file.content, 'utf8');
+  }
+  if (inlineBytes > RUNNER_INLINE_FILES_MAX_BYTES) {
+    p.push(`inlineFiles total ${inlineBytes} bytes exceeds the ${RUNNER_INLINE_FILES_MAX_BYTES} byte limit; split the work item or shorten case payloads`);
   }
   return p;
 }

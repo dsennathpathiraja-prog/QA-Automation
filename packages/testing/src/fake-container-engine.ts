@@ -11,6 +11,7 @@ export class FakeContainerEngine implements ContainerEngine {
   readonly created: { name: string; body: Record<string, unknown> }[] = [];
   readonly images = new Map<string, { id: string }>();
   readonly output = new Map<string, string>();
+  readonly files = new Map<string, Array<{ path: string; content: string }>>();
   private seq = 0;
 
   async create(name: string, body: Record<string, unknown>) {
@@ -36,6 +37,11 @@ export class FakeContainerEngine implements ContainerEngine {
     if (c && (c.state.status === 'running' || c.state.status === 'created')) Object.assign(c.state, { status: 'exited', exitCode: 137, finishedAt: new Date() });
   }
 
+  async remove(id: string) {
+    if (!this.containers.has(id)) throw new PlatformError('not-found', 'no such container');
+    this.containers.delete(id);
+  }
+
   async list(labels: Record<string, string>) {
     return [...this.containers.values()].map((c) => c.state).filter((s) => Object.entries(labels).every(([k, v]) => s.labels[k] === v));
   }
@@ -46,6 +52,11 @@ export class FakeContainerEngine implements ContainerEngine {
 
   async logs(id: string) {
     return this.output.get(id) ?? '';
+  }
+
+  async putFiles(id: string, files: Array<{ path: string; content: string }>) {
+    this.get(id);
+    this.files.set(id, files.map((f) => ({ ...f })));
   }
 
   add(state: ContainerState) {

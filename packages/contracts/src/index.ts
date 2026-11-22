@@ -186,6 +186,8 @@ export const EnvironmentSummarySchema = z.object({
 export const EnvironmentDetailSchema = EnvironmentSummarySchema.extend({
   browser: EnvironmentBrowserSchema,
   restrictions: EnvironmentRestrictionsSchema,
+  /** Optional notification/email template preview URL (Phase 8 E2). */
+  templatePreviewUrl: z.string().optional(),
   reachability: z.enum(['not-run', 'queued', 'checking', 'reachable', 'unreachable']),
   reachabilityDetail: z.string().optional(),
   reachabilityCheckedAt: z.string().optional(),
@@ -197,11 +199,15 @@ export const CreateEnvironmentRequest = z.object({
   name: z.string(),
   kind: EnvironmentKindSchema,
   applicationUrl: z.string(),
+  templatePreviewUrl: z.string().optional(),
   browser: EnvironmentBrowserSchema.partial().optional(),
   restrictions: EnvironmentRestrictionsSchema.partial().optional(),
   enabled: z.boolean().optional(),
 });
-export const UpdateEnvironmentRequest = CreateEnvironmentRequest.partial();
+export const UpdateEnvironmentRequest = CreateEnvironmentRequest.partial().extend({
+  /** Pass empty string to clear the template preview URL. */
+  templatePreviewUrl: z.string().nullable().optional(),
+});
 export type EnvironmentDetail = z.infer<typeof EnvironmentDetailSchema>;
 
 const AuthType = z.enum(['none', 'basic', 'form-login', 'bearer', 'storage-state']);
@@ -239,6 +245,7 @@ export const ResolvedEnvironmentSchema = z.object({
   name: z.string(),
   kind: EnvironmentKindSchema,
   applicationUrl: z.string(),
+  templatePreviewUrl: z.string().optional(),
   browser: EnvironmentBrowserSchema,
   restrictions: EnvironmentRestrictionsSchema,
   selectable: z.boolean(),
@@ -323,7 +330,11 @@ export const ResetTestCasesResponse = z.object({
   casesCleared: z.number(),
   squashWiped: z.literal(false),
 });
-export const WorkItemCaseStatus = z.enum(['Passed', 'Failed', 'Blocked', 'Skipped']);
+export const WorkItemCaseStatus = z.enum(['Queued', 'Running', 'Passed', 'Failed', 'Blocked', 'Skipped']);
+export const WorkItemCaseStepSchema = z.object({
+  name: z.string(),
+  status: z.enum(['Queued', 'Running', 'Passed', 'Failed', 'Blocked', 'Skipped']),
+});
 export const WorkItemCaseResultSchema = z.object({
   id: z.string(),
   testCaseId: z.string(),
@@ -332,6 +343,17 @@ export const WorkItemCaseResultSchema = z.object({
   message: z.string(),
   hasScreenshot: z.boolean(),
   squashExecutionId: z.string().optional(),
+  steps: z.array(WorkItemCaseStepSchema).optional(),
+});
+export const WorkItemRunCounts = z.object({
+  total: z.number(),
+  queued: z.number(),
+  running: z.number(),
+  passed: z.number(),
+  failed: z.number(),
+  blocked: z.number(),
+  skipped: z.number(),
+  completed: z.number(),
 });
 export const WorkItemExecutionSchema = z.object({
   id: z.string(),
@@ -339,10 +361,11 @@ export const WorkItemExecutionSchema = z.object({
   environmentId: z.string(),
   environmentName: z.string(),
   caseCount: z.number(),
-  status: z.enum(['prepared', 'queued', 'running', 'completed', 'failed']),
+  status: z.enum(['prepared', 'queued', 'running', 'completed', 'failed', 'cancelled']),
   createdAt: z.string(),
   finishedAt: z.string().optional(),
   squashSync: z.string().optional(),
+  counts: WorkItemRunCounts.optional(),
   results: z.array(WorkItemCaseResultSchema).optional(),
 });
 export const WorkItemExecutionBoard = z.object({
@@ -351,10 +374,68 @@ export const WorkItemExecutionBoard = z.object({
   items: z.array(WorkItemExecutionSchema),
 });
 export const StartWorkItemExecutionRequest = z.object({ workItem: z.string(), environmentId: z.string() });
-export const WorkItemCaseScreenshot = z.object({ testCaseId: z.string(), name: z.string(), contentType: z.literal('image/png'), pngBase64: z.string() });
+export const WorkItemCaseScreenshot = z.object({
+  testCaseId: z.string(),
+  name: z.string(),
+  contentType: z.enum(['image/png', 'image/jpeg']),
+  pngBase64: z.string().min(200),
+});
 
 export const ValidateEnvironmentRequest = z.object({
   workflowType: z.enum(['requirement-validation', 'regression-testing']).optional(),
   parallelism: z.number().optional(),
   prodSafe: z.boolean().optional(),
+});
+
+/** Phase 8 E6 — draft→approved automation assets + Squash ↔ platform script mapping. */
+export const AutomationAssetStatusSchema = z.enum(['draft', 'approved']);
+export const AutomationAssetSchema = z.object({
+  id: z.string(),
+  key: z.string(),
+  name: z.string(),
+  scriptPath: z.string(),
+  scriptBody: z.string(),
+  status: AutomationAssetStatusSchema,
+  testCaseId: z.string().optional(),
+  approvedBy: z.string().optional(),
+  approvedAt: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export const AutomationAssetListResponse = z.object({ items: z.array(AutomationAssetSchema) });
+export const RegisterAutomationAssetRequest = z.object({
+  key: z.string().min(1),
+  name: z.string().min(1),
+  scriptPath: z.string().min(1),
+  scriptBody: z.string().optional(),
+  testCaseId: z.string().optional(),
+  squashCaseId: z.string().optional(),
+  squashReference: z.string().optional(),
+});
+export const AutomationMappingSchema = z.object({
+  id: z.string(),
+  squashCaseId: z.string(),
+  squashReference: z.string(),
+  assetId: z.string(),
+  assetKey: z.string(),
+  assetName: z.string(),
+  scriptPath: z.string(),
+  status: AutomationAssetStatusSchema,
+  updatedAt: z.string(),
+});
+export const AutomationMappingListResponse = z.object({ items: z.array(AutomationMappingSchema) });
+export const CreateAutomationMappingRequest = z.object({
+  squashCaseId: z.string().min(1),
+  squashReference: z.string().optional(),
+  assetId: z.string().min(1),
+});
+export const AutomationResolveResponse = z.object({
+  squashCaseId: z.string(),
+  squashReference: z.string(),
+  assetId: z.string(),
+  assetKey: z.string(),
+  assetName: z.string(),
+  scriptPath: z.string(),
+  status: AutomationAssetStatusSchema,
+  approved: z.boolean(),
 });

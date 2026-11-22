@@ -40,11 +40,15 @@ const priorityFor = (kind: ScenarioKind): ScenarioPriority => {
   return 'medium';
 };
 
-const caseTitle = (kind: ScenarioKind, label: string): string => {
-  const line = clip(label, 90);
-  if (kind === 'negative') return clip(`Negative: ${line}`, 120);
-  if (kind === 'edge') return clip(`Edge: ${line}`, 120);
-  return clip(`Positive: ${line}`, 120);
+const caseTitle = (kind: ScenarioKind, label: string, workItemTitle = ''): string => {
+  const goal = clip(label, 90);
+  const title = workItemTitle.trim();
+  const body = !title || goal.toLowerCase().includes(title.toLowerCase())
+    ? goal
+    : `${title} — ${goal}`;
+  const prefix = kind === 'negative' ? 'Negative' : kind === 'edge' ? 'Edge' : 'Positive';
+  if (new RegExp(`^${prefix}\\s*:`, 'i').test(body)) return clip(body, 120);
+  return clip(`${prefix}: ${body}`, 120);
 };
 
 const focusOf = (criterion: string): string => {
@@ -159,13 +163,20 @@ export function planWithPlaywrightPlanner(input: {
   application: string;
   criteria: string[];
   findings?: string;
+  /** Work item title from Read — included in Positive/Negative/Edge case names. */
+  workItemTitle?: string;
 }): { summary: string; scenarios: PlannerScenario[]; planMarkdown: string; planArtifact: string } {
-  const criteria = input.criteria.length > 0 ? input.criteria : [`Verify ${input.application} for ${input.workItem}`];
+  const workItemTitle = (input.workItemTitle ?? '').trim();
+  const criteria = input.criteria.length > 0
+    ? input.criteria
+    : [workItemTitle
+      ? `${workItemTitle} on ${input.application}`
+      : `Verify ${input.application} for ${input.workItem}`];
   const scenarios: PlannerScenario[] = [];
   const push = (kind: ScenarioKind, criterion: string, label: string, steps: string, expected: string) => {
     if (scenarios.length >= MAX_PLAN_SCENARIOS) return;
     scenarios.push({
-      name: caseTitle(kind, label),
+      name: caseTitle(kind, label, workItemTitle),
       kind,
       priority: priorityFor(kind),
       criterion: clip(criterion, 160),
@@ -221,8 +232,67 @@ export function planWithPlaywrightPlanner(input: {
   };
 }
 
+const findingsUrl = (findings?: string): string => {
+  const hit = /\bhttps?:\/\/[^\s)\]"'<>]+/i.exec(findings || '')?.[0];
+  return hit ? hit.replace(/[),.;]+$/, '') : '/';
+};
+
+const findingsButton = (findings?: string): string | undefined => {
+  const hit = /buttons?\s*=\s*"((?:\\.|[^"\\])*)"/i.exec(findings || '')?.[1];
+  return hit?.replace(/\\"/g, '"').trim() || undefined;
+};
+
+const findingsHeading = (findings?: string): string | undefined => {
+  const hit = /heading\s*=\s*"((?:\\.|[^"\\])*)"/i.exec(findings || '')?.[1];
+  return hit?.replace(/\\"/g, '"').trim() || undefined;
+};
+
+const isBodyStub = (src: string): boolean => (
+  /expect\s*\(\s*page\.locator\(\s*['"]body['"]\s*\)\s*\)\s*\.toBeVisible\s*\(/.test(src)
+  && !/page\.getBy(Role|Label|Text|TestId)\s*\(/.test(src)
+);
+
+const offlineMeaningfulSource = (input: {
+  name: string;
+  kind: ScenarioKind;
+  priority: ScenarioPriority;
+  criterion: string;
+  steps: string;
+  expected: string;
+  findings?: string;
+}): string => {
+  const url = findingsUrl(input.findings);
+  const heading = findingsHeading(input.findings);
+  const button = findingsButton(input.findings);
+  const name = input.name.replace(/'/g, "\\'");
+  const lines = [
+    "import { test, expect } from '@playwright/test';",
+    '',
+    `test('${name}', async ({ page }) => {`,
+    `  await page.goto('${url.replace(/'/g, "\\'")}');`,
+    `  // ${input.kind} (${input.priority}): ${clip(input.criterion, 160)}`,
+    `  // Steps: ${clip(input.steps.replace(/\s+/g, ' '), 220)}`,
+  ];
+  if (heading) {
+    lines.push(`  await expect(page.getByRole('heading', { name: '${heading.replace(/'/g, "\\'")}' })).toBeVisible();`);
+  } else {
+    lines.push(`  await expect(page.getByRole('main').or(page.locator('h1, h2, [role="main"]')).first()).toBeVisible();`);
+  }
+  if (button) {
+    lines.push(`  await page.getByRole('button', { name: '${button.replace(/'/g, "\\'")}' }).click();`);
+  }
+  if (input.kind === 'negative') {
+    lines.push(`  await expect(page.getByText(/invalid|error|required|blocked|empty|cart/i).first()).toBeVisible();`);
+  } else {
+    lines.push(`  await expect(page.getByText(/cart|order|summary|amount|total|checkout/i).first()).toBeVisible();`);
+  }
+  lines.push('});', '');
+  return lines.join('\n');
+};
+
 /**
  * playwright-test-generator (heuristic). Consumes planned scenarios / MD plan.
+ * Emits real navigation/assertions — never body-visibility-only stubs.
  */
 export function generateWithPlaywrightGenerator(input: {
   workItem: string;
@@ -233,7 +303,6 @@ export function generateWithPlaywrightGenerator(input: {
 }): { summary: string; cases: GeneratedPlaywrightCase[] } {
   const application = slug(input.application);
   const work = slug(input.workItem);
-  const findingsNote = (input.findings ?? '').trim();
   const scenarios = input.scenarios.length > 0
     ? input.scenarios
     : input.planMarkdown
@@ -242,21 +311,15 @@ export function generateWithPlaywrightGenerator(input: {
   const cases = scenarios.slice(0, MAX_GENERATED_CASES).map((scenario, index) => {
     const testId = `${work}-${scenario.kind}-${index + 1}`;
     const file = `tests/${application}/${work}.spec.js`;
-    const findingLine = findingsNote
-      ? `  // Exploration: ${clip(findingsNote.replace(/\s+/g, ' '), 200)}`
-      : '  // Exploration: none yet — bind Playwright browser and an environment to enrich selectors.';
-    const source = [
-      "import { test, expect } from '@playwright/test';",
-      '',
-      `test('${scenario.name.replace(/'/g, "\\'")}', async ({ page }) => {`,
-      "  await page.goto('/');",
-      `  // ${scenario.kind} (${scenario.priority}): ${scenario.criterion}`,
-      `  // Steps: ${clip(scenario.steps.replace(/\s+/g, ' '), 220)}`,
-      findingLine,
-      '  await expect(page.locator(\'body\')).toBeVisible();',
-      '});',
-      '',
-    ].join('\n');
+    const source = offlineMeaningfulSource({
+      name: scenario.name,
+      kind: scenario.kind,
+      priority: scenario.priority,
+      criterion: scenario.criterion,
+      steps: scenario.steps,
+      expected: scenario.expected,
+      findings: input.findings,
+    });
     return {
       name: scenario.name,
       kind: scenario.kind,
@@ -275,10 +338,11 @@ export function generateWithPlaywrightGenerator(input: {
   };
 }
 
-/** Offline healer for platform-owned generated stubs. */
+/** Offline healer for platform-owned generated stubs (including body-only stubs). */
 export function healWithPlaywrightHealer(input: {
   workItem: string;
   cases: GeneratedPlaywrightCase[];
+  findings?: string;
 }): { summary: string; cases: GeneratedPlaywrightCase[]; fixed: number } {
   let fixed = 0;
   const cases = input.cases.map((item) => {
@@ -286,23 +350,21 @@ export function healWithPlaywrightHealer(input: {
     const broken = !src.includes('@playwright/test')
       || !/\btest\s*\(/.test(src)
       || src.trim().length < 40
-      || /hard-?coded password|process\.env\.|fs\.|child_process/i.test(src);
+      || /hard-?coded password|process\.env\.|fs\.|child_process/i.test(src)
+      || isBodyStub(src);
     if (!broken) return item;
     fixed += 1;
-    const name = item.name.replace(/'/g, "\\'");
     return {
       ...item,
-      steps: [
-        "import { test, expect } from '@playwright/test';",
-        '',
-        `test('${name}', async ({ page }) => {`,
-        "  await page.goto('/');",
-        `  // Healed: ${clip(item.name, 160)}`,
-        `  // Expected: ${clip(item.expected, 160)}`,
-        "  await expect(page.locator('body')).toBeVisible();",
-        '});',
-        '',
-      ].join('\n'),
+      steps: offlineMeaningfulSource({
+        name: item.name,
+        kind: item.kind,
+        priority: item.priority,
+        criterion: item.name,
+        steps: item.expected,
+        expected: item.expected,
+        findings: input.findings,
+      }),
     };
   });
   return {

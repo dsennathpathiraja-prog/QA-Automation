@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateRunnerSpec, type RunnerSpec } from '@qa/domain';
+import { chunkEnvValue, joinEnvChunks, validateRunnerSpec, type RunnerSpec } from '@qa/domain';
 import { FakeRunnerLauncher, runnerLauncherContract } from '../src';
 
 const digest = 'a'.repeat(64);
@@ -51,6 +51,27 @@ describe('runner spec validation', () => {
   it('rejects ids that could break out of a name or path', () => {
     expect(validateRunnerSpec(spec({ runId: '../x' })).join()).toMatch(/runId/);
     expect(validateRunnerSpec(spec({ executionId: 'a b' })).join()).toMatch(/executionId/);
+  });
+
+  it('accepts /tmp inlineFiles for large case lists and rejects unsafe paths or oversize payloads', () => {
+    expect(validateRunnerSpec(spec({ inlineFiles: [{ path: '/tmp/qa-cases.json', content: '[]' }] }))).toEqual([]);
+    expect(validateRunnerSpec(spec({ inlineFiles: [{ path: '/etc/passwd', content: 'x' }] })).join()).toMatch(/\/tmp\//);
+    expect(validateRunnerSpec(spec({ inlineFiles: [{ path: '/tmp/qa-cases.json', content: 'x'.repeat(2 * 1024 * 1024 + 1) }] })).join()).toMatch(/byte limit/);
+  });
+
+  it('still rejects oversized single env values (use chunkEnvValue instead)', () => {
+    expect(validateRunnerSpec(spec({ env: { QA_CASES_JSON: 'x'.repeat(4097) } })).join()).toMatch(/QA_CASES_JSON is too long/);
+  });
+
+  it('round-trips large payloads through chunked env vars', () => {
+    const raw = JSON.stringify(Array.from({ length: 200 }, (_, i) => ({ id: String(i), name: `Case ${i} ${'n'.repeat(40)}` })));
+    const env = chunkEnvValue('QA_CASES', raw);
+    expect(Number(env.QA_CASES_PARTS)).toBeGreaterThan(1);
+    for (const [k, v] of Object.entries(env)) {
+      if (k.startsWith('QA_CASES_P')) expect(v.length).toBeLessThanOrEqual(4000);
+    }
+    expect(joinEnvChunks(env, 'QA_CASES')).toBe(raw);
+    expect(validateRunnerSpec(spec({ env: { ...env, QA_TARGET_URL: 'https://qa.example' } }))).toEqual([]);
   });
 });
 

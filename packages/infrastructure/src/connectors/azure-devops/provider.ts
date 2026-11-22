@@ -14,6 +14,29 @@ const SecretSchema = z.object({ token: z.string().min(20).max(500) });
 const SCM = ['scm.org.list', 'scm.repo.list', 'scm.branch.list', 'scm.tree.list', 'scm.file.read', 'scm.code.search', 'scm.commit.list', 'scm.permissions.inspect'] as const;
 const API = '7.1';
 
+const SOURCE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|cs|fs|vb|java|kt|go|rs|py|rb|php|swift|sql|xml|json|yml|yaml|css|scss|vue|svelte)$/i;
+const NOISE_PATH = /(^|\/)(node_modules|dist|build|out|coverage|\.git|packages\/[^/]+\/html|sdk\/|docs\/api|wwwroot\/lib)\//i;
+const HTML_ONLY = /\.(html?|htm)$/i;
+
+/**
+ * Rank Azure Repos paths for Explore code: real source first, HTML/SDK/docs last (or skipped).
+ * Returns 0 when the path should not be returned as a search hit.
+ */
+export function azureReposSourceScore(path: string, query: string): number {
+  const p = path.replace(/^\/+/, '').trim();
+  if (!p) return 0;
+  if (NOISE_PATH.test(p) || HTML_ONLY.test(p)) return 0;
+  const q = query.trim().toLowerCase();
+  if (q && !p.toLowerCase().includes(q)) return 0;
+  let score = 10;
+  if (SOURCE_EXT.test(p)) score += 40;
+  if (/(^|\/)(src|app|apps|lib|server|client|api|services|domain)\//i.test(p)) score += 20;
+  if (/(^|\/)(docs|documentation|samples?|examples?|fixtures?|vendor|third[_-]?party)\//i.test(p)) score -= 25;
+  if (/\.(md|txt|lock)$/i.test(p)) score -= 5;
+  // Keep query matches above zero so README-style paths still return when they are the only hit.
+  return Math.max(1, score);
+}
+
 /** Scopes Azure DevOps reports on `x-vss-scopes`, when it reports them. `vso.code` is read; anything with write, manage or full is a write. */
 export function azureDevOpsWriteScopes(header: string | undefined): string[] {
   return (header ?? '')
@@ -129,7 +152,7 @@ class AzureDevOpsClient implements ConnectorClient {
       }
     }
     out.push({ capability: 'scm.file.read', support: out.find((o) => o.capability === 'scm.tree.list')?.support === 'supported' ? 'supported' : 'unsupported' });
-    out.push({ capability: 'scm.code.search', support: 'partial', reason: 'Azure DevOps code search is not used. Commit messages in the selected repository are matched instead.' });
+    out.push({ capability: 'scm.code.search', support: 'partial', reason: 'Azure DevOps code search is not used. File paths in the selected repository are matched instead.' });
     out.push({ capability: 'scm.permissions.inspect', support: 'partial', reason: 'Scopes are reported only when the server sends them. Otherwise the token is assumed read-only and only GET is sent.' });
     return out;
   }
@@ -164,9 +187,27 @@ class AzureDevOpsClient implements ConnectorClient {
       return { items: ((r.body?.value ?? []) as { commitId: string; comment?: string; author?: { name?: string } }[]).map((c) => ({ sha: c.commitId, message: c.comment ?? '', author: c.author?.name })) };
     }
     if (cap.id === 'scm.code.search') {
-      const commits = (await this.handle({ id: 'scm.commit.list' } as CapabilityDescriptor, { repo: i.repo, branch: i.branch })) as { items: { sha: string; message: string }[] };
-      const q = (i.query ?? '').toLowerCase();
-      return { items: commits.items.filter((c) => c.message.toLowerCase().includes(q)).map((c) => ({ path: c.sha, snippet: c.message })) };
+      // Match human file paths in the bound Azure Repos tree (never commit SHAs).
+      // Prefer application source over HTML/docs/SDK noise so Explore code visits real code.
+      const q = (i.query ?? '').toLowerCase().trim();
+      const r = await this.get(`${base}/items`, {
+        recursionLevel: 'Full',
+        scopePath: '/',
+        'versionDescriptor.version': i.branch,
+      });
+      const entries = (r.body?.value ?? []) as { path?: string; isFolder?: boolean; gitObjectType?: string }[];
+      const scored = entries
+        .filter((e) => !(e.isFolder || e.gitObjectType === 'tree'))
+        .map((e) => {
+          const raw = typeof e.path === 'string' ? e.path : '';
+          const path = raw.replace(/^\/+/, '');
+          return { path, snippet: path, score: azureReposSourceScore(path, q) };
+        })
+        .filter((e) => e.path && e.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 20)
+        .map(({ path, snippet }) => ({ path, snippet }));
+      return { items: scored };
     }
     if (cap.id === 'scm.permissions.inspect') {
       const report = await this.inspectPermissions();

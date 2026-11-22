@@ -34,21 +34,28 @@ VLLM_MODEL=your-model
 
 ## Enable Playwright browser exploration
 
-1. Start the managed browser Compose profile (service name `playwright-mcp`, listens on **8931** inside the stack):
+1. Start the managed browser Compose profile (service name / DNS alias `playwright-mcp`, listens on **8931** inside the stack; image tag `qa-playwright-mcp:local` is **not** a hostname):
 
 ```bash
-# Local trial
-docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d
+# Local trial (rebuilds qa-playwright-mcp:local — Chromium + pinned @playwright/mcp)
+docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d playwright-mcp
 # Host / production compose
-docker compose --profile browser up -d playwright-mcp
+docker compose --profile browser up --build -d playwright-mcp
 ```
 
+The managed image launches with `--browser chromium` (the Playwright base image does not include Google Chrome at `/opt/google/chrome/chrome`). Rebuild the `browser` profile after changing `deploy/images/playwright-mcp.Dockerfile`. Worker and MCP share the Compose project network with alias `playwright-mcp`.
+
+| Who calls MCP | Base URL | Env |
+|---------------|----------|-----|
+| Worker / Explore UI (in Compose) | `http://playwright-mcp:8931` | `PLAYWRIGHT_MCP_URL` (default) |
+| Host machine (debug; local profile publishes loopback) | `http://127.0.0.1:8931` | `PLAYWRIGHT_MCP_HOST_PORT` (default 8931) |
+
 2. In the UI, add a **Playwright (managed)** connector:
-   - **Server address:** `http://playwright-mcp:8931` (from the worker container — not `localhost`; do not append `/mcp`).
+   - **Server address:** `http://playwright-mcp:8931` (from the worker container — not `localhost`, not `qa-playwright-mcp`; do not append `/mcp`).
    - **Application addresses:** comma-separated origins the browser may open.
    - Optional saved session name for MFA.
 3. Approve host `playwright-mcp` for plain http when Test Connection / Approved hosts asks (Administrator).
-4. Run **Test connection** — it should say the managed Playwright server is connected. If it says it could not reach Playwright, the browser profile is not up or the URL/host approval is wrong (see `deploy/compose/local/README.md`).
+4. Run **Test connection** — it should say the managed Playwright server is connected. If it says `could not resolve playwright-mcp`, the browser service is not on the worker’s Compose network. If it says connection refused / nothing listening on `:8931`, check `docker compose … logs playwright-mcp` (a crash loop from unsupported CLI flags such as `--allowed-hosts` on `@playwright/mcp@0.0.35` is a common cause — rebuild the image after fixing the Dockerfile). See `deploy/compose/local/README.md`.
 5. Bind that connector as **Browser automation** on the requirement-validation workflow. Enable the Explore UI step (UI / both templates).
 6. On Run, supply an **environment** whose application URL matches an allowed origin (environments are optional for plan/generate; required for a real explore).
 
@@ -92,12 +99,12 @@ A checked-in template without secrets: [`deploy/cursor/mcp.json.example`](../dep
 ## Retest with a work item id (e.g. 7189 / PayNSure)
 
 1. Ensure Azure Boards (or Jira) is bound as **Work items**, tested, and switched on.
-2. Optional: bind Playwright browser + an environment whose URL is on the browser allowlist; set `OLLAMA_URL` for model-backed plans.
+2. Bind Playwright browser when Explore UI is on, plus a selectable environment whose URL is on the browser allowlist. Bind a source-repo connector when Explore code is on. Optional: set `OLLAMA_URL` for model-backed plans.
 3. Publish the requirement-validation workflow if needed.
-4. On **Run**, enter only `7189` in the story field and the application name (e.g. PayNSure). Do not paste AC unless you want extra lines.
+4. On **Run**, enter only `7189` in the story field and the application name (e.g. PayNSure). When Explore UI is on, select the environment (required in the Run form). Do not paste AC unless you want extra lines.
 5. Start the run.
-6. **Read** should report N acceptance criteria from Description / AC (N > 0).
-7. **Explore** (when enabled) runs **before** Plan and records UI/source notes.
+6. **Read** Done line should acknowledge the work item **title** and report N acceptance criteria from Description / AC (N > 0).
+7. **Explore** (when enabled) runs **before** Plan: UI Done line acknowledges the visited website **URL**; code Done line **lists the files visited** (not the offline skip notes).
 8. **Plan** Done line should name `playwright-test-planner`, a `.plan.md` artifact, and **many** Positive / Negative / Edge scenarios (more than 3×N when Description paths exist).
 9. **Generate** consumes that MD plan; **Heal** fixes broken stubs; Test Cases (and Squash when READ_WRITE) list those cases under work item `7189`.
 
@@ -107,7 +114,17 @@ A checked-in template without secrets: [`deploy/cursor/mcp.json.example`](../dep
 Run story id
   → worker enrichStoryFromConnector (Azure Boards / Jira)
   → rv.read-user-story (criteria from Description)
-  → rv.explore-ui / rv.explore-code (optional) → BrowserExplorerPort / source notes
+  → rv.explore-ui (when on):
+       environment → applicationUrl
+       → browser.session.open → sessionId
+       → browser.navigate({ sessionId, url })
+       → fail-fast if chrome-error / DNS / HTTP 4xx–5xx (PLAYWRIGHT_MCP_SHOP_IP + shop overlay)
+       → browser.wait (SPA settle) → browser.snapshot
+       → browser.evaluate DOM probe when aria tree empty → screenshot
+       (map sdk.paynsure.internal via docker-compose.playwright-shop.yml + PLAYWRIGHT_MCP_SHOP_IP; do not use host-gateway unless the shop is on the Docker host)
+  → rv.explore-code (when on):
+       bound source-repo config.repo
+       → scm.code.search({ query, repo }) → scm.file.read
   → rv.consolidate-findings
   → rv.generate-test-plan → TestPlannerPort → planMarkdown + planArtifact
   → rv.generate-tests → TestGeneratorPort (MD plan + findings)
@@ -115,4 +132,4 @@ Run story id
   → rv.publish-testcases → Test Cases + Squash upsert
 ```
 
-`packages/workflow-engine` keeps a sync heuristic `runFlowStep` for tests and offline fallback. `packages/agents` owns the ports, MCP adapter contracts, MD plan helpers, and LLM prompts. `apps/worker` is the composition root that builds the gateway and connector invokers.
+Enabled explore steps must succeed before plan. Fake Done stubs are only for offline unit tests (`runFlowStep`); the worker always wires `createBrowserExplorer` / `createCodeExplorer`. `packages/agents` owns the ports, MCP adapter contracts, MD plan helpers, and LLM prompts. `apps/worker` is the composition root that builds the gateway and connector invokers.

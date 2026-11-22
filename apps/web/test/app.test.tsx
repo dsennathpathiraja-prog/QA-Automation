@@ -59,8 +59,52 @@ describe('route guard', () => {
     expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeTruthy();
   });
 
-  it('placeholder pages say which phase delivers them', async () => {
-    renderApp('/automation', { me: { status: 200, body: meFor('qa_lead') } });
+  it('Automation Mapping lists Squash↔script rows and can resolve a case id', async () => {
+    renderApp('/automation', {
+      me: { status: 200, body: meFor('qa_lead') },
+      routes: {
+        '/api/v1/automation/mappings': {
+          status: 200,
+          body: {
+            items: [{
+              id: 'm1',
+              squashCaseId: '238',
+              squashReference: 'QAP-7259-1',
+              assetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+              assetKey: 'QAP-7259-1',
+              assetName: 'Positive: checkout',
+              scriptPath: 'tests/app/7259.spec.js',
+              status: 'draft',
+              updatedAt: '2026-11-22T10:00:00.000Z',
+            }],
+          },
+        },
+        '/api/v1/automation/resolve?squashCaseId=238': {
+          status: 200,
+          body: {
+            squashCaseId: '238',
+            squashReference: 'QAP-7259-1',
+            assetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            assetKey: 'QAP-7259-1',
+            assetName: 'Positive: checkout',
+            scriptPath: 'tests/app/7259.spec.js',
+            status: 'draft',
+            approved: false,
+          },
+        },
+      },
+    });
+    expect(await screen.findByRole('heading', { name: 'Automation Mapping' })).toBeTruthy();
+    expect(await screen.findByText('238')).toBeTruthy();
+    expect(screen.getByText('tests/app/7259.spec.js')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy();
+    await userEvent.type(screen.getByLabelText('Squash case id'), '238');
+    await userEvent.click(screen.getByRole('button', { name: 'Resolve' }));
+    expect(await screen.findByText(/Squash 238 → asset/)).toBeTruthy();
+  });
+
+  it('Evidence placeholder still names Phase 8', async () => {
+    renderApp('/evidence', { me: { status: 200, body: meFor('qa_lead') } });
     expect(await screen.findByText(/Phase 8/)).toBeTruthy();
   });
 
@@ -94,13 +138,34 @@ describe('route guard', () => {
           },
         },
         '/api/v1/executions': { status: 200, body: { items: [{ id: '1436518e-0000-4000-8000-000000000001', workflowId: '11111111-1111-4111-8111-111111111111', workflowName: 'Checkout', status: 'succeeded', stepIndex: 10, createdAt: '2026-11-18T10:00:00.000Z', updatedAt: '2026-11-18T10:05:00.000Z' }] } },
-        '/api/v1/executions/1436518e-0000-4000-8000-000000000001/events': { status: 200, body: { items: [{ seq: 1, kind: 'step.completed', at: '2026-11-18T10:00:00.000Z', payload: { stepId: 'read_story', summary: 'Read work item QA-1.' } }] } },
+        '/api/v1/executions/1436518e-0000-4000-8000-000000000001/events': {
+          status: 200,
+          body: {
+            items: [{
+              seq: 1,
+              kind: 'step.completed',
+              at: '2026-11-18T10:00:00.000Z',
+              payload: {
+                stepId: 'read_story',
+                summary: 'Read work item QA-1 — Guest checkout.',
+                outputs: {
+                  artifactMarkdown: '# Work item QA-1 — Guest checkout\n\n## Context\n\n- **Title:** Guest checkout\n',
+                  artifactPath: 'explore/checkout/qa-1.story.md',
+                },
+              },
+            }],
+          },
+        },
       },
     });
     expect(await screen.findByRole('tab', { name: 'Execution' })).toBeTruthy();
     expect(await screen.findByRole('button', { name: 'Prepare execution' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Run' })).toBeTruthy();
     expect(screen.getByText(/soft-deleted cases are excluded/i)).toBeTruthy();
+    expect(await screen.findByRole('region', { name: 'Setup ready to run' })).toBeTruthy();
+    expect(screen.getByText(/recent preparation/i)).toBeTruthy();
+    await user.click(screen.getByRole('tab', { name: /Prepared test execution/ }));
+    expect(await screen.findByRole('button', { name: 'Run' })).toBeTruthy();
+    expect(screen.getByText(/Only recently added preparations/i)).toBeTruthy();
     await user.click(screen.getByRole('tab', { name: 'History' }));
     expect(await screen.findByText(/These runs create and publish test cases/)).toBeTruthy();
     expect(screen.getByText('Succeeded')).toBeTruthy();
@@ -108,6 +173,10 @@ describe('route guard', () => {
     const checkout = await screen.findByRole('button', { name: /Checkout/ });
     await user.click(checkout);
     expect((await screen.findByRole('region', { name: 'Selected run' })).textContent).toMatch(/Read work item QA-1/);
+    expect(screen.getByText(/Markdown artifact/)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Show' }));
+    expect(screen.getByText(/explore\/checkout\/qa-1\.story\.md/)).toBeTruthy();
+    expect(document.querySelector('pre')?.textContent).toMatch(/Title:\*\* Guest checkout/);
   });
 });
 

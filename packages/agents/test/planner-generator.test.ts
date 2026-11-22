@@ -73,7 +73,7 @@ describe('LLM planner / generator', () => {
       cases: [{
         name: 'Positive: card listed',
         kind: 'positive',
-        steps: "import { test, expect } from '@playwright/test';\ntest('Positive: card listed', async ({ page }) => { await page.goto('/'); });\n",
+        steps: "import { test, expect } from '@playwright/test';\ntest('Positive: card listed', async ({ page }) => { await page.goto('/checkout'); await page.getByRole('button', { name: 'Pay' }).click(); await expect(page.getByText(/card/i)).toBeVisible(); });\n",
         expected: 'Card appears',
       }],
     });
@@ -96,6 +96,34 @@ describe('LLM planner / generator', () => {
     expect(out.cases[0]?.workItem).toBe('7189');
   });
 
+  it('replaces model body-only stubs with scenario-first Playwright', async () => {
+    const genJson = JSON.stringify({
+      cases: [{
+        name: 'Positive: listed',
+        kind: 'positive',
+        steps: "import { test, expect } from '@playwright/test';\ntest('Positive: listed', async ({ page }) => { await page.goto('/'); await expect(page.locator('body')).toBeVisible(); });\n",
+        expected: 'Ok',
+      }],
+    });
+    const generator = createLlmTestGenerator(gateway(genJson));
+    const out = await generator.generate({
+      workItem: '7189',
+      application: 'PayNSure',
+      scenarios: [{
+        name: 'Positive: listed',
+        kind: 'positive',
+        priority: 'medium',
+        criterion: 'The saved card is listed',
+        steps: 'Open checkout',
+        expected: 'Ok',
+      }],
+      findings: '- Explore: x @ https://shop.example.com title="Shop"; heading="Checkout"; buttons="Pay"',
+    });
+    expect(out.summary).toMatch(/Replaced .* stub/i);
+    expect(out.cases[0]?.steps).not.toMatch(/locator\(['"]body['"]\)/);
+    expect(out.cases[0]?.steps).toMatch(/getByRole|shop\.example\.com/);
+  });
+
   it('falls back to heuristics when no gateway is configured', async () => {
     const planner = createLlmTestPlanner(undefined);
     const out = await planner.plan({
@@ -114,7 +142,7 @@ describe('LLM planner / generator', () => {
       cases: [{
         name: 'Positive: card listed',
         kind: 'positive',
-        steps: "import { test, expect } from '@playwright/test';\ntest('Positive: card listed', async ({ page }) => { await page.goto('/'); await expect(page.locator('body')).toBeVisible(); });\n",
+        steps: "import { test, expect } from '@playwright/test';\ntest('Positive: card listed', async ({ page }) => { await page.goto('/checkout'); await page.getByRole('button', { name: 'Pay' }).click(); await expect(page.getByText(/card/i)).toBeVisible(); });\n",
         expected: 'Card appears',
       }],
     });
@@ -137,5 +165,6 @@ describe('LLM planner / generator', () => {
     expect(out.source).toBe('model');
     expect(out.fixed).toBe(1);
     expect(out.cases[0]?.steps).toMatch(/@playwright\/test/);
+    expect(out.cases[0]?.steps).not.toMatch(/locator\(['"]body['"]\)/);
   });
 });

@@ -5,6 +5,88 @@ import {
   type PlannerScenario,
 } from './playwright-agents';
 
+const slugPath = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'item';
+
+/** Optional Azure Boards fields from expand=All (worker enrich → Read story MD). */
+export interface StoryWorkItemFields {
+  type?: string;
+  state?: string;
+  areaPath?: string;
+  iterationPath?: string;
+  priority?: string;
+  requirementType?: string;
+  valueArea?: string;
+  parentId?: string;
+  descriptionHtml?: string;
+  acceptanceCriteriaHtml?: string;
+}
+
+function asWorkItemFields(value: unknown): StoryWorkItemFields {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const o = value as Record<string, unknown>;
+  const pick = (key: keyof StoryWorkItemFields) => {
+    const raw = o[key];
+    return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
+  };
+  return {
+    ...(pick('type') ? { type: pick('type') } : {}),
+    ...(pick('state') ? { state: pick('state') } : {}),
+    ...(pick('areaPath') ? { areaPath: pick('areaPath') } : {}),
+    ...(pick('iterationPath') ? { iterationPath: pick('iterationPath') } : {}),
+    ...(pick('priority') ? { priority: pick('priority') } : {}),
+    ...(pick('requirementType') ? { requirementType: pick('requirementType') } : {}),
+    ...(pick('valueArea') ? { valueArea: pick('valueArea') } : {}),
+    ...(pick('parentId') ? { parentId: pick('parentId') } : {}),
+    ...(pick('descriptionHtml') ? { descriptionHtml: pick('descriptionHtml') } : {}),
+    ...(pick('acceptanceCriteriaHtml') ? { acceptanceCriteriaHtml: pick('acceptanceCriteriaHtml') } : {}),
+  };
+}
+
+/** Compact Markdown for the Read step so Run UI / planner can use loaded work item fields. */
+function renderStoryArtifactMarkdown(input: {
+  workItem: string;
+  application: string;
+  title: string;
+  story: string;
+  acceptanceCriteria: string[];
+  descriptionExcerpt: string;
+  fields?: StoryWorkItemFields;
+}): string {
+  const f = input.fields ?? {};
+  const lines = [
+    `# Work item ${input.workItem}${input.title ? ` — ${input.title}` : ''}`,
+    '',
+    '## Context',
+    '',
+    `- **Work item:** ${input.workItem}`,
+    `- **Application:** ${input.application}`,
+    input.title ? `- **Title:** ${input.title}` : '- **Title:** _(not loaded)_',
+  ];
+  if (f.type) lines.push(`- **Type:** ${f.type}`);
+  if (f.state) lines.push(`- **State:** ${f.state}`);
+  if (f.areaPath) lines.push(`- **Area path:** ${f.areaPath}`);
+  if (f.iterationPath) lines.push(`- **Iteration path:** ${f.iterationPath}`);
+  if (f.priority) lines.push(`- **Priority:** ${f.priority}`);
+  if (f.requirementType) lines.push(`- **Requirement type:** ${f.requirementType}`);
+  if (f.valueArea) lines.push(`- **Value area:** ${f.valueArea}`);
+  if (f.parentId) lines.push(`- **Parent:** ${f.parentId}`);
+  lines.push('');
+  if (f.descriptionHtml) {
+    lines.push('## Description', '', f.descriptionHtml, '');
+  } else if (input.descriptionExcerpt) {
+    lines.push('## Description excerpt', '', input.descriptionExcerpt, '');
+  }
+  if (f.acceptanceCriteriaHtml) {
+    lines.push('## Acceptance criteria', '', f.acceptanceCriteriaHtml, '');
+  } else if (input.acceptanceCriteria.length > 0) {
+    lines.push('## Acceptance criteria', '');
+    for (const c of input.acceptanceCriteria) lines.push(`- ${c}`);
+    lines.push('');
+  }
+  lines.push('## Story blob', '', '```', input.story.trim() || '(empty)', '```', '');
+  return `${lines.join('\n').trim()}\n`;
+}
+
 export interface FlowStep {
   id: string;
   type: string;
@@ -42,8 +124,35 @@ const isGwt = (line: string) => /^(given|when|then|and)\b/i.test(line);
 /** First non-empty line is treated as the work item id when it looks like one. */
 export function workItemIdFromStory(raw: string): string {
   const first = raw.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? '';
+  const inline = first.match(/^(\d{1,10})\s*[—–:\-]\s+\S/)
+    ?? first.match(/^([A-Z][A-Z0-9]+-\d+)\s*[—–:\-]\s+\S/i);
+  if (inline?.[1]) return inline[1];
   if (/^\d{1,10}$/.test(first) || /^[A-Z][A-Z0-9]+-\d+$/i.test(first)) return first;
   return first.slice(0, 80);
+}
+
+/**
+ * Title from a connector-enriched story blob: either `id — title` on the first line,
+ * or the first non-empty line after the work-item id (matches storyFromWorkItem).
+ */
+export function workItemTitleFromStory(raw: string): string {
+  const lines = raw.replace(/\r/g, '').split('\n');
+  const firstIdx = lines.findIndex((line) => line.trim());
+  if (firstIdx < 0) return '';
+  const first = (lines[firstIdx] ?? '').trim();
+  const inline = first.match(/^(?:\d{1,10}|[A-Z][A-Z0-9]+-\d+)\s*[—–:\-]\s+(.+)$/i);
+  if (inline?.[1]) {
+    const titled = stripBullet(inline[1]).trim();
+    if (titled && !isSectionHeading(titled) && !isGwt(titled)) return titled.slice(0, 200);
+  }
+  for (let i = firstIdx + 1; i < lines.length; i += 1) {
+    const rawLine = lines[i] ?? '';
+    if (!rawLine.trim()) return '';
+    const line = stripBullet(rawLine);
+    if (!line || isSectionHeading(line) || isGwt(line)) return '';
+    return line.slice(0, 200);
+  }
+  return '';
 }
 
 /**
@@ -64,6 +173,11 @@ export function acceptanceLines(raw: string): string[] {
   for (const rawLine of bodyLines) {
     if (!rawLine) continue;
     if (start >= 0 && /^#{1,6}\s/.test(rawLine)) break;
+    // Never treat the work-item id line (bare or `id — title`) as a criterion.
+    if (/^(\d{1,10}|[A-Z][A-Z0-9]+-\d+)(\s*[—–:\-].*)?$/i.test(rawLine.trim())) {
+      flushGwt();
+      continue;
+    }
     const line = stripBullet(rawLine);
     if (!line) continue;
     if (isSectionHeading(line) && !isGwt(line)) {
@@ -82,15 +196,27 @@ export function acceptanceLines(raw: string): string[] {
   flushGwt();
 
   const workItem = workItemIdFromStory(raw);
-  const withoutId = kept.filter((line) => line !== workItem && line.toLowerCase() !== 'acceptance criteria');
+  const title = workItemTitleFromStory(raw);
+  const withoutId = kept.filter((line) => (
+    line !== workItem
+    && line !== title
+    && line.toLowerCase() !== 'acceptance criteria'
+  ));
   if (withoutId.length > 0) return withoutId.slice(0, 40);
 
   // No AC heading: prefer bullets / GWT from the whole story, skipping the id line.
   const cues: string[] = [];
   gwt = [];
   for (const rawLine of lines.map((line) => line.trim()).filter(Boolean)) {
+    if (/^(\d{1,10}|[A-Z][A-Z0-9]+-\d+)(\s*[—–:\-].*)?$/i.test(rawLine)) {
+      if (gwt.length > 0) {
+        cues.push(gwt.join(' '));
+        gwt = [];
+      }
+      continue;
+    }
     const line = stripBullet(rawLine);
-    if (!line || line === workItem || isSectionHeading(line) && !isGwt(line)) {
+    if (!line || line === workItem || line === title || isSectionHeading(line) && !isGwt(line)) {
       if (gwt.length > 0) {
         cues.push(gwt.join(' '));
         gwt = [];
@@ -109,7 +235,7 @@ export function acceptanceLines(raw: string): string[] {
       }
       continue;
     }
-    if (/^([\-*•]|\d+[.)])\s+\S/.test(rawLine) || start < 0 && line.length >= 12 && line !== workItem) {
+    if (/^([\-*•]|\d+[.)])\s+\S/.test(rawLine) || start < 0 && line.length >= 12 && line !== workItem && line !== title) {
       if (gwt.length > 0) {
         cues.push(gwt.join(' '));
         gwt = [];
@@ -182,7 +308,8 @@ const casesOf = (value: unknown): FlowCase[] => {
 /**
  * One requirement-validation stage.
  * Order: explore UI/code → consolidate → plan (MD) → generate → heal → publish.
- * This sync path does not call a browser, a repository, or Squash.
+ * This sync path is the offline / unit-test fallback: the worker binds Playwright
+ * and source-repo connectors for real exploration before planning.
  */
 export function runFlowStep(step: FlowStep): FlowResult {
   const story = text(step.params.story);
@@ -206,36 +333,124 @@ export function runFlowStep(step: FlowStep): FlowResult {
       const found = acceptanceLines(story);
       const onlyId = found.length === 0 || (found.length === 1 && found[0] === workItem);
       const acceptanceCriteria = onlyId ? [] : found;
+      const title = text(step.params.workItemTitle) || workItemTitleFromStory(story);
+      const fetchNote = text(step.params.workItemFetchNote);
+      const descriptionExcerpt = text(step.params.workItemDescriptionExcerpt);
+      const fields = asWorkItemFields(step.params.workItemFields);
+      const titled = title
+        ? `Read work item ${workItem} — ${title}.`
+        : `Read work item ${workItem || '(none)'}.`;
+      const excerptPart = title && descriptionExcerpt ? ` ${descriptionExcerpt}` : '';
+      const acPart = acceptanceCriteria.length > 0 || fields.acceptanceCriteriaHtml
+        ? `${Math.max(acceptanceCriteria.length, fields.acceptanceCriteriaHtml ? 1 : 0)} acceptance criteria.`
+        : 'The story text has no separate acceptance criteria, so the plan uses the work item itself.';
+      const missPart = !title && fetchNote ? ` ${fetchNote}` : '';
+      const storyMarkdown = renderStoryArtifactMarkdown({
+        workItem,
+        application,
+        title,
+        story,
+        acceptanceCriteria,
+        descriptionExcerpt,
+        fields,
+      });
+      const storyArtifact = `explore/${slugPath(application)}/${slugPath(workItem)}.story.md`;
       return {
-        summary: acceptanceCriteria.length > 0
-          ? `Read work item ${workItem}. ${acceptanceCriteria.length} acceptance criteria.`
-          : `Read work item ${workItem || '(none)'}. The story text has no separate acceptance criteria, so the plan uses the work item itself.`,
-        outputs: { story, workItem, acceptanceCriteria, applicationName: application, environment },
+        summary: `${titled}${missPart}${excerptPart} ${acPart}`,
+        outputs: {
+          story,
+          workItem,
+          title: title || undefined,
+          acceptanceCriteria,
+          applicationName: application,
+          environment,
+          artifactMarkdown: storyMarkdown,
+          artifactPath: storyArtifact,
+          ...(descriptionExcerpt ? { descriptionExcerpt } : {}),
+          ...(fetchNote ? { fetchNote } : {}),
+          ...(Object.keys(fields).length > 0 ? { fields } : {}),
+        },
       };
     }
     case 'rv.explore-ui':
-      return {
-        summary: environment
-          ? `UI note for ${application} on ${environment}: exploration runs before the plan. This run does not drive the browser.`
-          : 'UI note: no environment was given, so the screen was not opened (exploration still precedes planning).',
-        outputs: { findings: environment ? `environment ${environment}` : 'no environment' },
-      };
+      // Offline / unit-test stub only. The worker must wire createBrowserExplorer
+      // so production never reaches this Done line without a real MCP session.
+      {
+        const findings = environment ? `environment ${environment}` : 'no environment';
+        const artifactMarkdown = `# Explore UI: ${workItem} — ${application}\n\n## Findings\n\n${findings}\n\n_(offline stub — not a real browser session)_\n`;
+        return {
+          summary: environment
+            ? `Offline UI stub for ${application} on ${environment}: worker did not drive Playwright (no browser explorer port).`
+            : 'Offline UI stub: no environment and no browser explorer port — not a real Explore UI.',
+          outputs: {
+            findings,
+            source: 'offline-stub',
+            artifactMarkdown,
+            artifactPath: `explore/${slugPath(application)}/${slugPath(workItem)}.ui.md`,
+          },
+        };
+      }
     case 'rv.explore-code':
-      return {
-        summary: 'Source note: exploration runs before the plan. This run does not read the repository.',
-        outputs: { findings: 'repository not read' },
-      };
+      // Offline / unit-test stub only. The worker must wire createCodeExplorer.
+      {
+        const findings = 'repository not read';
+        const artifactMarkdown = `# Explore code: ${workItem} — ${application}\n\n## Findings\n\n${findings}\n\n_(offline stub — bind Azure DevOps Repos for real source)_\n`;
+        return {
+          summary: `Offline source stub for ${application}: worker did not search the bound repository (no code explorer port).`,
+          outputs: {
+            findings,
+            source: 'offline-stub',
+            artifactMarkdown,
+            artifactPath: `explore/${slugPath(application)}/${slugPath(workItem)}.code.md`,
+          },
+        };
+      }
     case 'rv.consolidate-findings': {
       const ui = text(step.prior.explore_ui?.findings);
       const code = text(step.prior.explore_code?.findings);
-      const combined = [ui && `UI: ${ui}`, code && `Source: ${code}`].filter(Boolean).join('\n') || 'no exploration findings';
+      const codeRelevant = step.prior.explore_code?.relevant !== false
+        && !/Code explore not relevant|path-only|application-only/i.test(code);
+      const uiRelevant = step.prior.explore_ui?.relevant !== false;
+      const uiBlockingGap = step.prior.explore_ui?.blockingGap === true
+        || /Blocking explore gap/i.test(ui);
+      const surfaceKind = text(step.prior.explore_ui?.surfaceKind) || undefined;
+      const primarySurfaceUrl = text(step.prior.explore_ui?.primarySurfaceUrl) || undefined;
+      // Keep UI findings for gap messaging, but mark mismatched surfaces so planner/generator fail closed.
+      const uiNote = ui
+        ? (uiRelevant
+          ? `UI: ${ui}`
+          : `UI (surface mismatch — not valid coverage for email/template ACs): ${ui}`)
+        : '';
+      const codeNote = code
+        ? (codeRelevant ? `Source: ${code}` : `Source (ignored — not relevant for scenarios): ${code.slice(0, 240)}`)
+        : '';
+      const combined = [uiNote, codeNote].filter(Boolean).join('\n') || 'no exploration findings';
+      const gapNote = uiBlockingGap || !uiRelevant
+        ? ' Explore UI marked not relevant / blocking surface gap — template scenarios must fail closed.'
+        : '';
       return {
-        summary: `Combined the story, the UI note, and the source note for the planner. ${criteria.length || 1} acceptance cue${(criteria.length || 1) === 1 ? '' : 's'} go forward.`,
-        outputs: { workItem, findings: combined, combined, acceptanceCriteria: criteria },
+        summary: `Combined the story, the UI note, and the source note for the planner. ${criteria.length || 1} acceptance cue${(criteria.length || 1) === 1 ? '' : 's'} go forward.${code && !codeRelevant ? ' Code explore marked not relevant.' : ''}${gapNote}`,
+        outputs: {
+          workItem,
+          findings: combined,
+          combined,
+          acceptanceCriteria: criteria,
+          ...(uiBlockingGap ? { blockingGap: true } : {}),
+          ...(surfaceKind ? { surfaceKind } : {}),
+          ...(primarySurfaceUrl ? { primarySurfaceUrl } : {}),
+          ...(uiRelevant === false ? { uiRelevant: false } : {}),
+        },
       };
     }
     case 'rv.generate-test-plan': {
-      const planned = planWithPlaywrightPlanner({ workItem, application, criteria, findings: findings || undefined });
+      const workItemTitle = text(storyOut.title) || workItemTitleFromStory(text(storyOut.story) || story);
+      const planned = planWithPlaywrightPlanner({
+        workItem,
+        application,
+        criteria,
+        findings: findings || undefined,
+        workItemTitle: workItemTitle || undefined,
+      });
       return {
         summary: planned.summary,
         outputs: {
@@ -250,9 +465,16 @@ export function runFlowStep(step: FlowStep): FlowResult {
       };
     }
     case 'rv.generate-tests': {
+      const workItemTitle = text(storyOut.title) || workItemTitleFromStory(text(storyOut.story) || story);
       const source = scenarios.length > 0
         ? scenarios
-        : planWithPlaywrightPlanner({ workItem, application, criteria, findings: findings || undefined }).scenarios;
+        : planWithPlaywrightPlanner({
+          workItem,
+          application,
+          criteria,
+          findings: findings || undefined,
+          workItemTitle: workItemTitle || undefined,
+        }).scenarios;
       const generated = generateWithPlaywrightGenerator({
         workItem,
         application,

@@ -20,19 +20,19 @@ When no model is configured, the description-aware heuristic runs and the Done l
 ## 3. Walk the UI (before planning)
 **Partial.** Explore UI runs **before** the planner. When enabled, an environment URL resolves, and a Playwright browser connector is bound, the worker opens the address, takes accessibility snapshots and screenshots for acceptance-criteria cues, and passes findings into consolidate → plan. It may open only the addresses listed on the browser connector. It does not submit a payment, delete data, or type a one-time code. Without those bindings the stage records a skip note and the run continues.
 
-Done when the UI stage Done line names the pages it opened; screenshot bytes stay out of step outputs (execution stores screenshots later).
+Done when the UI stage Done line acknowledges the visited website URL; screenshot bytes stay out of step outputs (execution stores screenshots later).
 
 ## 4. Read the source
 The bound GitHub or Azure DevOps connector lists and reads the files that match the scenarios. The notes say which files were read and what they check. The connector stays read-only. Nothing is committed, pushed, or edited in that repository.
 
 This slice can be built beside slice 3. Both have to finish before slice 5.
 
-Done when the source stage Done line names the files it read. A repository token that can push is still refused.
+Done when the source stage Done line lists the files visited. A repository token that can push is still refused.
 
 ## 5. Use the findings when planning and generating
-The consolidate stage joins the story, the UI notes, and the source notes. The **planner** receives those findings and embeds them in the Markdown plan. The **generator** consumes that MD plan (plus findings) so each Playwright test can mention the page or control exploration found. The reference stays stable for that work item and scenario, so Squash is not given a duplicate.
+The consolidate stage joins the story, the UI notes, and the source notes. **Story analysis is authoritative for scenario identity** (title, description, AC, triggers, placeholders). Explore UI/code only supply selectors when the surface matches; near-duplicate same-URL shop snapshots and empty path-only code hits are flagged and must not invent distinct scenarios. Body-visibility-only Playwright stubs are rejected and rebuilt. The **planner** embeds findings (and explore warnings) in the Markdown plan. The **generator** consumes that MD plan so each case has real steps/assertions. The reference stays stable for that work item and scenario, so Squash is not given a duplicate.
 
-Done when changing a finding changes the plan / generated test text, and a second run updates the same Squash case.
+Done when changing a finding changes the plan / generated test text, and a second run updates the same Squash case. For a notification-template WI (e.g. 2357), re-run Analyze → Explore → Plan and confirm cases differ by subject/greeting/Paid Amount/CTA/triggers — not title-only `body` stubs.
 
 ## 6. Keep the Playwright file on the platform
 The generator writes `tests/{application}/{work-item}.spec.js` into a platform workspace. The file may import `@playwright/test` and the platform helper only. A file that imports the network, the filesystem, or a hard-coded password is rejected and generated once more. The work item, the Squash case id, the file, and the Playwright test name are stored together. The file is never written to the connected repository.

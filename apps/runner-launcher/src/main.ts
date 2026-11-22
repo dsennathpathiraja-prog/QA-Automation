@@ -1,4 +1,4 @@
-import { enforceTimeouts } from '@qa/domain';
+import { LABEL, enforceTimeouts } from '@qa/domain';
 import { DockerEngine, readSecretFile } from '@qa/infrastructure';
 import { buildLauncherApp } from './app';
 
@@ -15,7 +15,11 @@ const app = buildLauncherApp({
   engine,
   token,
   allowedImagePrefixes: prefixes,
-  maxConcurrent: Number(env.RUNNER_MAX_CONCURRENT ?? 4),
+  maxConcurrent: (() => {
+    const n = Number(env.RUNNER_MAX_CONCURRENT ?? 4);
+    // Number("") === 0 would make the pool always "full" even with zero runners.
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 4;
+  })(),
   translate: { network: env.RUNNER_NETWORK ?? 'automation', proxyUrl: env.RUNNER_PROXY_URL },
   localImage: env.RUNNER_LOCAL_IMAGE ? { repository: env.RUNNER_IMAGE_REPOSITORY ?? 'qa-runner', ref: env.RUNNER_LOCAL_IMAGE } : undefined,
 });
@@ -25,6 +29,20 @@ const sweep = setInterval(() => {
     (stopped) => stopped.length > 0 && log('stopped runners over their time limit', { runIds: stopped }),
     (e) => log('timeout sweep failed', { error: e instanceof Error ? e.message : 'unknown' }),
   );
+  // Drop exited / never-started managed runners so they cannot pin the concurrent pool.
+  engine.list({ [LABEL.managed]: 'true' }).then(async (list) => {
+    let removed = 0;
+    for (const c of list) {
+      if (c.status === 'running' || c.status === 'restarting' || c.status === 'paused' || c.status === 'removing') continue;
+      try {
+        await engine.remove(c.id);
+        removed += 1;
+      } catch {
+        /* best-effort */
+      }
+    }
+    if (removed > 0) log('reclaimed finished runners', { removed });
+  }, (e) => log('reclaim sweep failed', { error: e instanceof Error ? e.message : 'unknown' }));
 }, 30_000);
 
 const shutdown = async () => {

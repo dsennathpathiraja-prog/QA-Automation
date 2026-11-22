@@ -1,6 +1,13 @@
 import {
+  evaluateCaseQualityGate,
+  exploreCodeArtifactPath,
+  exploreUiArtifactPath,
   parsePlanMarkdown,
+  renderExploreCodeMarkdown,
+  renderExploreUiMarkdown,
   type BrowserExplorerPort,
+  type CodeExploreResult,
+  type CodeExplorerPort,
   type ExploreResult,
   type GenerateResult,
   type HealResult,
@@ -10,6 +17,7 @@ import {
   type TestHealerPort,
   type TestPlannerPort,
 } from '@qa/agents';
+import { PlatformError } from '@qa/domain';
 import { runFlowStep, type FlowResult } from '@qa/workflow-engine';
 
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
@@ -52,6 +60,15 @@ const casesOf = (value: unknown) => {
         return [{ action, expected: text(s?.expected) }];
       })
       : undefined;
+    const tags = Array.isArray(row.tags)
+      ? (row.tags as unknown[]).map((t) => text(t)).filter(Boolean)
+      : undefined;
+    const runStatus: 'Blocked' | 'Skipped' | undefined = row.runStatus === 'Blocked' || row.runStatus === 'Skipped'
+      ? row.runStatus
+      : undefined;
+    const surfaceKind = row.surfaceKind === 'shop' || row.surfaceKind === 'template' || row.surfaceKind === 'other'
+      ? row.surfaceKind as 'shop' | 'template' | 'other'
+      : undefined;
     return [{
       name,
       kind: kind as 'positive' | 'negative' | 'edge',
@@ -63,6 +80,10 @@ const casesOf = (value: unknown) => {
       reference: text(row.reference),
       file: text(row.file),
       testId: text(row.testId),
+      ...(runStatus ? { runStatus } : {}),
+      ...(tags && tags.length > 0 ? { tags } : {}),
+      ...(text(row.primarySurfaceUrl) ? { primarySurfaceUrl: text(row.primarySurfaceUrl) } : {}),
+      ...(surfaceKind ? { surfaceKind } : {}),
     }];
   });
 };
@@ -72,15 +93,22 @@ export interface RequirementAgentPorts {
   generator?: TestGeneratorPort;
   healer?: TestHealerPort;
   explorer?: BrowserExplorerPort;
+  codeExplorer?: CodeExplorerPort;
   /** Resolve an environment id (or name) to an application URL for UI exploration. */
   resolveEnvironmentUrl?: (environment: string) => Promise<string | undefined>;
+  /**
+   * Resolve an optional notification/email template preview URL for the environment.
+   * When unset, Explore keeps the E1 fail-closed gap on shop-only hosts.
+   */
+  resolveTemplatePreviewUrl?: (environment: string) => Promise<string | undefined>;
 }
 
 /**
  * Runs one requirement-validation stage through planner / generator / healer / browser
- * agents when wired, otherwise falls back to the sync heuristic flow in workflow-engine.
+ * / source-repo agents when wired, otherwise falls back to the sync heuristic flow in workflow-engine.
  *
  * Order: explore → consolidate → plan (MD) → generate (from MD) → heal → publish.
+ * Explore UI / Explore code must succeed (real connector calls) before plan runs.
  */
 export async function performRequirementStep(
   step: { id: string; type: string; runId: string; params: Record<string, unknown>; prior: Record<string, Record<string, unknown>> },
@@ -100,41 +128,121 @@ export async function performRequirementStep(
   const planMarkdown = text(step.prior.plan?.planMarkdown);
   const planArtifact = text(step.prior.plan?.planArtifact);
 
-  if (step.type === 'rv.explore-ui' && ports.explorer) {
+  if (step.type === 'rv.explore-ui') {
+    if (!ports.explorer) {
+      throw new PlatformError('denied', 'Explore UI requires a Playwright browser explorer on the worker before planning.');
+    }
     const url = ports.resolveEnvironmentUrl && environment
       ? await ports.resolveEnvironmentUrl(environment)
+      : undefined;
+    const templatePreviewUrl = ports.resolveTemplatePreviewUrl && environment
+      ? await ports.resolveTemplatePreviewUrl(environment)
       : undefined;
     const explored: ExploreResult = await ports.explorer.explore({
       application,
       environment: environment || undefined,
       url,
+      templatePreviewUrl: templatePreviewUrl || undefined,
+      workItemTitle: text(storyOut.title) || undefined,
+      story: fullStory || undefined,
       criteria,
       scenarios: [],
       maxPages: 5,
       executionId: step.runId,
       stepId: step.id,
     });
+    if (explored.source === 'skipped') {
+      throw new PlatformError('validation', explored.summary || 'Explore UI did not open the application.');
+    }
+    const details = explored.details.map(({ scenarioName, url: pageUrl, snapshotExcerpt, title, cuesSummary }) => ({
+      scenarioName,
+      url: pageUrl,
+      snapshotExcerpt,
+      ...(title ? { title } : {}),
+      ...(cuesSummary ? { cuesSummary } : {}),
+    }));
+    const artifactMarkdown = renderExploreUiMarkdown({
+      workItem,
+      application,
+      findings: explored.findings,
+      details: explored.details,
+      surfaceKind: explored.surfaceKind,
+      primarySurfaceUrl: explored.primarySurfaceUrl,
+      blockingGap: explored.blockingGap,
+      candidateRoutes: explored.candidateRoutes,
+    });
     return {
       summary: explored.summary,
       outputs: {
         findings: explored.findings,
-        details: explored.details.map(({ scenarioName, url: pageUrl, snapshotExcerpt }) => ({
-          scenarioName,
-          url: pageUrl,
-          snapshotExcerpt,
-        })),
+        details,
         source: explored.source,
+        warning: explored.warning,
+        relevant: explored.relevant,
+        blockingGap: explored.blockingGap,
+        surfaceKind: explored.surfaceKind,
+        primarySurfaceUrl: explored.primarySurfaceUrl,
+        ...(explored.templatePreviewUrl ? { templatePreviewUrl: explored.templatePreviewUrl } : {}),
+        candidateRoutes: explored.candidateRoutes,
+        artifactMarkdown,
+        artifactPath: exploreUiArtifactPath(workItem, application),
+      },
+    };
+  }
+
+  if (step.type === 'rv.explore-code') {
+    if (!ports.codeExplorer) {
+      throw new PlatformError('denied', 'Explore code requires a source-repo explorer on the worker before planning.');
+    }
+    const explored: CodeExploreResult = await ports.codeExplorer.explore({
+      application,
+      workItem,
+      workItemTitle: text(storyOut.title) || undefined,
+      story: fullStory || undefined,
+      criteria,
+      maxFiles: 12,
+      maxQueries: 8,
+      executionId: step.runId,
+      stepId: step.id,
+    });
+    const details = explored.details.map(({ path, excerpt, query }) => ({ path, excerpt, query }));
+    const artifactMarkdown = renderExploreCodeMarkdown({
+      workItem,
+      application,
+      findings: explored.findings,
+      details: explored.details,
+      repo: explored.repo,
+    });
+    return {
+      summary: explored.summary,
+      outputs: {
+        findings: explored.findings,
+        details,
+        source: explored.source,
+        repo: explored.repo,
+        relevant: explored.relevant,
+        warning: explored.warning,
+        artifactMarkdown,
+        artifactPath: exploreCodeArtifactPath(workItem, application),
       },
     };
   }
 
   if (step.type === 'rv.generate-test-plan' && ports.planner) {
+    const environmentUrl = ports.resolveEnvironmentUrl && environment
+      ? await ports.resolveEnvironmentUrl(environment)
+      : undefined;
+    const templatePreviewUrl = ports.resolveTemplatePreviewUrl && environment
+      ? await ports.resolveTemplatePreviewUrl(environment)
+      : undefined;
     const planned: PlanResult = await ports.planner.plan({
       workItem,
       application,
       story: fullStory,
       criteria,
       findings: findings || undefined,
+      environmentUrl: environmentUrl || undefined,
+      templatePreviewUrl: templatePreviewUrl || undefined,
       executionId: step.runId,
       stepId: step.id,
     });
@@ -149,11 +257,21 @@ export async function performRequirementStep(
         environment,
         agent: 'playwright-test-planner',
         source: planned.source,
+        exploreWarning: planned.exploreWarning,
+        blockingGap: planned.blockingGap,
+        surfaceKind: planned.surfaceKind,
+        primarySurfaceUrl: planned.primarySurfaceUrl,
       },
     };
   }
 
   if (step.type === 'rv.generate-tests' && ports.generator) {
+    const environmentUrl = ports.resolveEnvironmentUrl && environment
+      ? await ports.resolveEnvironmentUrl(environment)
+      : undefined;
+    const templatePreviewUrl = ports.resolveTemplatePreviewUrl && environment
+      ? await ports.resolveTemplatePreviewUrl(environment)
+      : undefined;
     const fromMd = planMarkdown ? parsePlanMarkdown(planMarkdown) : [];
     const source = scenarios.length > 0
       ? scenarios
@@ -165,6 +283,8 @@ export async function performRequirementStep(
           story: fullStory,
           criteria,
           findings: findings || undefined,
+          environmentUrl: environmentUrl || undefined,
+          templatePreviewUrl: templatePreviewUrl || undefined,
           executionId: step.runId,
           stepId: step.id,
         }) ?? { scenarios: [] })).scenarios;
@@ -175,17 +295,44 @@ export async function performRequirementStep(
       planMarkdown: planMarkdown || undefined,
       planArtifact: planArtifact || undefined,
       findings: findings || undefined,
+      story: fullStory || undefined,
+      environmentUrl: environmentUrl || undefined,
+      templatePreviewUrl: templatePreviewUrl || undefined,
       executionId: step.runId,
       stepId: step.id,
     });
+    const planBlocking = step.prior.plan?.blockingGap === true;
+    const quality = evaluateCaseQualityGate({
+      cases: generated.cases,
+      criteria,
+      scenarios: source,
+      planMarkdown: planMarkdown || undefined,
+      blockingGap: planBlocking,
+    });
+    // Soft check on generate: stubs should already be replaced; refuse early if any remain.
+    if (!quality.ok) {
+      throw new PlatformError('validation', `Generate refused by case quality gate. ${quality.summary}`, {
+        qualityGate: { stubCount: quality.stubCount, issues: quality.issues },
+      });
+    }
+    const qualityNote = quality.needsSurfaceCount > 0 || quality.acCoverage.some((r) => !r.covered)
+      ? ` ${quality.summary}`
+      : '';
     return {
-      summary: generated.summary,
+      summary: `${generated.summary}${qualityNote}`,
       outputs: {
         cases: generated.cases,
         workItem,
         planArtifact: planArtifact || undefined,
         agent: 'playwright-test-generator',
         source: generated.source,
+        qualityGate: {
+          ok: quality.ok,
+          summary: quality.summary,
+          stubCount: quality.stubCount,
+          needsSurfaceCount: quality.needsSurfaceCount,
+          acGaps: quality.acCoverage.filter((r) => !r.covered).map((r) => r.criterion),
+        },
       },
     };
   }
@@ -200,6 +347,18 @@ export async function performRequirementStep(
       executionId: step.runId,
       stepId: step.id,
     });
+    const quality = evaluateCaseQualityGate({
+      cases: healed.cases,
+      criteria,
+      scenarios: scenariosOf(step.prior.plan?.scenarios),
+      planMarkdown: planMarkdown || undefined,
+      blockingGap: step.prior.plan?.blockingGap === true,
+    });
+    if (!quality.ok) {
+      throw new PlatformError('validation', `Heal left stub cases; publish would refuse. ${quality.summary}`, {
+        qualityGate: { stubCount: quality.stubCount, issues: quality.issues },
+      });
+    }
     return {
       summary: healed.summary,
       outputs: {
@@ -208,6 +367,12 @@ export async function performRequirementStep(
         workItem,
         agent: 'playwright-test-healer',
         source: healed.source,
+        qualityGate: {
+          ok: quality.ok,
+          summary: quality.summary,
+          stubCount: quality.stubCount,
+          needsSurfaceCount: quality.needsSurfaceCount,
+        },
       },
     };
   }

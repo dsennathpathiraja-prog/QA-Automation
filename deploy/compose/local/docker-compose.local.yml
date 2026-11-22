@@ -2,6 +2,7 @@
 # Never use this file on a shared or production host; use ../docker-compose.yml for that.
 # Start:  docker compose -f deploy/compose/local/docker-compose.local.yml up --build
 # Open:   http://localhost:8088   (change the port with WEB_PORT, e.g. WEB_PORT=9000 before the command)
+# Includes Playwright runner-launcher + qa-runner:local by default (needed for Executions screenshots).
 name: qa-platform-local
 
 services:
@@ -35,7 +36,8 @@ services:
       SECRET_MASTER_KEY: bG9jYWwtdHJpYWwtbWFzdGVyLWtleS0zMi1ieXRlcyE=
       # To see models from an Ollama running on your own machine, uncomment:
       # OLLAMA_URL: http://host.docker.internal:11434
-    extra_hosts: ["host.docker.internal:host-gateway"]
+    extra_hosts:
+      host.docker.internal: host-gateway
     depends_on:
       postgres: { condition: service_healthy }
       keycloak: { condition: service_started }
@@ -57,23 +59,44 @@ services:
       DATABASE_PASSWORD: local-trial-db-password
       SECRET_STORE: db-envelope
       SECRET_MASTER_KEY: bG9jYWwtdHJpYWwtbWFzdGVyLWtleS0zMi1ieXRlcyE=
-      # Used when the runners profile is up. If that service is not running, the worker keeps checking the address itself.
+      # Playwright runner for Executions screenshots (runner-launcher is part of the default local stack).
       RUNNER_LAUNCHER_URL: http://runner-launcher:3002
       RUNNER_LAUNCHER_TOKEN: local-trial-launcher-token-32chars
+      # Browser MCP as seen from this container (Compose DNS on qa-platform-local). Not localhost.
+      # Host machine (published port): http://127.0.0.1:8931 — set connector baseUrl to the worker URL in the UI.
+      PLAYWRIGHT_MCP_URL: ${PLAYWRIGHT_MCP_URL:-http://playwright-mcp:8931}
+    networks: [default]
     depends_on:
       api: { condition: service_healthy }
+      runner-launcher: { condition: service_healthy }
 
   # Managed Playwright MCP browser (required for Connectors → Playwright → Test connection).
-  # Start: docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d
-  # Connector URL from the worker: http://playwright-mcp:8931  (not localhost — the worker is another container).
+  # Start / rebuild: docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d playwright-mcp
+  # Worker connector URL: http://playwright-mcp:8931 (Compose DNS / PLAYWRIGHT_MCP_URL). Host debug: http://127.0.0.1:8931
   # Approve host playwright-mcp for plain http when the UI asks. MCP path is /mcp (added by the connector).
-  # For MFA, sign in once and pass --storage-state to this service.
+  # Image bakes Chromium + pinned @playwright/mcp (not Google Chrome). For MFA, pass --storage-state via a custom command.
   playwright-mcp:
     profiles: [browser]
-    image: mcr.microsoft.com/playwright:v1.55.0-noble
-    command: ["bash", "-lc", "npx --yes @playwright/mcp@latest --headless --port 8931 --host 0.0.0.0 --allowed-hosts '*'"]
+    image: qa-playwright-mcp:local
+    build: { context: ../../.., dockerfile: deploy/images/playwright-mcp.Dockerfile }
+    hostname: playwright-mcp
+    # Keep the service name resolvable even if Compose recreates the container after an image rebuild.
+    networks:
+      default:
+        aliases: [playwright-mcp]
     init: true
+    restart: unless-stopped
+    shm_size: "256mb"
     expose: ["8931"]
+    # Loopback publish for host curl/debug only. The worker must use http://playwright-mcp:8931, not this port mapping.
+    ports: ["127.0.0.1:${PLAYWRIGHT_MCP_HOST_PORT:-8931}:8931"]
+    # Host /etc/hosts is NOT inherited. Mapping form required (Docker Compose on Windows rejects list/"host:ip" strings).
+    # Do NOT default sdk.paynsure.internal → host-gateway (often returns HTTP 4xx/5xx from the wrong listener).
+    # For PayNSure shop DNS: set PLAYWRIGHT_MCP_SHOP_IP and also pass
+    #   -f deploy/compose/local/docker-compose.playwright-shop.yml
+    # (see env.playwright.example / qa-45 notes).
+    extra_hosts:
+      host.docker.internal: host-gateway
     healthcheck:
       test: ["CMD", "node", "-e", "require('net').connect(8931,'127.0.0.1',()=>process.exit(0)).on('error',()=>process.exit(1))"]
       interval: 15s
@@ -81,20 +104,23 @@ services:
       retries: 10
       start_period: 60s
 
-  # Builds the runner image and exits. The launcher starts a fresh container from qa-runner:local for each check.
-  # Start with: docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser --profile runners up --build -d
+
+  # Builds the Playwright runner image and exits. Part of the default local stack (Executions screenshots).
+  # After changing apps/runner/, rebuild with: docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
   runner-image:
-    profiles: [runners]
     image: qa-runner:local
     build: { context: ../../.., dockerfile: deploy/images/runner.Dockerfile }
     entrypoint: ["node", "-e", "process.exit(0)"]
     restart: "no"
 
   # The only local service that sees the container socket. It is root here so Docker Desktop's socket is usable.
+  # Starts by default with the local stack (no compose profile). Launches qa-runner:local per check/run.
   runner-launcher:
-    profiles: [runners]
     build: { context: ../../.., dockerfile: deploy/images/runner-launcher.Dockerfile }
     user: "0:0"
+    depends_on:
+      runner-image:
+        condition: service_completed_successfully
     environment:
       HOST: 0.0.0.0
       PORT: "3002"
@@ -103,10 +129,18 @@ services:
       RUNNER_LOCAL_IMAGE: qa-runner:local
       RUNNER_IMAGE_REPOSITORY: qa-runner
       RUNNER_NETWORK: qa-platform-local
-      RUNNER_MAX_CONCURRENT: "2"
+      # Local trial: enough slots for reachability + an Execute batch (one container per work-item run).
+      # Finished / never-started runners are reclaimed before this check.
+      RUNNER_MAX_CONCURRENT: "8"
     volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
     read_only: true
     tmpfs: ["/tmp"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   postgres:
     image: postgres:16-alpine

@@ -9,6 +9,8 @@
  * in-repo ports in `types.ts` instead.
  */
 
+import { titledCaseName } from './case-template';
+import { workItemTitleFromStory } from './heuristic';
 import { MAX_GENERATED_CASES, MAX_HEAL_CASES, MAX_PLAN_SCENARIOS } from './limits';
 import { planArtifactPath, renderPlanMarkdown } from './plan-markdown';
 import type {
@@ -143,14 +145,22 @@ export function plannerPortFromMcp(mcp: PlaywrightTestPlannerMcp): TestPlannerPo
         workItem: input.workItem,
         findings: input.findings,
       });
-      const scenarios = out.scenarios.slice(0, MAX_PLAN_SCENARIOS).map((row) => ({
-        name: row.name,
-        kind: row.kind,
-        priority: row.priority ?? (row.kind === 'negative' ? 'high' as const : row.kind === 'edge' ? 'low' as const : 'medium' as const),
-        criterion: row.criterion,
-        steps: row.steps,
-        expected: row.expected,
-      }));
+      const workItemTitle = workItemTitleFromStory(input.story);
+      const scenarios = out.scenarios.slice(0, MAX_PLAN_SCENARIOS).map((row) => {
+        const kind = row.kind === 'negative' || row.kind === 'edge' ? row.kind : 'positive' as const;
+        return {
+          name: titledCaseName({
+            kind,
+            title: workItemTitle,
+            goal: row.name.replace(/^(positive|negative|edge)\s*:\s*/i, '').trim() || row.criterion,
+          }),
+          kind,
+          priority: row.priority ?? (kind === 'negative' ? 'high' as const : kind === 'edge' ? 'low' as const : 'medium' as const),
+          criterion: row.criterion,
+          steps: row.steps,
+          expected: row.expected,
+        };
+      });
       const planArtifact = planArtifactPath(input.workItem, input.application);
       const planMarkdown = out.planMarkdown?.trim()
         || renderPlanMarkdown(scenarios, {
@@ -266,22 +276,42 @@ export function explorerPortFromBrowserMcp(mcp: PlaywrightBrowserMcp): BrowserEx
         await mcp.navigate(input.url);
         for (let i = 0; i < limit; i += 1) {
           const snap = await mcp.snapshot();
-          const shot = await mcp.takeScreenshot({ fullPage: true });
+          const shot = await mcp.takeScreenshot({ fullPage: false });
+          const text = (snap.text ?? '').trim();
           details.push({
             scenarioName: labels[i] ?? `page-${i + 1}`,
             url: snap.url ?? input.url,
-            snapshotExcerpt: (snap.text ?? '').slice(0, 1_500),
+            snapshotExcerpt: text.slice(0, 4_000),
             screenshotBase64: shot.data || undefined,
           });
         }
+      } catch (e) {
+        const reason = e instanceof Error ? e.message : 'unknown error';
+        return {
+          summary: `UI note for ${input.application}: could not explore ${input.url} (${reason}).`,
+          findings: `url ${input.url}; browser unavailable`,
+          details: [],
+          source: 'skipped',
+        };
       } finally {
         await mcp.close().catch(() => undefined);
       }
-      const findings = details.map((d) => `${d.scenarioName} @ ${d.url}: ${d.snapshotExcerpt.slice(0, 240)}`).join('\n') || `opened ${input.url}`;
+      const usable = details.filter((d) => (d.snapshotExcerpt || '').trim().length > 0);
+      if (usable.length === 0) {
+        return {
+          summary: `Explore UI reached ${input.url} but snapshot content is empty — not useful for test planning.`,
+          findings: `url ${input.url}; empty snapshot`,
+          details: [],
+          source: 'skipped',
+        };
+      }
+      const findings = usable.map((d) => `${d.scenarioName} @ ${d.url}: ${d.snapshotExcerpt.slice(0, 240)}`).join('\n') || `opened ${input.url}`;
+      const visitedUrls = [...new Set(usable.map((d) => d.url).filter(Boolean))];
+      const urlList = (visitedUrls.length > 0 ? visitedUrls : [input.url]).join(', ');
       return {
-        summary: `${PLAYWRIGHT_MCP_ROLES.browser} opened ${details.length} page${details.length === 1 ? '' : 's'} for ${input.application} (before planning).`,
+        summary: `Visited ${urlList} (${usable.length} page snapshot${usable.length === 1 ? '' : 's'}) for ${input.application} before planning.`,
         findings,
-        details,
+        details: usable,
         source: 'mcp',
       };
     },

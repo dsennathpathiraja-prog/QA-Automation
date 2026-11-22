@@ -15,10 +15,10 @@ function connect(over: { baseUrl?: string; token?: string; config?: Record<strin
 }
 const call = (c: ConnectorClient, id: string, input: Record<string, unknown> = {}, scope = {}) => c.handle(caps.get(id), input, { instanceId: 'sq', config: {}, scope });
 
-/** Worker-aligned egress: test-case store plus iteration execution create and status PATCH. */
+/** Worker-aligned egress: test-case store, iteration execution create, attachments, and status PATCH. */
 function squashTestCaseWrites(req: { method: string; url: string }): boolean {
   const path = new URL(req.url).pathname;
-  if (req.method === 'POST' && /\/api\/rest\/[^/]+\/(test-cases(\/\d+\/steps)?|iterations\/\d+\/executions)$/.test(path)) return true;
+  if (req.method === 'POST' && /\/api\/rest\/[^/]+\/(test-cases(\/\d+\/steps)?|iterations\/\d+\/executions|(executions|test-cases)\/\d+\/attachments\/?)$/.test(path)) return true;
   if (req.method === 'DELETE' && /\/api\/rest\/[^/]+\/test-steps\/\d+$/.test(path)) return true;
   return req.method === 'PATCH' && /\/api\/rest\/[^/]+\/(test-cases|executions)\/\d+$/.test(path);
 }
@@ -37,6 +37,7 @@ describe('Squash provider against the documentation-based mock', () => {
       'tm.testcase.upsert',
       'tm.execution.upsert',
       'tm.execution.status.update',
+      'tm.attachment.upload',
     ]);
     expect(squashProvider.manifest.authMethods.map((a) => a.key)).toEqual(['api_token']);
   });
@@ -154,6 +155,7 @@ describe('Squash provider against the documentation-based mock', () => {
       support: 'supported',
       reason: expect.stringMatching(/PATCH \/executions\/\{id\}/),
     });
+    expect(probe.find((p) => p.capability === 'tm.attachment.upload')).toMatchObject({ support: 'supported' });
   });
 
   it('still advertises execution upsert when the global iteration list is refused', async () => {
@@ -168,6 +170,61 @@ describe('Squash provider against the documentation-based mock', () => {
     expect(probe.find((p) => p.capability === 'tm.iteration.list')).toMatchObject({ support: 'unsupported' });
     expect(probe.find((p) => p.capability === 'tm.execution.upsert')).toMatchObject({ support: 'supported' });
     expect(probe.find((p) => p.capability === 'tm.execution.status.update')).toMatchObject({ support: 'supported' });
+  });
+
+  it('uploads a screenshot attachment to an execution with multipart files=', async () => {
+    const { createHash } = await import('node:crypto');
+    const rw = makeSquashToken({ permissions: 'READ_WRITE' });
+    await mock.close();
+    mock = await startSquashMock({ token: rw, permissions: 'READ_WRITE' });
+    const rules: EgressRule[] = [{ hostPattern: '127.0.0.1', purpose: 'application', internal: true, allowHttp: true, allowLoopback: true }];
+    const http = new HardenedHttpClient({
+      egress: new EgressPolicy({ rules, profile: 'standard', platformEnv: 'development' }),
+      allowedMethods: ['GET'],
+      allowOther: squashTestCaseWrites,
+    });
+    const client = squashProvider.create({ baseUrl: mock.baseUrl }, { value: { token: rw }, expiresAt: new Date(Date.now() + 60_000), release() {} }, { http });
+    // Minimal JPEG (FF D8 … FF D9) as base64.
+    const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+    const contentBase64 = bytes.toString('base64');
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const out = await call(client, 'tm.attachment.upload', {
+      entityType: 'execution',
+      entityId: '2',
+      name: 'Login-screenshot.jpg',
+      contentBase64,
+      sha256,
+    });
+    expect(out).toEqual({ id: '9001' });
+    const posts = mock.nonGetRequests().filter((item) => item.method === 'POST' && /\/executions\/2\/attachments/.test(item.path));
+    expect(posts).toHaveLength(1);
+    expect(posts[0]!.authorization).toBe(`Bearer ${rw}`);
+    expect(String(posts[0]!.contentType)).toMatch(/multipart\/form-data/);
+    expect(posts[0]!.rawByteLength).toBeGreaterThan(bytes.byteLength);
+    expect(posts[0]!.body).toMatchObject({ name: 'Login-screenshot.jpg' });
+  });
+
+  it('refuses attachment upload when sha256 does not match content', async () => {
+    const rw = makeSquashToken({ permissions: 'READ_WRITE' });
+    await mock.close();
+    mock = await startSquashMock({ token: rw, permissions: 'READ_WRITE' });
+    const rules: EgressRule[] = [{ hostPattern: '127.0.0.1', purpose: 'application', internal: true, allowHttp: true, allowLoopback: true }];
+    const http = new HardenedHttpClient({
+      egress: new EgressPolicy({ rules, profile: 'standard', platformEnv: 'development' }),
+      allowedMethods: ['GET'],
+      allowOther: squashTestCaseWrites,
+    });
+    const client = squashProvider.create({ baseUrl: mock.baseUrl }, { value: { token: rw }, expiresAt: new Date(Date.now() + 60_000), release() {} }, { http });
+    await expect(
+      call(client, 'tm.attachment.upload', {
+        entityType: 'execution',
+        entityId: '2',
+        name: 'x.jpg',
+        contentBase64: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64'),
+        sha256: 'a'.repeat(64),
+      }),
+    ).rejects.toMatchObject({ errorClass: 'validation', message: expect.stringMatching(/sha256/i) });
+    expect(mock.nonGetRequests()).toEqual([]);
   });
 
   it('reads test cases through a project when the global list is refused', async () => {

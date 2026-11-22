@@ -13,6 +13,7 @@ import {
   type EnvironmentAuthorizationRecord,
   type EnvironmentBrowser,
   type EnvironmentKind,
+  type EnvironmentPatch,
   type EnvironmentRecord,
   type EnvironmentRepository,
   type EnvironmentRestrictions,
@@ -51,6 +52,8 @@ export interface EnvironmentSummary {
 export interface EnvironmentDetail extends EnvironmentSummary {
   browser: EnvironmentBrowser;
   restrictions: EnvironmentRestrictions;
+  /** Optional notification/email template preview URL. */
+  templatePreviewUrl?: string;
   reachability: EnvironmentRecord['reachability'];
   reachabilityDetail?: string;
   reachabilityCheckedAt?: string;
@@ -62,6 +65,7 @@ export interface CreateEnvironmentInput {
   name: string;
   kind: EnvironmentKind;
   applicationUrl: string;
+  templatePreviewUrl?: string;
   browser?: Partial<EnvironmentBrowser>;
   restrictions?: Partial<EnvironmentRestrictions>;
   enabled?: boolean;
@@ -71,6 +75,8 @@ export interface UpdateEnvironmentInput {
   name?: string;
   kind?: EnvironmentKind;
   applicationUrl?: string;
+  /** Pass empty string or null to clear. */
+  templatePreviewUrl?: string | null;
   browser?: Partial<EnvironmentBrowser>;
   restrictions?: Partial<EnvironmentRestrictions>;
   enabled?: boolean;
@@ -107,6 +113,7 @@ export class EnvironmentService {
       ...(await this.summary(row)),
       browser: row.browser,
       restrictions: row.restrictions,
+      ...(row.templatePreviewUrl ? { templatePreviewUrl: row.templatePreviewUrl } : {}),
       reachability: row.reachability,
       reachabilityDetail: row.reachabilityDetail,
       reachabilityCheckedAt: row.reachabilityCheckedAt?.toISOString(),
@@ -117,7 +124,9 @@ export class EnvironmentService {
 
   async create(actor: ActorRef, input: CreateEnvironmentInput): Promise<EnvironmentDetail> {
     const kind = this.kind(input.kind);
-    const applicationUrl = this.applicationUrl(input.applicationUrl, await this.d.hosts.list('application'));
+    const hosts = await this.d.hosts.list('application');
+    const applicationUrl = this.applicationUrl(input.applicationUrl, hosts);
+    const templatePreviewUrl = this.optionalPreviewUrl(input.templatePreviewUrl, hosts);
     const browser = this.browser(input.browser);
     const restrictions = this.restrictions(kind, input.restrictions);
     const rec = await this.d.environments.insert({
@@ -125,6 +134,7 @@ export class EnvironmentService {
       name: this.name(input.name),
       kind,
       applicationUrl,
+      ...(templatePreviewUrl ? { templatePreviewUrl } : {}),
       browser,
       restrictions,
       enabled: input.enabled !== false,
@@ -141,14 +151,18 @@ export class EnvironmentService {
     const applicationUrl = input.applicationUrl === undefined ? current.applicationUrl : this.applicationUrl(input.applicationUrl, hosts);
     const browser = input.browser === undefined ? current.browser : this.browser({ ...current.browser, ...input.browser });
     const restrictions = input.restrictions === undefined && input.kind === undefined ? current.restrictions : this.restrictions(kind, { ...current.restrictions, ...input.restrictions });
-    await this.d.environments.update(id, {
+    const patch: EnvironmentPatch = {
       name: input.name === undefined ? undefined : this.name(input.name),
       kind,
       applicationUrl,
       browser,
       restrictions,
       enabled: input.enabled,
-    });
+    };
+    if (input.templatePreviewUrl !== undefined) {
+      patch.templatePreviewUrl = this.optionalPreviewUrl(input.templatePreviewUrl, hosts) ?? '';
+    }
+    await this.d.environments.update(id, patch);
     if (applicationUrl !== current.applicationUrl) await this.d.environments.clearReachability(id);
     await this.d.audit.append({ actorId: actor.id, action: 'environment.update', subjectType: 'environment', subjectId: id, detail: { name: input.name ?? current.name, kind } });
     return this.get(id);
@@ -288,5 +302,12 @@ export class EnvironmentService {
 
   private applicationUrl(raw: string, hosts: ApprovedHost[]): string {
     return checkedApplicationUrl(raw, hosts);
+  }
+
+  /** Empty / null clears; otherwise same host rules as application URL. */
+  private optionalPreviewUrl(raw: string | null | undefined, hosts: ApprovedHost[]): string | undefined {
+    if (raw === undefined) return undefined;
+    if (raw === null || !String(raw).trim()) return undefined;
+    return checkedApplicationUrl(String(raw), hosts);
   }
 }

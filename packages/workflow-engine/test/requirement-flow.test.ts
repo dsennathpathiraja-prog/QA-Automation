@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { tick, type EngineStore } from '../src';
-import { acceptanceLines, runFlowStep } from '../src/requirement-flow';
+import { acceptanceLines, runFlowStep, workItemTitleFromStory } from '../src/requirement-flow';
 
 const story = 'QA-1\n\nAcceptance criteria\nThe saved card is listed\nThe total includes tax';
 
@@ -11,7 +11,7 @@ describe('requirement validation stages', () => {
     expect(read.outputs.acceptanceCriteria).toEqual(['The saved card is listed', 'The total includes tax']);
 
     const explore = runFlowStep({ id: 'explore_ui', type: 'rv.explore-ui', params, prior: { read_story: read.outputs } });
-    expect(explore.summary).toMatch(/before the plan|exploration/i);
+    expect(explore.summary).toMatch(/offline|stub/i);
 
     const consolidate = runFlowStep({
       id: 'consolidate',
@@ -49,6 +49,8 @@ describe('requirement validation stages', () => {
     expect(cases[0]?.workItem).toBe('QA-1');
     expect(cases[0]?.steps).toMatch(/@playwright\/test/);
     expect(cases[0]?.reference).toMatch(/^QAP-/);
+    expect(cases.every((c) => !/locator\(['"]body['"]\)/.test(c.steps))).toBe(true);
+    expect(cases.some((c) => /getByRole|getByText/.test(c.steps))).toBe(true);
 
     const healed = runFlowStep({
       id: 'heal_tests',
@@ -88,21 +90,132 @@ describe('requirement validation stages', () => {
       'The total includes tax',
       'Given a saved card When the shopper pays Then the receipt shows the card',
     ]);
+    expect(workItemTitleFromStory(azureStyle)).toBe('PayNSure checkout');
     const read = runFlowStep({ id: 'read_story', type: 'rv.read-user-story', params: { story: azureStyle, applicationName: 'PayNSure' }, prior: {} });
+    expect(read.summary).toMatch(/7189 — PayNSure checkout/);
     expect(read.summary).toMatch(/3 acceptance criteria/);
+    expect(read.outputs.title).toBe('PayNSure checkout');
     const plan = runFlowStep({
       id: 'plan',
       type: 'rv.generate-test-plan',
       params: { story: azureStyle, applicationName: 'PayNSure' },
       prior: { read_story: read.outputs },
     });
-    expect((plan.outputs.scenarios as unknown[]).length).toBeGreaterThan(9);
+    const planned = plan.outputs.scenarios as { name: string }[];
+    expect(planned.length).toBeGreaterThan(9);
+    expect(planned.every((s) => /PayNSure checkout/i.test(s.name))).toBe(true);
     expect(asText(plan.outputs.planMarkdown)).toMatch(/7189/);
   });
 
   it('does not treat a bare work item id as acceptance criteria', () => {
     const read = runFlowStep({ id: 'read_story', type: 'rv.read-user-story', params: { story: '7189', applicationName: 'PayNSure' }, prior: {} });
     expect(read.outputs.acceptanceCriteria).toEqual([]);
+    expect(read.summary).toMatch(/no separate acceptance criteria/);
+    expect(read.outputs.title).toBeUndefined();
+  });
+
+  it('reads an inline id — title on the first story line', () => {
+    expect(workItemTitleFromStory('7189 — Guest checkout')).toBe('Guest checkout');
+    const read = runFlowStep({
+      id: 'read_story',
+      type: 'rv.read-user-story',
+      params: { story: '7189 — Guest checkout', applicationName: 'PayNSure' },
+      prior: {},
+    });
+    expect(read.outputs.workItem).toBe('7189');
+    expect(read.outputs.title).toBe('Guest checkout');
+    expect(read.summary).toMatch(/7189 — Guest checkout/);
+    expect(read.outputs.acceptanceCriteria).toEqual([]);
+  });
+
+  it('acknowledges an explicit workItemTitle param on the Read Done line', () => {
+    const read = runFlowStep({
+      id: 'read_story',
+      type: 'rv.read-user-story',
+      params: { story: '7189', applicationName: 'PayNSure', workItemTitle: 'Guest checkout' },
+      prior: {},
+    });
+    expect(read.summary).toMatch(/7189 — Guest checkout/);
+    expect(read.outputs.title).toBe('Guest checkout');
+  });
+
+  it('includes a short description excerpt after the title on the Read Done line', () => {
+    const title = 'Order transactions calculation flow update to match new payment settlement and reasons';
+    const read = runFlowStep({
+      id: 'read_story',
+      type: 'rv.read-user-story',
+      params: {
+        story: `3421 — ${title}`,
+        applicationName: 'PayNSure',
+        workItemTitle: title,
+        workItemDescriptionExcerpt: 'Settle ledger rows with the new payment reasons.',
+      },
+      prior: {},
+    });
+    expect(read.summary).toMatch(/3421 — Order transactions calculation flow update/);
+    expect(read.summary).toMatch(/Settle ledger rows with the new payment reasons\./);
+    expect(read.summary).toMatch(/no separate acceptance criteria/);
+    expect(read.outputs.title).toBe(title);
+    expect(read.outputs.descriptionExcerpt).toMatch(/Settle ledger/);
+    expect(String(read.outputs.artifactMarkdown)).toMatch(/Order transactions calculation flow/);
+    expect(String(read.outputs.artifactPath)).toMatch(/\.story\.md$/);
+  });
+
+  it('surfaces expand=All work item fields in Read story MD Context', () => {
+    const title = 'Order Amount Placement in Escrow Notification Template';
+    const read = runFlowStep({
+      id: 'read_story',
+      type: 'rv.read-user-story',
+      params: {
+        story: `2357 — ${title}\n\nWork item fields\n- Type: Requirement\n- Parent: 2353`,
+        applicationName: 'PayNSure',
+        workItemTitle: title,
+        workItemDescriptionExcerpt: 'Amount Placement in escrow Notification',
+        workItemFields: {
+          type: 'Requirement',
+          state: 'Proposed',
+          areaPath: 'PayNSure\\Escrow',
+          iterationPath: 'PayNSure\\Sprint 12',
+          priority: '2',
+          requirementType: 'Feature',
+          valueArea: 'Business',
+          parentId: '2353',
+          descriptionHtml: '<div><h2>1. Title</h2><p>Amount Placement in escrow Notification</p></div>',
+          acceptanceCriteriaHtml: '<div><img src="https://example.com/ac.png" alt="Image"></div>',
+        },
+      },
+      prior: {},
+    });
+    const md = String(read.outputs.artifactMarkdown);
+    expect(md).toMatch(/\*\*Title:\*\* Order Amount Placement/);
+    expect(md).toMatch(/\*\*Type:\*\* Requirement/);
+    expect(md).toMatch(/\*\*State:\*\* Proposed/);
+    expect(md).toMatch(/\*\*Area path:\*\* PayNSure/);
+    expect(md).toMatch(/\*\*Iteration path:\*\* PayNSure/);
+    expect(md).toMatch(/\*\*Priority:\*\* 2/);
+    expect(md).toMatch(/\*\*Requirement type:\*\* Feature/);
+    expect(md).toMatch(/\*\*Value area:\*\* Business/);
+    expect(md).toMatch(/\*\*Parent:\*\* 2353/);
+    expect(md).toMatch(/## Description/);
+    expect(md).toContain('<h2>1. Title</h2>');
+    expect(md).toMatch(/## Acceptance criteria/);
+    expect(md).toContain('<img');
+    expect(read.outputs.fields).toMatchObject({ type: 'Requirement', parentId: '2353' });
+  });
+
+  it('explains when the work item title could not be loaded', () => {
+    const read = runFlowStep({
+      id: 'read_story',
+      type: 'rv.read-user-story',
+      params: {
+        story: '1971',
+        applicationName: 'PayNSure',
+        workItemFetchNote: 'No work-item connector is bound',
+      },
+      prior: {},
+    });
+    expect(read.summary).toMatch(/Read work item 1971\./);
+    expect(read.summary).toMatch(/No work-item connector is bound/);
     expect(read.summary).toMatch(/no separate acceptance criteria/);
   });
 });
@@ -121,6 +234,36 @@ describe('workflow engine step notes', () => {
     };
     expect(await tick(store, { owner: 'w', now: new Date(), perform: (step) => Promise.resolve(runFlowStep(step)) })).toBe('busy');
     expect(events.find((event) => event.kind === 'step.completed')?.payload.summary).toMatch(/QA-1/);
+  });
+
+  it('records summary and message on step.failed so the UI can show the error', async () => {
+    const events: { kind: string; payload: Record<string, unknown> }[] = [];
+    const store: EngineStore = {
+      async claim() {
+        return {
+          id: 'run-1',
+          status: 'running',
+          stepIndex: 0,
+          phase: 'pending',
+          control: null,
+          definition: { spec: { steps: [{ id: 'explore_ui', type: 'rv.explore-ui' }] } },
+          params: { environment: 'env-1' },
+        };
+      },
+      async recordEffect() { return 'new'; },
+      async save() { return undefined; },
+      async append(_id, kind, payload) { events.push({ kind, payload }); },
+      async stepsDone() { return []; },
+    };
+    expect(await tick(store, {
+      owner: 'w',
+      now: new Date(),
+      perform: async () => { throw new Error('The browser may not open https://qa.example/'); },
+    })).toBe('busy');
+    const failed = events.find((event) => event.kind === 'step.failed');
+    expect(failed?.payload.message).toMatch(/browser may not open/);
+    expect(failed?.payload.summary).toMatch(/browser may not open/);
+    expect(failed?.payload.stepType).toBe('rv.explore-ui');
   });
 });
 

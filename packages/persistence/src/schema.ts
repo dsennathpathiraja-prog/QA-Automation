@@ -285,6 +285,8 @@ export const environment = pgTable(
     name: text('name').notNull(),
     kind: text('kind').notNull(),
     applicationUrl: text('application_url').notNull(),
+    /** Optional notification/email template preview URL (Phase 8 E2). */
+    templatePreviewUrl: text('template_preview_url'),
     browserConfig: jsonb('browser_config').$type<Record<string, unknown>>().notNull().default({}),
     executionRestrictions: jsonb('execution_restrictions').$type<Record<string, unknown>>().notNull().default({}),
     enabled: boolean('enabled').notNull().default(true),
@@ -502,7 +504,7 @@ export const workItemExecution = pgTable(
   },
   (t) => [
     index('work_item_execution_created_idx').on(t.createdAt),
-    check('work_item_execution_status_ck', sql`${t.status} in ('prepared','queued','running','completed','failed')`),
+    check('work_item_execution_status_ck', sql`${t.status} in ('prepared','queued','running','completed','failed','cancelled')`),
   ],
 );
 
@@ -517,11 +519,12 @@ export const workItemCaseResult = pgTable(
     message: text('message').notNull().default(''),
     screenshotPng: text('screenshot_png'),
     squashExecutionId: text('squash_execution_id'),
+    stepsJson: text('steps_json'),
     createdAt: ts('created_at').notNull().defaultNow(),
   },
   (t) => [
     index('work_item_case_result_execution_idx').on(t.executionId),
-    check('work_item_case_result_status_ck', sql`${t.status} in ('Passed','Failed','Blocked','Skipped')`),
+    check('work_item_case_result_status_ck', sql`${t.status} in ('Queued','Running','Passed','Failed','Blocked','Skipped')`),
   ],
 );
 
@@ -533,6 +536,46 @@ export const testCollectionCase = pgTable(
     position: integer('position').notNull(),
   },
   (t) => [primaryKey({ columns: [t.collectionId, t.testCaseId] })],
+);
+
+/* ---------- automation assets (Phase 8 E6 regression seed) ---------- */
+
+export const automationAsset = pgTable(
+  'automation_asset',
+  {
+    id: id(),
+    key: text('key').notNull(),
+    name: text('name').notNull(),
+    scriptPath: text('script_path').notNull(),
+    scriptBody: text('script_body').notNull().default(''),
+    status: text('status').notNull().default('draft'),
+    testCaseId: uuid('test_case_id'),
+    approvedBy: text('approved_by'),
+    approvedAt: ts('approved_at'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('automation_asset_key_uq').on(t.key),
+    index('automation_asset_status_idx').on(t.status),
+    check('automation_asset_status_ck', sql`${t.status} in ('draft','approved')`),
+  ],
+);
+
+export const automationMapping = pgTable(
+  'automation_mapping',
+  {
+    id: id(),
+    squashCaseId: text('squash_case_id').notNull(),
+    squashReference: text('squash_reference').notNull().default(''),
+    assetId: uuid('asset_id').notNull(),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('automation_mapping_squash_uq').on(t.squashCaseId),
+    index('automation_mapping_asset_idx').on(t.assetId),
+  ],
 );
 
 /* ---------- governance ---------- */

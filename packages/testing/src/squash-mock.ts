@@ -13,6 +13,10 @@ export interface SquashMockRequest {
   authorization?: string;
   /** Parsed JSON body for POST/PATCH (tests assert create shape). */
   body?: unknown;
+  /** Request Content-Type (attachment uploads are multipart/form-data). */
+  contentType?: string;
+  /** Raw body byte length (multipart screenshots). */
+  rawByteLength?: number;
 }
 
 export interface SquashMockOptions {
@@ -97,6 +101,7 @@ export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock>
   const context = o.contextPath ?? '/squash';
   const root = `${context}/api/rest/latest`;
   const cases: Record<string, any>[] = TEST_CASES.map((item) => ({ ...item, steps: Array.isArray(item.steps) ? [...item.steps] : [] }));
+  const attachments: { id: number; path: string; name: string; bytes: number }[] = [];
 
   const page = (items: unknown[], key: string, url: URL) => {
     const size = Math.max(1, Number(url.searchParams.get('size') ?? 20));
@@ -136,7 +141,15 @@ export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock>
       const url = new URL(req.url ?? '/', 'http://mock');
       // Keep the real Authorization so tests can prove Squash 15.x Bearer-only (never Token / Basic / bare).
       const authHeader = typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined;
-      const rec: SquashMockRequest = { method: req.method ?? 'GET', path: url.pathname + url.search, authorization: authHeader };
+      const raw = Buffer.concat(chunks);
+      const reqContentType = typeof req.headers['content-type'] === 'string' ? req.headers['content-type'] : undefined;
+      const rec: SquashMockRequest = {
+        method: req.method ?? 'GET',
+        path: url.pathname + url.search,
+        authorization: authHeader,
+        contentType: reqContentType,
+        rawByteLength: raw.byteLength,
+      };
       requests.push(rec);
       const send = (status: number, body: unknown, contentType = 'application/json') => {
         res.statusCode = status;
@@ -158,14 +171,27 @@ export async function startSquashMock(o: SquashMockOptions): Promise<SquashMock>
       if (req.method !== 'GET') {
         // Real Squash answers 401 when a READ token tries to write (same as a bad token).
         if (permissions !== 'READ_WRITE') return send(401, { message: 'Unauthorized' });
+        let created: RegExpMatchArray | null;
+        // SquashTM: POST /executions/{id}/attachments or /test-cases/{id}/attachments (multipart field `files`).
+        if (req.method === 'POST' && (created = path.match(/^\/(executions|test-cases)\/(\d+)\/attachments\/?$/))) {
+          if (!String(reqContentType ?? '').includes('multipart/form-data')) {
+            return send(400, { message: 'multipart/form-data required' });
+          }
+          const rawText = raw.toString('latin1');
+          const nameMatch = /filename="([^"]+)"/i.exec(rawText);
+          const id = 9000 + attachments.length + 1;
+          const row = { id, path, name: nameMatch?.[1] ?? 'attachment.bin', bytes: raw.byteLength };
+          attachments.push(row);
+          rec.body = { name: row.name, bytes: row.bytes };
+          return send(201, { _embedded: { attachments: [{ _type: 'attachment', id: row.id, name: row.name, size: row.bytes }] } });
+        }
         let payload: Record<string, unknown> = {};
         try {
-          payload = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as Record<string, unknown>;
+          payload = JSON.parse(raw.toString('utf8') || '{}') as Record<string, unknown>;
         } catch {
           return send(400, { message: 'invalid json' });
         }
         rec.body = payload;
-        let created: RegExpMatchArray | null;
         // SquashTM 15.0.4: POST /test-cases with parent project + automated_test_reference (not POST /projects/{id}/test-cases).
         if (req.method === 'POST' && path === '/test-cases') {
           const parent = payload.parent as { _type?: string; id?: unknown } | undefined;

@@ -16,7 +16,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { ConnectorListResponse, ExecutionEventList, ExecutionListResponse, ExecutionSchema, ValidationReportSchema, WorkflowDefinitionResponse, WorkflowSchema } from '@qa/contracts';
+import { ConnectorListResponse, EnvironmentListResponse, ExecutionEventList, ExecutionListResponse, ExecutionSchema, ValidationReportSchema, WorkflowDefinitionResponse, WorkflowSchema } from '@qa/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
@@ -25,6 +25,7 @@ import { useApi } from '../../api/context';
 import { useSession } from '../../auth/session';
 import { ErrorNotice, PageHeader } from '../common';
 import { errorText } from '../connectors/shared';
+import { StepArtifact, markdownFromStepPayload } from '../StepArtifact';
 
 interface Step { id: string; type: string; enabled?: boolean; mandatory?: boolean; locked?: boolean | string[]; dependsOn?: string[] }
 interface ConnectorRow { role: string; category: string; binding?: { connectorInstanceId: string | null } }
@@ -57,12 +58,12 @@ const STEP_LABEL: Record<string, string> = {
 const STEP_HELP: Record<string, string> = {
   'rv.read-user-story': 'Loads title, description, and acceptance criteria from the work item.',
   'rv.explore-ui': 'Opens the environment and records UI findings for the planner.',
-  'rv.explore-code': 'Reads matching source files (read-only) for the planner.',
+  'rv.explore-code': 'Reads matching source files from the bound Azure DevOps Repos (preferred) or GitHub connector.',
   'rv.consolidate-findings': 'Merges UI and code notes into one findings blob.',
-  'rv.generate-test-plan': 'Writes the Markdown test plan artifact with many scenarios.',
-  'rv.generate-tests': 'Turns each planned scenario into a Playwright case.',
+  'rv.generate-test-plan': 'Writes the Markdown test plan artifact with many scenarios and AC coverage gaps.',
+  'rv.generate-tests': 'Turns each planned scenario into a Playwright case (quality gate forbids body-only stubs).',
   'rv.heal-tests': 'Rewrites broken platform-owned stubs only.',
-  'rv.publish-testcases': 'Stores cases under the work item and upserts Squash when writable.',
+  'rv.publish-testcases': 'Stores cases under the work item and upserts Squash when writable; refuses stub-only cases.',
 };
 
 type WfTab = 'steps' | 'flow' | 'connectors' | 'check' | 'run';
@@ -81,6 +82,11 @@ export function WorkflowPage() {
   const [runId, setRunId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<'ask' | 'force' | undefined>();
   const savedConnectors = useQuery({ queryKey: ['connectors'], queryFn: () => api.get('/api/v1/connectors', ConnectorListResponse), enabled: session.can('connector.view_status') });
+  const environments = useQuery({
+    queryKey: ['environments'],
+    queryFn: () => api.get('/api/v1/environments', EnvironmentListResponse),
+    enabled: session.can('environment.view'),
+  });
   const def = edited ?? (definition.data?.definition as Def | undefined);
   const draft = workflow.data?.status === 'draft';
   const canEdit = draft && session.can('workflow.edit');
@@ -128,7 +134,22 @@ export function WorkflowPage() {
   const generation = workflow.data?.type === 'requirement-validation';
   const steps = (def?.spec?.steps ?? []).filter((s) => !(generation && ['rv.execute-tests', 'rv.sync-results', 'rv.qa-report'].includes(s.type)));
   const enabled = steps.filter((s) => s.enabled !== false);
+  const exploreUiOn = enabled.some((s) => s.type === 'rv.explore-ui' || s.id === 'explore_ui');
+  const exploreCodeOn = enabled.some((s) => s.type === 'rv.explore-code' || s.id === 'explore_code');
+  const selectableEnvironments = (environments.data?.items ?? []).filter((item) => item.enabled && item.selectable);
   const stepEvents = (events.data?.items ?? []).filter((event) => event.kind === 'step.completed' || event.kind === 'step.failed');
+  const runParams = (def?.spec?.parameters ?? []).filter((p) => {
+    if (p.pinned !== undefined && p.pinned !== null) return false;
+    if (p.name === 'environment') return exploreUiOn;
+    if (p.name === 'acceptPlan') return false; // dedicated checkbox below
+    return p.required;
+  });
+  const missingEnvironment = exploreUiOn && !params.environment;
+  const canStartRun = !start.isPending && !(exploreUiOn && !params.environment);
+  const acceptPlanOn = params.acceptPlan === 'true' || params.acceptPlan === '1';
+  const pausedForPlan = run.data?.status === 'paused'
+    && stepEvents.some((event) => event.kind === 'step.completed' && String(event.payload.stepType ?? '') === 'rv.generate-test-plan')
+    && !stepEvents.some((event) => event.kind === 'step.completed' && String(event.payload.stepType ?? '') === 'rv.generate-tests');
 
   return (
     <>
@@ -229,8 +250,21 @@ export function WorkflowPage() {
                       <TextField key={c.role} label={ROLE_LABEL[c.role] ?? c.role} value="Platform runner" disabled fullWidth />
                     );
                   }
-                  const options = (savedConnectors.data?.items ?? []).filter((item) => item.category === c.category);
+                  const options = (savedConnectors.data?.items ?? [])
+                    .filter((item) => item.category === c.category)
+                    .slice()
+                    .sort((a, b) => {
+                      // Prefer Azure DevOps Repos for Explore code over accidental GitHub/HTML SDK bindings.
+                      if (c.role === 'sourceRepo') {
+                        const rank = (key: string) => (key === 'azure-devops-repos' ? 0 : key === 'github' ? 2 : 1);
+                        const byProvider = rank(a.providerKey) - rank(b.providerKey);
+                        if (byProvider !== 0) return byProvider;
+                      }
+                      return a.name.localeCompare(b.name);
+                    });
                   const known = options.some((item) => item.id === current);
+                  const azureRepos = options.filter((item) => item.providerKey === 'azure-devops-repos');
+                  const bound = options.find((item) => item.id === current);
                   return (
                     <FormControl key={c.role} fullWidth disabled={!canEdit}>
                       <InputLabel id={`role-${c.role}-label`}>{ROLE_LABEL[c.role] ?? c.role}</InputLabel>
@@ -252,9 +286,21 @@ export function WorkflowPage() {
                         <MenuItem value="">None</MenuItem>
                         {current && !known && <MenuItem value={current}>Saved connector</MenuItem>}
                         {options.map((item) => (
-                          <MenuItem key={item.id} value={item.id}>{item.name}{item.enabled ? '' : ' (disabled)'}</MenuItem>
+                          <MenuItem key={item.id} value={item.id}>
+                            {item.name} · {item.providerName}{item.enabled ? '' : ' (disabled)'}
+                          </MenuItem>
                         ))}
                       </Select>
+                      {c.role === 'sourceRepo' && azureRepos.length > 0 && bound?.providerKey === 'github' && (
+                        <Typography variant="caption" color="warning.main" sx={{ mt: 0.5 }}>
+                          Azure DevOps Repos is available — bind it for Explore code when the application source lives in Azure Repos (avoids GitHub/HTML SDK hits).
+                        </Typography>
+                      )}
+                      {c.role === 'sourceRepo' && azureRepos.length > 0 && !current && (
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                          Prefer Azure DevOps Repos when the app source is there.
+                        </Typography>
+                      )}
                     </FormControl>
                   );
                 })}
@@ -288,25 +334,81 @@ export function WorkflowPage() {
                 <Alert severity="info">Publish this workflow before starting a run. The worker runs the steps; this page only starts it and shows each step&apos;s output.</Alert>
               )}
               {workflow.data?.status === 'published' && session.can('execution.start') && (
-                <Stack component="form" spacing={2} sx={{ mb: 2 }} onSubmit={(e) => { e.preventDefault(); start.mutate(); }}>
-                  {generation && (
-                    <Alert severity="info">Starting this run creates the test cases. Choose the environment on Executions when you run the work item.</Alert>
+                <Stack component="form" spacing={2} sx={{ mb: 2 }} onSubmit={(e) => { e.preventDefault(); if (!canStartRun) return; start.mutate(); }}>
+                  {generation && exploreUiOn && (
+                    <Alert severity="info">
+                      Explore UI opens the selected environment with Playwright (MCP session → navigate) before planning. Pick an environment so the browser can load the application URL.
+                      {exploreCodeOn ? ' Explore code searches the bound source repository before planning.' : ''}
+                      {' '}Running prepared cases later is still a separate action on Executions.
+                    </Alert>
                   )}
-                  {(def.spec?.parameters ?? []).filter((p) => p.required && (p.pinned === undefined || p.pinned === null) && !(generation && p.name === 'environment')).map((p) => (
-                    <TextField
-                      key={p.name}
-                      id={`param-${p.name}`}
-                      label={`${p.name} (${p.type})`}
-                      helperText={p.type === 'work-item-ref' ? 'Enter the work item id (for example 7189). Bound Azure Boards / Jira load title, description, and acceptance criteria.' : undefined}
-                      multiline={p.type === 'work-item-ref'}
-                      minRows={p.type === 'work-item-ref' ? 3 : undefined}
-                      value={params[p.name] ?? ''}
-                      onChange={(e) => setParams({ ...params, [p.name]: e.target.value })}
-                      fullWidth
+                  {generation && !exploreUiOn && (
+                    <Alert severity="info">
+                      Starting this run prepares cases
+                      {exploreCodeOn ? ' (Explore code searches the bound repository before planning)' : ''}.
+                      {' '}Running the work item against an environment is a separate action on Executions.
+                    </Alert>
+                  )}
+                  {generation && (
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={acceptPlanOn}
+                          onChange={(e) => setParams({ ...params, acceptPlan: e.target.checked ? 'true' : 'false' })}
+                        />
+                      }
+                      label="Pause after plan (accept before generate)"
                     />
+                  )}
+                  {generation && (
+                    <Typography variant="caption" color="text.secondary">
+                      Publish refuses body-only stubs. Explore-gap / needs-surface cases are flagged; AC coverage gaps appear in the plan Markdown.
+                    </Typography>
+                  )}
+                  {runParams.map((p) => (
+                    p.name === 'environment' || p.type === 'environment-ref' ? (
+                      <FormControl key={p.name} fullWidth required={exploreUiOn} error={missingEnvironment}>
+                        <InputLabel id={`param-${p.name}-label`}>Environment</InputLabel>
+                        <Select
+                          labelId={`param-${p.name}-label`}
+                          id={`param-${p.name}`}
+                          label="Environment"
+                          value={params.environment ?? ''}
+                          onChange={(e) => setParams({ ...params, environment: String(e.target.value) })}
+                        >
+                          <MenuItem value="">Select environment</MenuItem>
+                          {selectableEnvironments.map((item) => (
+                            <MenuItem key={item.id} value={item.id}>{item.name} · {item.kind}</MenuItem>
+                          ))}
+                        </Select>
+                        {selectableEnvironments.length === 0 && (
+                          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                            No selectable environment yet. Create and enable one under Environments, then return here.
+                          </Typography>
+                        )}
+                        {missingEnvironment && selectableEnvironments.length > 0 && (
+                          <Typography variant="caption" color="error" sx={{ mt: 0.5 }}>
+                            Environment is required so Explore UI can open the application.
+                          </Typography>
+                        )}
+                      </FormControl>
+                    ) : (
+                      <TextField
+                        key={p.name}
+                        id={`param-${p.name}`}
+                        label={`${p.name} (${p.type})`}
+                        helperText={p.type === 'work-item-ref' ? 'Enter the work item id (for example 7189). Bound Azure Boards / Jira load title, description, and acceptance criteria.' : undefined}
+                        multiline={p.type === 'work-item-ref'}
+                        minRows={p.type === 'work-item-ref' ? 3 : undefined}
+                        value={params[p.name] ?? ''}
+                        onChange={(e) => setParams({ ...params, [p.name]: e.target.value })}
+                        fullWidth
+                        required={p.required}
+                      />
+                    )
                   ))}
                   <Box>
-                    <Button type="submit" variant="contained" disabled={start.isPending}>Start run</Button>
+                    <Button type="submit" variant="contained" disabled={!canStartRun}>Start run</Button>
                   </Box>
                   {start.isError && <ErrorNotice message={errorText(start.error, 'The run could not be started.')} />}
                 </Stack>
@@ -314,6 +416,11 @@ export function WorkflowPage() {
               {run.data && (
                 <Alert severity="info" sx={{ mb: 2 }}>
                   Run {run.data.id.slice(0, 8)} is {run.data.status}, at step {run.data.stepIndex}. A queued run moves when the worker is up.
+                </Alert>
+              )}
+              {pausedForPlan && (
+                <Alert severity="warning" sx={{ mb: 2 }}>
+                  Paused after the test plan so you can review AC coverage and explore-gap notes in the Markdown artifact. Resume on Executions (or send resume) to generate cases.
                 </Alert>
               )}
               {stepEvents.length === 0 && activeId && (
@@ -325,7 +432,11 @@ export function WorkflowPage() {
                   const stepType = String(event.payload.stepType ?? '');
                   const label = STEP_LABEL[stepType] || STEP_LABEL[stepId] || stepId || stepType || event.kind;
                   const summary = typeof event.payload.summary === 'string' ? event.payload.summary : '';
+                  const message = typeof event.payload.message === 'string' ? event.payload.message : '';
                   const failed = event.kind === 'step.failed';
+                  const output = summary || message;
+                  const qualityRefuse = failed && /quality gate|stub-forbidden|Publish refused/i.test(output);
+                  const artifact = markdownFromStepPayload(event.payload);
                   return (
                     <Paper key={event.seq} variant="outlined" sx={{ p: 1.5 }}>
                       <Stack direction="row" spacing={1} useFlexGap sx={{ mb: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -334,9 +445,15 @@ export function WorkflowPage() {
                         <Typography variant="caption" color="text.secondary">step #{event.seq}</Typography>
                       </Stack>
                       <Typography variant="subtitle2" color="text.secondary">Output</Typography>
+                      {qualityRefuse && (
+                        <Alert severity="error" sx={{ mb: 1 }}>
+                          Case quality gate refused this step. Fix stub / body-only cases (or regenerate) before publish.
+                        </Alert>
+                      )}
                       <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                        {summary || (failed ? 'This step failed without a summary.' : 'This step completed without a summary.')}
+                        {output || (failed ? 'This step failed without a summary.' : 'This step completed without a summary.')}
                       </Typography>
+                      {artifact && <StepArtifact markdown={artifact.markdown} path={artifact.path} />}
                     </Paper>
                   );
                 })}

@@ -72,6 +72,7 @@ function rvSteps(mode: 'standard' | 'ui' | 'code' | 'both'): WfStep[] {
     step('plan', 'rv.generate-test-plan', {
       locked: true,
       dependsOn: ['consolidate'],
+      pause: 'boundary',
       config: { maxScenarios: 200 },
       inputs: {
         story: '${steps.read_story.outputs.storyArtifact}',
@@ -118,11 +119,13 @@ const rvParams: WfParameter[] = [
   { name: 'story', type: 'work-item-ref', required: true },
   { name: 'environment', type: 'environment-ref', required: false },
   { name: 'applicationName', type: 'string', required: true },
+  /** When true, the run pauses after Plan so a human can accept the MD plan before Generate. */
+  { name: 'acceptPlan', type: 'boolean', required: false, default: false },
 ];
 
 function rvConnectors(browser: boolean | 'off' | 'optional', repo: boolean | 'off' | 'optional'): WfConnector[] {
   const rows = [connector('workItemSource', 'work-item', ['workitem.read', 'workitem.attachment.read'], ['workitem.search'])];
-  if (browser !== 'off') rows.push(connector('browserAutomation', 'browser-automation', ['browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.interact', 'browser.screenshot'], [], browser === true));
+  if (browser !== 'off') rows.push(connector('browserAutomation', 'browser-automation', ['browser.session.open', 'browser.navigate', 'browser.snapshot', 'browser.wait', 'browser.evaluate', 'browser.interact', 'browser.screenshot'], [], browser === true));
   if (repo !== 'off') rows.push(connector('sourceRepo', 'source-repo', ['scm.tree.list', 'scm.file.read', 'scm.code.search', 'scm.branch.list'], [], repo === true));
   rows.push(
     connector('testManagement', 'test-management', ['tm.testcase.read'], ['tm.testcase.upsert', 'tm.execution.upsert', 'tm.execution.status.update', 'tm.attachment.upload']),

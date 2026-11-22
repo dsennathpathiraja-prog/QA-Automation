@@ -24,6 +24,12 @@ import type {
 const INVOKE_COUNT = counter('qa.connector.invocations', 'Connector capability calls by capability and outcome');
 const INVOKE_MS = histogram('qa.connector.duration', 'Connector capability call duration');
 
+/**
+ * Explore UI enrichment helpers. Failures here must not open the instance breaker —
+ * otherwise a few empty aria / evaluate retries block navigate/snapshot for the whole connector.
+ */
+const BREAKER_SOFT_FAIL_CAPS = new Set(['browser.evaluate', 'browser.wait']);
+
 export interface ConnectorExecutionManagerDeps {
   capabilities: CapabilityRegistry;
   providers: ProviderRegistry;
@@ -106,7 +112,10 @@ export class ConnectorExecutionManager implements CapabilityInvoker {
       const decision = evaluateMachinePolicy({ req, instance, descriptor, policy, actor: req.actor });
       if (!decision.allow) throw new PlatformError('denied', decision.reason);
 
-      const parsed = descriptor.input.safeParse(req.input);
+      // Bound source-repo connectors carry `config.repo`. Fill it into scm.*
+      // inputs before schema validation so callers (Explore code) need not repeat it.
+      const rawInput = this.withBoundRepo(descriptor, instance, req.input);
+      const parsed = descriptor.input.safeParse(rawInput);
       if (!parsed.success) throw new PlatformError('validation', `invalid input for ${descriptor.id}: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
       const input = parsed.data as Record<string, unknown>;
 
@@ -143,7 +152,7 @@ export class ConnectorExecutionManager implements CapabilityInvoker {
           await finish('ok');
           return redacted;
         } catch (e) {
-          breaker.failure(e);
+          if (!BREAKER_SOFT_FAIL_CAPS.has(descriptor.id)) breaker.failure(e);
           throw e;
         } finally {
           clearTimeout(timer);
@@ -161,6 +170,17 @@ export class ConnectorExecutionManager implements CapabilityInvoker {
     }
   }
 
+  /**
+   * Close the per-instance circuit after a successful Test connection (or Switch on).
+   * Test connection talks to the provider directly and does not go through invoke(),
+   * so without this Explore UI can keep seeing "circuit breaker is open" until cooldown.
+   */
+  resetCircuit(instanceId: string): void {
+    const id = instanceId?.trim();
+    if (!id) return;
+    this.breaker(id).reset();
+  }
+
   private async resolveInstance(req: InvokeRequest, policy: ExecutionPolicy | undefined): Promise<ResolvedInstance> {
     let id = req.connectorInstanceId;
     if (req.role) {
@@ -172,6 +192,19 @@ export class ConnectorExecutionManager implements CapabilityInvoker {
     const inst = await this.d.instances.getById(id);
     if (!inst) throw new PlatformError('not-found', 'connector instance not found');
     return inst;
+  }
+
+  /** When a source-repo connector binds one repository, scm.* calls inherit that name. */
+  private withBoundRepo(descriptor: CapabilityDescriptor, instance: ResolvedInstance, input: unknown): unknown {
+    if (descriptor.category !== 'source-repo') return input;
+    const bound = typeof instance.config.repo === 'string' ? instance.config.repo.trim() : '';
+    if (!bound) return input;
+    const base = input && typeof input === 'object' && !Array.isArray(input)
+      ? { ...(input as Record<string, unknown>) }
+      : {};
+    const existing = base.repo;
+    if (typeof existing === 'string' && existing.trim()) return base;
+    return { ...base, repo: bound };
   }
 
   private checkRate(instanceId: string): void {

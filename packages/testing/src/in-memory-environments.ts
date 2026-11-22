@@ -33,7 +33,19 @@ export class InMemoryEnvironmentRepository implements EnvironmentRepository {
   async insert(n: NewEnvironment) {
     if ([...this.rows.values()].some((r) => r.name.toLowerCase() === n.name.toLowerCase())) throw new PlatformError('conflict', `An environment named "${n.name}" already exists.`);
     const now = new Date();
-    const rec: EnvironmentRecord = { id: n.id, name: n.name, kind: n.kind, applicationUrl: n.applicationUrl, browser: n.browser, restrictions: n.restrictions, enabled: n.enabled, reachability: 'not-run', createdAt: now, updatedAt: now };
+    const rec: EnvironmentRecord = {
+      id: n.id,
+      name: n.name,
+      kind: n.kind,
+      applicationUrl: n.applicationUrl,
+      ...(n.templatePreviewUrl ? { templatePreviewUrl: n.templatePreviewUrl } : {}),
+      browser: n.browser,
+      restrictions: n.restrictions,
+      enabled: n.enabled,
+      reachability: 'not-run',
+      createdAt: now,
+      updatedAt: now,
+    };
     this.rows.set(rec.id, structuredClone(rec));
     return structuredClone(rec);
   }

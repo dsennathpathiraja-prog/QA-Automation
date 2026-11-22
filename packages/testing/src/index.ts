@@ -9,4 +9,5 @@ export * from './in-memory-environments';
 export * from './in-memory-workflows';
 export * from './in-memory-executions';
 export * from './in-memory-test-cases';
+export * from './in-memory-automation';
 export * from './connector-storage-contract';

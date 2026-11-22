@@ -4,5 +4,8 @@ export * from './ports';
 export * from './identity';
 export * from './ids';
 export * from './runner';
+export * from './runner-ops';
 export * from './container-engine';
+export * from './tar';
+export * from './inline-files-to-env';
 export * from './hosts';

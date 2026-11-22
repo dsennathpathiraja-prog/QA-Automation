@@ -26,11 +26,18 @@ export interface ContainerEngine {
   start(id: string): Promise<void>;
   inspect(idOrName: string): Promise<ContainerState | undefined>;
   stop(id: string, graceSeconds: number): Promise<void>;
+  /** Force-removes a container (used to reclaim exited / never-started runners for the pool). */
+  remove(id: string): Promise<void>;
   list(labels: Record<string, string>): Promise<ContainerState[]>;
   /** The local image id (`sha256:...`), or undefined when the engine has no such image. */
   inspectImage(ref: string): Promise<{ id: string } | undefined>;
   /** The runner's own stdout and stderr, as text. */
   logs(id: string): Promise<string>;
+  /**
+   * Writes text files into the container before start (Docker archive API). Paths are absolute inside
+   * the container; the launcher only allows `/tmp/...` via RunnerSpec validation.
+   */
+  putFiles?(id: string, files: Array<{ path: string; content: string }>): Promise<void>;
 }
 
 export interface TranslateOptions {

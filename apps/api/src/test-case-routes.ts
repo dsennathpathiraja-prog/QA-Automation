@@ -96,6 +96,10 @@ export function registerTestCaseRoutes(app: FastifyInstance, cases: TestCaseServ
     return WorkItemExecutionSchema.parse(await cases.queueWorkItemExecution({ id: req.principal!.id }, idOf((req.params as { id: string }).id, 'Work item execution')));
   });
 
+  app.post('/api/v1/work-item-executions/:id/cancel', { config: { access: requires('execution.control') } }, async (req) => {
+    return WorkItemExecutionSchema.parse(await cases.cancelWorkItemExecution({ id: req.principal!.id }, idOf((req.params as { id: string }).id, 'Work item execution')));
+  });
+
   app.get('/api/v1/work-item-executions/:id/cases/:caseId/screenshot', { config: { access: requires('execution.start') } }, async (req) => {
     const params = req.params as { id: string; caseId: string };
     return WorkItemCaseScreenshot.parse(await cases.caseScreenshot(idOf(params.id, 'Work item execution'), idOf(params.caseId, 'Test case')));

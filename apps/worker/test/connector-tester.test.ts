@@ -74,6 +74,35 @@ describe('Test Connection runs on the worker', () => {
     expect(s.audit.entries.map((e) => e.action)).toEqual(expect.arrayContaining(['connector.create', 'connector.test.request', 'connector.test.succeeded', 'connector.enable']));
   });
 
+  it('calls onTestSucceeded after a successful Test connection (circuit reset hook)', async () => {
+    const connectors = new InMemoryConnectorRepository();
+    const tests = new InMemoryTestQueue();
+    const hosts = new InMemoryHostRepository();
+    const audit = new InMemoryAuditSink();
+    const secrets = new InMemorySecretStore();
+    const providers = new ProviderRegistry(capabilities);
+    providers.register(sampleProvider);
+    const service = new ConnectorService({ connectors, tests, secrets, providers, capabilities, hosts, audit });
+    const reset: string[] = [];
+    const tester = new ConnectorTester({
+      connectors,
+      tests,
+      secrets,
+      providers,
+      capabilities,
+      audit,
+      onTestSucceeded: (id) => { reset.push(id); },
+      http: async () => new HardenedHttpClient({
+        egress: new EgressPolicy({ rules: [], profile: 'standard', platformEnv: 'development' }),
+        allowedMethods: ['GET'],
+      }),
+    });
+    const c = await service.create(actor, { providerKey: 'sample-work-items', name: 'Demo', config: { projectName: 'Retail Web' }, secrets: { demoKey: 'demo-secret-key-1' } });
+    await service.requestTest(actor, c.id);
+    expect(await tester.runOnce()).toBe('busy');
+    expect(reset).toEqual([c.id]);
+  });
+
   it('reports a rejected credential, marks the connector as error and keeps it disabled', async () => {
     const s = setup();
     const c = await createSample(s, 'not-a-demo-key');

@@ -39,38 +39,184 @@ The trial realm accepts any `http://localhost:<port>` as a sign-in return addres
 
 The managed Playwright MCP server is **not** part of the default stack. Without it, Connectors → Playwright → **Test connection** fails with “Could not reach Playwright”.
 
-1. Start the browser profile (worker must already be up):
+1. Start (or rebuild) the browser profile (worker must already be up on the same Compose project). The image bakes Chromium and a pinned `@playwright/mcp` — rebuild whenever `deploy/images/playwright-mcp.Dockerfile` changes (includes `--isolated` and `--no-sandbox` for Docker Chromium):
 
 ```
-docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d
+docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser up --build -d playwright-mcp
 ```
 
-2. Confirm the service is running: `docker compose -f deploy/compose/local/docker-compose.local.yml ps` should list `playwright-mcp`.
+2. Confirm the service is running and healthy: `docker compose -f deploy/compose/local/docker-compose.local.yml ps` should list `playwright-mcp`. From the worker, DNS must resolve the **service name** `playwright-mcp` (not the image tag `qa-playwright-mcp`).
+
 3. In the UI, add **Playwright (managed)** with:
-   - **Server address:** `http://playwright-mcp:8931` (Docker DNS name the **worker** uses — not `localhost`, and do not append `/mcp`; the connector adds that path).
+   - **Server address (from the worker container):** `http://playwright-mcp:8931` — same as worker env `PLAYWRIGHT_MCP_URL`. Do **not** use `localhost` or the image name; do not append `/mcp` (the connector adds that path).
+   - **From the host machine only** (published loopback port): `http://127.0.0.1:8931` — for curl/debug; the worker cannot use this URL.
    - **Application addresses:** comma-separated origins the browser may open (for example `https://shop.example.com`).
 4. If the page says `playwright-mcp` is not approved, click **Approve playwright-mcp (internal, plain http)** (Administrator).
 5. Run **Test connection**. A pass shows “Connected to the managed Playwright server.”
 
-Optional: publish port `8931:8931` on that service only if you need to hit MCP from the host machine; the worker does not need a published port.
+If Explore UI / Test connection says `could not resolve playwright-mcp`, the browser container is not on network `qa-platform-local` with the worker — re-run the profile `up` above (do not start MCP with a different Compose project name).
 
-## Runner
+If `docker compose … ps` shows `playwright-mcp` **Restarting** and logs say `unknown option '--allowed-hosts'`, rebuild after pulling a Dockerfile that only uses flags supported by `@playwright/mcp@0.0.35` (`--browser chromium --headless --port 8931 --host 0.0.0.0`).
 
-The reachability button checks the address from the worker unless you also start the runner:
+### Private shop hosts (PayNSure / `*.internal`)
+
+Desktop Chrome can open `http://sdk.paynsure.internal/shop` via the **host** resolver (`/etc/hosts` or VPN DNS). Chromium inside `playwright-mcp` does **not** inherit host `/etc/hosts`.
+
+**Do not** map the shop to `host-gateway` by default — that often returns **HTTP 4xx/5xx** (`ERR_HTTP_RESPONSE_CODE_FAILURE`) from the Docker host instead of the shop VirtualHost. Set `PLAYWRIGHT_MCP_SHOP_IP` to the real LAN/VPN IP and apply the shop overlay (`docker-compose.playwright-shop.yml`). `extra_hosts` uses **YAML mapping** form (`host: ip`) — Compose on Windows rejects a list of `"host:ip"` strings.
+
+```bash
+# Linux/macOS — use the same A record the host browser uses
+export PLAYWRIGHT_MCP_SHOP_IP=$(getent hosts sdk.paynsure.internal | awk '{print $1; exit}')
+docker compose -f deploy/compose/local/docker-compose.local.yml \
+  -f deploy/compose/local/docker-compose.playwright-shop.yml \
+  --profile browser up -d --force-recreate playwright-mcp
+
+bash deploy/compose/scripts/verify-playwright-shop-dns.sh   # expect HTTP 2xx
+```
+
+Windows PowerShell:
+
+```powershell
+$env:PLAYWRIGHT_MCP_SHOP_IP = (Resolve-DnsName sdk.paynsure.internal -Type A |
+  Where-Object { $_.IPAddress } | Select-Object -First 1).IPAddress
+docker compose -f deploy/compose/local/docker-compose.local.yml `
+  -f deploy/compose/local/docker-compose.playwright-shop.yml `
+  --profile browser up -d --force-recreate playwright-mcp
+```
+
+Keep `http://sdk.paynsure.internal` (or the bare host) on the Playwright connector allowlist, then retry Explore UI — the MD artifact should list storefront cues (Search products, Add to cart, Proceed to checkout, …).
+
+### Email / notification template preview (Phase 8 E2)
+
+Escrow/email-template stories (e.g. WI 2357) need a **reachable template preview** surface. Without one, Explore stays **fail-closed** (Blocked / `needs-surface`) — it will not invent shop catalog passes for subject/greeting/Paid Amount/CTA.
+
+**Option A — Environment setting:** Environments → General → **Template preview URL** (must be an approved application host).
+
+**Option B — Worker env var** `QA_TEMPLATE_PREVIEW_URL` (overrides empty environment setting).
+
+**Option C — Local fixture host** (documented mock HTML under `deploy/compose/local/fixtures/email-preview/`):
+
+PowerShell:
+
+```powershell
+$env:QA_TEMPLATE_PREVIEW_URL = "http://email-preview-fixture/"
+docker compose -f deploy/compose/local/docker-compose.local.yml `
+  -f deploy/compose/local/docker-compose.email-preview.yml `
+  --profile email-preview --profile browser up -d --build
+```
+
+Bash:
+
+```bash
+export QA_TEMPLATE_PREVIEW_URL=http://email-preview-fixture/
+docker compose -f deploy/compose/local/docker-compose.local.yml \
+  -f deploy/compose/local/docker-compose.email-preview.yml \
+  --profile email-preview --profile browser up -d --build
+```
+
+Then:
+
+1. Approve host `email-preview-fixture` for plain http on the Playwright connector allowlist (and keep the shop host if order-trigger paths matter).
+2. Set the environment Template preview URL to `http://email-preview-fixture/` (or rely on the worker env var from the overlay).
+3. Re-run Requirement Validation for WI 2357-like stories — Explore should open the preview DOM; plan/generate should assert **subject / greeting / order table / Confirm Delivery / Paid Amount**, not shop catalog.
+
+Host debug of the fixture: `http://127.0.0.1:8099/` (published loopback). Worker/Playwright must use `http://email-preview-fixture/` (Compose DNS).
+
+Unit verify (no Compose):
+
+```powershell
+pnpm typecheck
+pnpm exec vitest run packages/agents packages/testing/test/environment-service.test.ts
+```
+
+### Case quality gate before publish (Phase 8 E3)
+
+Publish (and generate/heal) refuse **body-only** stubs (`locator("body").toBeVisible` as the only assertion). Explore-gap / `needs-surface` cases are flagged but still stored as Blocked. The plan Markdown includes an **AC coverage** section (covered vs gaps).
+
+Optional: on Workflow **Run**, check **Pause after plan (accept before generate)** so the run pauses after Plan for human review; **Resume** on Executions continues to Generate.
+
+```powershell
+pnpm typecheck
+pnpm exec vitest run packages/agents/test/case-quality-gate.test.ts apps/worker/test/publish-cases.test.ts packages/workflow-engine/test/chaos.test.ts
+```
+
+## Runner (Playwright / Executions screenshots)
+
+`runner-image` and `runner-launcher` are part of the **default** local stack (no compose profile). A normal `up --build` builds `qa-runner:local` and starts the launcher. The worker waits until `runner-launcher` is healthy. Executions **do not** HTTP probe-fall back to a fake Passed when the launcher is missing — cases stay **Blocked** with an actionable message instead.
 
 ```
-docker compose -f deploy/compose/local/docker-compose.local.yml --profile browser --profile runners up --build -d
+docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
 ```
 
-`runner-image` exits on purpose after the image `qa-runner:local` exists. Rebuild that profile whenever `apps/runner/` or `deploy/images/runner.Dockerfile` changes — a stale image is a common cause of Executions showing every case **Blocked** with “without case results.” `runner-launcher` is the service that starts a new container for each check. It is the only service that uses the Docker socket. Open the environment again and press Check reachability. The line starts with "The runner finished." On 19 Nov 2026 that check showed "The runner finished. The application answered 200."
+`runner-image` exits on purpose after `qa-runner:local` exists. Rebuild whenever `apps/runner/` or `deploy/images/runner.Dockerfile` changes. `runner-launcher` starts a fresh container per check/run and is the only service that uses the Docker socket.
+
+Reachability: open the environment and press Check reachability. Prefer a line that starts with “The runner finished.”
 
 ### Run a prepared work item (Executions)
 
-1. Rebuild runners (Playwright-capable `qa-runner:local`):  
-   `docker compose -f deploy/compose/local/docker-compose.local.yml --profile runners up --build -d`
-2. Confirm the environment Check reachability still ends with “The runner finished.”
-3. On Executions, prepare work item **7259** (or your PayNSure item) and press **Run**.
-4. Expect per-case **Passed** / **Failed** (not all Blocked) with screenshots. Squash sync needs a **READ_WRITE** personal API token on the switched-on Squash connector (project name e.g. ToolKit-AgenFlow): Test Connection → Switch on → **restart the worker** after replacing the token.
+1. Ensure the default stack is up (includes runners):
+
+```
+docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
+docker compose -f deploy/compose/local/docker-compose.local.yml ps
+# Expect: runner-launcher = healthy/running; runner-image = Exited (0)
+docker image inspect qa-runner:local --format '{{.Id}} {{.Created}}'
+```
+
+2. Smoke Playwright capture inside the image:
+
+```
+docker run --rm --network qa-platform-local \
+  -e QA_TARGET_URL=http://web \
+  -e QA_ALLOWED_HOSTS=web \
+  -e QA_CASES_JSON='[{"id":"smoke","name":"Smoke","steps":["Open page","Capture evidence"]}]' \
+  qa-runner:local
+# Expect: RUNNER_MODE {"capture":"playwright",...} then RESULT_JSON ... then SCREENSHOT_JSON ...
+```
+
+3. On Executions, prepare a work item and press **Run**. Expect per-case **Passed** / **Failed** with JPEG screenshots. Large sets (hundreds of cases) are passed as chunked `QA_CASES_P*` env vars (not one giant `QA_CASES_JSON`, and not Docker putFiles into `/tmp`). You should not see “env QA_CASES_JSON is too long” or “putFiles (400)”.
+
+4. If cases are **Blocked** with “runner-launcher is not available”, the launcher container is not on `qa-platform-local` — re-run step 1 (Docker socket must be available to Compose).
+
+5. If cases are **Blocked** with “runner pool is full” / “pool stayed full”, check leftovers with **`docker ps -a`** (plain `docker ps` hides `created`/`exited` orphans that used to pin the pool). One Execute uses **one** `qa-runner-*` container for the whole batch — not one per case.
+
+**PowerShell (Windows):**
+
+```
+docker ps -a --filter "label=qa.platform/managed=true"
+docker images qa-runner:local
+docker ps -aq --filter "label=qa.platform/managed=true" | ForEach-Object { docker rm -f $_ }
+docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
+```
+
+**Bash:**
+
+```
+docker ps -a --filter label=qa.platform/managed=true
+docker images qa-runner:local
+docker rm -f $(docker ps -aq --filter label=qa.platform/managed=true) 2>/dev/null || true
+docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
+```
+
+Local default `RUNNER_MAX_CONCURRENT` is **8** (never treat `0` as a valid limit). The launcher reclaims finished/never-started runners before admitting a new one; the worker waits up to ~3 minutes for a free slot. If the image is missing you get a PowerShell rebuild hint (not pool-full).
+
+6. **Cancel a live work-item run** from Executions (Cancel on the live row). The worker stops and removes that run’s `qa-runner-*` container so the pool slot frees immediately — you should not need a manual reclaim after Cancel.
+
+7. Squash sync needs a **READ_WRITE** personal API token on the switched-on Squash connector (project name e.g. ToolKit-AgenFlow): Test Connection → Switch on → **restart the worker** after replacing the token. After a Run, the work-item detail sync line should mention execution status and, when attachments succeed, uploaded screenshots. If Squash refuses attachments, the line warns and platform screenshots still show on Executions.
+
+Optional browser MCP (Explore UI / connector Test connection) still uses `--profile browser` — that is separate from Executions screenshots.
+
+## Automation Mapping (Phase 8 E6 Regression seed)
+
+After cases are published to Squash, the worker seeds a **draft** automation asset and Squash↔script mapping. Open **Automation Mapping** (QA Lead / Engineer), **Approve** a draft, then **Resolve** a Squash case id — or call `GET /api/v1/automation/resolve?squashCaseId=<id>`. Details: [`docs/phase8-e6-regression-seed.md`](../../../docs/phase8-e6-regression-seed.md).
+
+PowerShell-safe check:
+
+```powershell
+pnpm check
+docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
+# Sign in as trial-lead → Automation Mapping → Approve → Resolve
+```
 
 ## Stop or reset
 

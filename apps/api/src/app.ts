@@ -11,7 +11,8 @@ import { registerConnectorRoutes, type ConnectorRouteDeps } from './connector-ro
 import { registerEnvironmentRoutes } from './environment-routes';
 import { registerWorkflowRoutes } from './workflow-routes';
 import { registerTestCaseRoutes } from './test-case-routes';
-import type { EnvironmentService, TestCaseService, WorkflowService } from '@qa/application';
+import { registerAutomationRoutes } from './automation-routes';
+import type { AutomationService, EnvironmentService, TestCaseService, WorkflowService } from '@qa/application';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -37,6 +38,7 @@ export interface AppDeps {
   environments?: EnvironmentService;
   workflows?: WorkflowService;
   testCases?: TestCaseService;
+  automation?: AutomationService;
 }
 
 const CLIENT_ERRORS: Partial<Record<string, number>> = { validation: 400, 'not-found': 404, conflict: 409, unsupported: 400 };
@@ -120,6 +122,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     app.get('/api/v1/test-cases', { config: { access: requires('testcase.view') } }, async () => ({ items: [] }));
     app.get('/api/v1/test-collections', { config: { access: requires('testcase.view') } }, async () => ({ items: [] }));
     app.get('/api/v1/work-item-executions', { config: { access: requires('execution.start') } }, async () => ({ workItems: [], environments: [], items: [] }));
+  }
+
+  if (deps.automation) registerAutomationRoutes(app, deps.automation);
+  else {
+    app.get('/api/v1/automation/assets', { config: { access: requires('automation.view') } }, async () => ({ items: [] }));
+    app.get('/api/v1/automation/mappings', { config: { access: requires('automation.view') } }, async () => ({ items: [] }));
   }
 
   app.get('/api/v1/llm/providers', { config: { access: requires('llm.view') } }, async () =>
