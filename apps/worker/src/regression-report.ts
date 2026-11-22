@@ -128,8 +128,9 @@ function evidenceLink(o: {
   hasScreenshot?: boolean;
 }): string {
   if (!o.evidenceExecutionId) return o.hasScreenshot ? 'screenshot on platform' : '—';
-  if (!o.hasScreenshot) return `[execution](/executions?focus=${o.evidenceExecutionId})`;
-  return `[screenshot](/api/v1/work-item-executions/${o.evidenceExecutionId}/cases/${o.testCaseId}/screenshot)`;
+  // Deep-link into the product Evidence / Report UI (not the raw screenshot JSON API).
+  if (!o.hasScreenshot) return `[execution](/evidence?focus=${o.evidenceExecutionId})`;
+  return `[screenshot](/evidence?focus=${o.evidenceExecutionId}&case=${o.testCaseId})`;
 }
 
 /** Deterministic Markdown artifact for a Regression run (optional previous-run compare). */

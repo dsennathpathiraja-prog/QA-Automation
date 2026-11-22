@@ -18,12 +18,21 @@ import { Workflows } from './pages/Workflows';
 import { WorkflowPage } from './pages/workflows/WorkflowPage';
 import { IdentityMapping } from './pages/IdentityMapping';
 import { AutomationMapping } from './pages/AutomationMapping';
+import { ReportEvidence } from './pages/ReportEvidence';
 import { SignInError } from './pages/SignInError';
 
 function Guarded({ item, children }: { item: NavItem; children?: ReactNode }) {
   const s = useSession();
   if (!s.canAny(item.anyOf)) return <AccessDenied title={item.label} />;
   return <>{children ?? <ComingSoon title={item.label} summary={item.summary} phase={item.phase} />}</>;
+}
+
+function reportEvidenceSearch(s: Record<string, unknown>) {
+  return {
+    focus: typeof s.focus === 'string' && s.focus.trim() ? s.focus.trim() : undefined,
+    view: s.view === 'summary' || s.view === 'report' || s.view === 'evidence' ? (s.view as 'summary' | 'report' | 'evidence') : undefined,
+    case: typeof s.case === 'string' && s.case.trim() ? s.case.trim() : undefined,
+  };
 }
 
 const NotFound = () => (
@@ -35,7 +44,20 @@ const NotFound = () => (
   </>
 );
 
-const real: Record<string, () => ReactNode> = { dashboard: () => <Dashboard />, workflows: () => <Workflows />, executions: () => <Executions />, 'test-cases': () => <TestCases />, automation: () => <AutomationMapping />, connectors: () => <Connectors />, environments: () => <Environments />, identity: () => <IdentityMapping />, hosts: () => <ApprovedHosts />, models: () => <AiModels /> };
+const real: Record<string, () => ReactNode> = {
+  dashboard: () => <Dashboard />,
+  workflows: () => <Workflows />,
+  executions: () => <Executions />,
+  'test-cases': () => <TestCases />,
+  automation: () => <AutomationMapping />,
+  evidence: () => <ReportEvidence mode="evidence" />,
+  reports: () => <ReportEvidence mode="report" />,
+  connectors: () => <Connectors />,
+  environments: () => <Environments />,
+  identity: () => <IdentityMapping />,
+  hosts: () => <ApprovedHosts />,
+  models: () => <AiModels />,
+};
 
 export interface RouterOptions {
   history?: Parameters<typeof createRouter>[0]['history'];
@@ -65,7 +87,7 @@ export function buildRouter(opts: RouterOptions = {}): AnyRouter {
     notFoundComponent: NotFound,
   });
 
-  const pages = NAV_ITEMS.filter((item) => item.id !== 'executions').map((item) =>
+  const pages = NAV_ITEMS.filter((item) => item.id !== 'executions' && item.id !== 'evidence' && item.id !== 'reports').map((item) =>
     createRoute({
       getParentRoute: () => shell,
       path: item.to,
@@ -78,8 +100,23 @@ export function buildRouter(opts: RouterOptions = {}): AnyRouter {
     path: '/executions',
     validateSearch: (s: Record<string, unknown>) => ({
       tab: s.tab === 'history' || s.tab === 'prepared' ? (s.tab as 'history' | 'prepared') : undefined,
+      ...reportEvidenceSearch(s),
     }),
     component: () => <Guarded item={executionsItem}><Executions /></Guarded>,
+  });
+  const evidenceItem = NAV_ITEMS.find((item) => item.id === 'evidence')!;
+  const evidence = createRoute({
+    getParentRoute: () => shell,
+    path: '/evidence',
+    validateSearch: reportEvidenceSearch,
+    component: () => <Guarded item={evidenceItem}><ReportEvidence mode="evidence" /></Guarded>,
+  });
+  const reportsItem = NAV_ITEMS.find((item) => item.id === 'reports')!;
+  const reports = createRoute({
+    getParentRoute: () => shell,
+    path: '/reports',
+    validateSearch: reportEvidenceSearch,
+    component: () => <Guarded item={reportsItem}><ReportEvidence mode="report" /></Guarded>,
   });
 
   const connectorItem = NAV_ITEMS.find((i) => i.id === 'connectors')!;
@@ -94,7 +131,7 @@ export function buildRouter(opts: RouterOptions = {}): AnyRouter {
   const testCaseDetail = createRoute({ getParentRoute: () => shell, path: '/test-cases/$id', component: () => <Guarded item={testCaseItem}><TestCasePage /></Guarded> });
   const testCollectionDetail = createRoute({ getParentRoute: () => shell, path: '/test-collections/$id', component: () => <Guarded item={testCaseItem}><TestCollectionPage /></Guarded> });
 
-  return createRouter({ routeTree: root.addChildren([signInError, shell.addChildren([...pages, executions, connectorNew, connectorDetail, environmentDetail, workflowDetail, testCaseDetail, testCollectionDetail])]), history: opts.history, defaultPreload: false });
+  return createRouter({ routeTree: root.addChildren([signInError, shell.addChildren([...pages, executions, evidence, reports, connectorNew, connectorDetail, environmentDetail, workflowDetail, testCaseDetail, testCollectionDetail])]), history: opts.history, defaultPreload: false });
 }
 
 declare module '@tanstack/react-router' {

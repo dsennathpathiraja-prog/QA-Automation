@@ -18,7 +18,7 @@ import {
   Tabs,
   Typography,
 } from '@mui/material';
-import { ExecutionEventList, ExecutionListResponse, ExecutionSchema, WorkItemCaseScreenshot, WorkItemExecutionBoard, WorkItemExecutionSchema } from '@qa/contracts';
+import { ExecutionEventList, ExecutionListResponse, ExecutionSchema, WorkItemExecutionBoard, WorkItemExecutionSchema } from '@qa/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { useEffect, useMemo, useState } from 'react';
@@ -26,11 +26,13 @@ import { useApi } from '../api/context';
 import { useSession } from '../auth/session';
 import { ErrorNotice, PageHeader } from './common';
 import { errorText } from './connectors/shared';
+import { countsLabel, findEvidenceExecutionId, parseRunDetailView, type RunDetailView, WI_LIVE, WI_STATUS } from './run-detail/helpers';
+import { WorkItemRunDetail } from './run-detail/WorkItemRunDetail';
 import { StepArtifact, markdownFromStepPayload } from './StepArtifact';
 
 const key = ['executions'] as const;
 const LIVE = new Set(['queued', 'running']);
-const WI_LIVE = new Set(['queued', 'running']);
+const FINISHED_RUN = new Set(['completed', 'failed', 'cancelled']);
 /** How many recently prepared rows the Prepared tab keeps visible. */
 const RECENT_PREPARED_LIMIT = 15;
 /** Drop preparations older than this from the Prepared tab (still limited by RECENT_PREPARED_LIMIT). */
@@ -63,23 +65,6 @@ const STATUS: Record<string, string> = {
   succeeded: 'Succeeded',
   failed: 'Failed',
   cancelled: 'Cancelled',
-};
-const WI_STATUS: Record<string, string> = {
-  prepared: 'Prepared',
-  queued: 'Queued',
-  running: 'Running',
-  completed: 'Completed',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-};
-
-const CASE_CHIP: Record<string, 'default' | 'success' | 'error' | 'warning' | 'info'> = {
-  Queued: 'default',
-  Running: 'info',
-  Passed: 'success',
-  Failed: 'error',
-  Blocked: 'warning',
-  Skipped: 'default',
 };
 
 const STEP_LABEL: Record<string, string> = {
@@ -114,21 +99,63 @@ export function Executions() {
   const session = useSession();
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const search = useSearch({ strict: false }) as { tab?: string };
+  const search = useSearch({ strict: false }) as {
+    tab?: string;
+    focus?: string;
+    view?: string;
+    case?: string;
+  };
   const tab = tabOf(search.tab);
+  const focusFromUrl = typeof search.focus === 'string' && search.focus.trim() ? search.focus.trim() : null;
+  const focusCase = typeof search.case === 'string' && search.case.trim() ? search.case.trim() : null;
+  const detailView: RunDetailView = parseRunDetailView(search.view);
   const setTab = (next: ExecTab) => {
     void navigate({
       to: '/executions',
-      search: (next === 'execution' ? {} : { tab: next }) as never,
+      search: {
+        ...(next === 'execution' ? {} : { tab: next }),
+        ...(focusFromUrl ? { focus: focusFromUrl } : {}),
+        ...(detailView !== 'summary' ? { view: detailView } : {}),
+        ...(focusCase ? { case: focusCase } : {}),
+      } as never,
     });
   };
-
   const [selected, setSelected] = useState<string | null>(null);
   const [workItem, setWorkItem] = useState('');
   const [environmentId, setEnvironmentId] = useState('');
-  const [openRun, setOpenRun] = useState<string | null>(null);
+  const [openRun, setOpenRun] = useState<string | null>(focusFromUrl);
   const [preparedVisitedAt, setPreparedVisitedAt] = useState(readPreparedVisitedAt);
   const [justPreparedId, setJustPreparedId] = useState<string | null>(null);
+
+  const selectRun = (id: string | null, view: RunDetailView = detailView) => {
+    setOpenRun(id);
+    void navigate({
+      to: '/executions',
+      search: {
+        ...(tab === 'execution' ? {} : { tab }),
+        ...(id ? { focus: id } : {}),
+        ...(view !== 'summary' ? { view } : {}),
+        ...(focusCase ? { case: focusCase } : {}),
+      } as never,
+    });
+  };
+  const setDetailView = (view: RunDetailView) => {
+    const id = focusFromUrl ?? openRun;
+    if (!id) return;
+    void navigate({
+      to: '/executions',
+      search: {
+        ...(tab === 'execution' ? {} : { tab }),
+        focus: id,
+        ...(view !== 'summary' ? { view } : {}),
+        ...(focusCase ? { case: focusCase } : {}),
+      } as never,
+    });
+  };
+
+  useEffect(() => {
+    if (focusFromUrl) setOpenRun(focusFromUrl);
+  }, [focusFromUrl]);
 
   useEffect(() => {
     if (!sessionStorage.getItem(PREPARED_VISITED_KEY)) writePreparedVisitedAt(preparedVisitedAt);
@@ -148,8 +175,8 @@ export function Executions() {
   const prepare = useMutation({
     mutationFn: () => api.post('/api/v1/work-item-executions', { workItem, environmentId }, WorkItemExecutionSchema),
     onSuccess: async (row) => {
-      setOpenRun(row.id);
       setJustPreparedId(row.id);
+      setOpenRun(row.id);
       setTab('prepared');
       await qc.invalidateQueries({ queryKey: ['work-item-executions'] });
     },
@@ -157,8 +184,8 @@ export function Executions() {
   const run = useMutation({
     mutationFn: (id: string) => api.post(`/api/v1/work-item-executions/${id}/run`, {}, WorkItemExecutionSchema),
     onSuccess: async (row) => {
-      setOpenRun(row.id);
       setJustPreparedId(null);
+      selectRun(row.id, 'summary');
       setTab('execution');
       await qc.invalidateQueries({ queryKey: ['work-item-executions'] });
       await qc.invalidateQueries({ queryKey: ['work-item-execution', row.id] });
@@ -167,7 +194,7 @@ export function Executions() {
   const cancelWorkItem = useMutation({
     mutationFn: (id: string) => api.post(`/api/v1/work-item-executions/${id}/cancel`, {}, WorkItemExecutionSchema),
     onSuccess: async (row) => {
-      setOpenRun(row.id);
+      selectRun(row.id, detailView);
       await qc.invalidateQueries({ queryKey: ['work-item-executions'] });
       await qc.invalidateQueries({ queryKey: ['work-item-execution', row.id] });
     },
@@ -272,12 +299,22 @@ export function Executions() {
           <Paper component="section" sx={{ p: 2 }} aria-label="Regression">
             <Typography variant="h2" gutterBottom>Regression</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Full / Selected / Smoke Regression starts from a published Regression workflow (Run &amp; output). Approve Squash↔script mappings first — drafts and unmapped cases stay Not Automated.
+              Full / Selected / Smoke Regression starts from a published Regression workflow (Run &amp; output). After a run finishes, open Report or Evidence — workflow-created cases stay in Squash; Mapping CRUD is not required for review.
             </Typography>
             <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
               <Link to="/workflows">
                 <Button variant="contained">Open Workflows</Button>
               </Link>
+              {session.can('report.view') && (
+                <Link to="/reports">
+                  <Button>Reports</Button>
+                </Link>
+              )}
+              {session.can('evidence.view') && (
+                <Link to="/evidence">
+                  <Button>Evidence</Button>
+                </Link>
+              )}
               {session.can('automation.view') && (
                 <Link to="/automation">
                   <Button>Automation Mapping</Button>
@@ -415,7 +452,7 @@ export function Executions() {
                   >
                     <ListItemButton
                       selected={openRun === item.id}
-                      onClick={() => setOpenRun(item.id)}
+                      onClick={() => selectRun(item.id)}
                       sx={{ flex: '1 1 auto', minWidth: 0, py: 0.75 }}
                     >
                       <ListItemText
@@ -426,6 +463,16 @@ export function Executions() {
                       />
                     </ListItemButton>
                     <Chip size="small" label={WI_STATUS[item.status] ?? item.status} sx={{ flexShrink: 0 }} />
+                    {FINISHED_RUN.has(item.status) && session.can('report.view') && (
+                      <Link to="/reports" search={{ focus: item.id } as never}>
+                        <Button size="small" sx={{ flexShrink: 0 }}>Report</Button>
+                      </Link>
+                    )}
+                    {FINISHED_RUN.has(item.status) && session.can('evidence.view') && (
+                      <Link to="/evidence" search={{ focus: item.id } as never}>
+                        <Button size="small" sx={{ flexShrink: 0 }}>Evidence</Button>
+                      </Link>
+                    )}
                     {WI_LIVE.has(item.status) && session.can('execution.control') && (
                       <Button size="small" color="error" disabled={cancelWorkItem.isPending} onClick={() => cancelWorkItem.mutate(item.id)} sx={{ flexShrink: 0 }}>
                         Cancel
@@ -446,6 +493,9 @@ export function Executions() {
           {shown && shown.status !== 'prepared' && (
             <WorkItemRunDetail
               shown={shown}
+              view={detailView}
+              onViewChange={setDetailView}
+              focusCaseId={focusCase}
               onCancel={session.can('execution.control') && WI_LIVE.has(shown.status) ? () => cancelWorkItem.mutate(shown.id) : undefined}
               cancelPending={cancelWorkItem.isPending}
             />
@@ -530,8 +580,9 @@ export function Executions() {
               Requirement-validation runs create and publish test cases. Regression runs resolve approved automation and execute with evidence (see <code>rg:&lt;runId&gt;</code> on the Execution tab). Neither replaces the work-item Playwright prepare flow above.
             </Typography>
             <Alert severity="info" sx={{ mb: 2 }}>
-              Start Regression from <Link to="/workflows">Workflows</Link> (Full / Selected / Smoke templates). Approve drafts on{' '}
-              {session.can('automation.view') ? <Link to="/automation">Automation Mapping</Link> : 'Automation Mapping'} before you run.
+              Start Regression from <Link to="/workflows">Workflows</Link> (Full / Selected / Smoke templates). After a run finishes, open{' '}
+              {session.can('report.view') ? <Link to="/reports">Reports</Link> : 'Reports'} or{' '}
+              {session.can('evidence.view') ? <Link to="/evidence">Evidence</Link> : 'Evidence'} for the readable summary and screenshots.
             </Alert>
             {runs.isError && <ErrorNotice message="Runs could not be loaded." onRetry={() => void runs.refetch()} />}
             {runs.data && items.length === 0 && <Alert severity="info">No workflow runs yet. Start one from a published workflow (including Regression).</Alert>}
@@ -568,57 +619,20 @@ export function Executions() {
           </Paper>
 
           {current && (
-            <Paper component="section" sx={{ p: 2 }} aria-label="Selected run">
-              <Typography variant="h2" gutterBottom>Step timeline</Typography>
-              <Typography sx={{ mb: 2 }}>
-                {current.workflowName} is {STATUS[current.status]?.toLowerCase() ?? current.status}, at step {current.stepIndex}.
-              </Typography>
-              {session.can('execution.control') && open && (
-                <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
-                  {current.status === 'paused'
-                    ? <Button variant="contained" disabled={control.isPending} onClick={() => control.mutate('resume')}>Resume</Button>
-                    : <Button disabled={control.isPending} onClick={() => control.mutate('pause')}>Pause</Button>}
-                  <Button color="error" disabled={control.isPending} onClick={() => control.mutate('cancel')}>Cancel</Button>
-                </Stack>
-              )}
-              {control.isError && <ErrorNotice message={errorText(control.error, 'That command was rejected.')} />}
-              {events.isError && <ErrorNotice message="The step history could not be loaded." onRetry={() => void events.refetch()} />}
-              {events.data && stepEvents.length === 0 && <Alert severity="info">This run has no recorded steps yet.</Alert>}
-              {stepEvents.length > 0 && (
-                <Stack spacing={1.5}>
-                  {stepEvents.map((event) => {
-                    const stepId = String(event.payload.stepId ?? '');
-                    const stepType = String(event.payload.stepType ?? '');
-                    const label = STEP_LABEL[stepId] || STEP_LABEL[stepType] || stepId || stepType || event.kind;
-                    const summary = typeof event.payload.summary === 'string' ? event.payload.summary : '';
-                    const message = typeof event.payload.message === 'string' ? event.payload.message : '';
-                    const failed = event.kind === 'step.failed';
-                    const output = summary || message;
-                    const qualityRefuse = failed && /quality gate|stub-forbidden|Publish refused/i.test(output);
-                    const artifact = markdownFromStepPayload(event.payload);
-                    return (
-                      <Paper key={event.seq} variant="outlined" sx={{ p: 1.5 }}>
-                        <Stack direction="row" spacing={1} useFlexGap sx={{ mb: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
-                          <Chip size="small" color={failed ? 'error' : 'success'} label={failed ? 'Failed' : 'Done'} />
-                          <Typography sx={{ fontWeight: 600 }}>{label}</Typography>
-                          <Typography variant="caption" color="text.secondary">#{event.seq}</Typography>
-                        </Stack>
-                        <Typography variant="subtitle2" color="text.secondary">Output</Typography>
-                        {qualityRefuse && (
-                          <Alert severity="error" sx={{ mb: 1 }}>
-                            Case quality gate refused this step. Fix stub / body-only cases (or regenerate) before publish.
-                          </Alert>
-                        )}
-                        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                          {output || (failed ? 'This step failed without a summary.' : 'This step completed without a summary.')}
-                        </Typography>
-                        {artifact && <StepArtifact markdown={artifact.markdown} path={artifact.path} />}
-                      </Paper>
-                    );
-                  })}
-                </Stack>
-              )}
-            </Paper>
+            <HistoryRunDetail
+              current={current}
+              open={Boolean(open)}
+              stepEvents={stepEvents}
+              eventsError={events.isError}
+              onRetryEvents={() => void events.refetch()}
+              controlPending={control.isPending}
+              controlError={control.isError}
+              onControl={(command) => control.mutate(command)}
+              canControl={session.can('execution.control')}
+              canReport={session.can('report.view')}
+              canEvidence={session.can('evidence.view')}
+              evidenceExecutionId={findEvidenceExecutionId(events.data?.items)}
+            />
           )}
         </Stack>
       )}
@@ -626,175 +640,98 @@ export function Executions() {
   );
 }
 
-function countsLabel(item: { caseCount: number; counts?: { completed: number; passed: number; failed: number; running: number; queued: number } }) {
-  if (!item.counts) return `${item.caseCount} ${item.caseCount === 1 ? 'case' : 'cases'}`;
-  const { completed, passed, failed, running, queued } = item.counts;
-  return `${completed}/${item.caseCount} done · ${passed} passed · ${failed} failed${running ? ` · ${running} running` : ''}${queued ? ` · ${queued} queued` : ''}`;
-}
-
-function WorkItemRunDetail({ shown, onCancel, cancelPending }: {
-  shown: {
-  id: string;
-  workItem: string;
-  environmentName: string;
-  caseCount: number;
-  status: string;
-  squashSync?: string;
-  counts?: {
-    total: number;
-    queued: number;
-    running: number;
-    passed: number;
-    failed: number;
-    blocked: number;
-    skipped: number;
-    completed: number;
-  };
-  results?: Array<{
-    id: string;
-    testCaseId: string;
-    name: string;
-    status: string;
-    message: string;
-    hasScreenshot: boolean;
-    squashExecutionId?: string;
-    steps?: Array<{ name: string; status: string }>;
-  }>;
-  };
-  onCancel?: () => void;
-  cancelPending?: boolean;
+function HistoryRunDetail({
+  current,
+  open,
+  stepEvents,
+  eventsError,
+  onRetryEvents,
+  controlPending,
+  controlError,
+  onControl,
+  canControl,
+  canReport,
+  canEvidence,
+  evidenceExecutionId,
+}: {
+  current: { id: string; workflowId: string; workflowName: string; status: string; stepIndex: number };
+  open: boolean;
+  stepEvents: Array<{ seq: number; kind: string; payload: Record<string, unknown> }>;
+  eventsError: boolean;
+  onRetryEvents: () => void;
+  controlPending: boolean;
+  controlError: boolean;
+  onControl: (command: 'pause' | 'resume' | 'cancel') => void;
+  canControl: boolean;
+  canReport: boolean;
+  canEvidence: boolean;
+  evidenceExecutionId: string | null;
 }) {
-  const live = WI_LIVE.has(shown.status);
   return (
-    <Paper sx={{ p: 2 }} aria-label="Work item run">
-      <Typography variant="h2" gutterBottom>{live ? 'Live run' : 'Run detail'}</Typography>
-      <Typography>
-        {shown.workItem} on {shown.environmentName} is {WI_STATUS[shown.status]?.toLowerCase() ?? shown.status}.
+    <Paper component="section" sx={{ p: 2 }} aria-label="Selected run">
+      <Typography variant="h2" gutterBottom>Step timeline</Typography>
+      <Typography sx={{ mb: 2 }}>
+        {current.workflowName} is {STATUS[current.status]?.toLowerCase() ?? current.status}, at step {current.stepIndex}.
       </Typography>
-      {onCancel && (
-        <Box sx={{ mt: 2 }}>
-          <Button color="error" disabled={cancelPending} onClick={onCancel}>Cancel run</Button>
-        </Box>
-      )}
-      {shown.counts && (
-        <Stack direction="row" spacing={1} useFlexGap sx={{ mt: 2, flexWrap: 'wrap' }} aria-label="Run counts">
-          <Chip size="small" label={`${shown.counts.completed}/${shown.counts.total} completed`} />
-          <Chip size="small" color="success" label={`${shown.counts.passed} passed`} />
-          <Chip size="small" color="error" label={`${shown.counts.failed} failed`} />
-          {shown.counts.blocked > 0 && <Chip size="small" color="warning" label={`${shown.counts.blocked} blocked`} />}
-          {shown.counts.running > 0 && <Chip size="small" color="info" label={`${shown.counts.running} running`} />}
-          {shown.counts.queued > 0 && <Chip size="small" label={`${shown.counts.queued} queued`} />}
+      {evidenceExecutionId && (canReport || canEvidence) && (
+        <Stack direction="row" spacing={1} useFlexGap sx={{ mb: 2, flexWrap: 'wrap' }}>
+          {canReport && (
+            <Link to="/reports" search={{ focus: evidenceExecutionId } as never}>
+              <Button variant="contained" size="small">Open report</Button>
+            </Link>
+          )}
+          {canEvidence && (
+            <Link to="/evidence" search={{ focus: evidenceExecutionId } as never}>
+              <Button size="small">Open evidence</Button>
+            </Link>
+          )}
         </Stack>
       )}
-      {live && (
-        <Alert sx={{ mt: 2 }} severity="info">
-          Updating every second while cases run. Per-case status, step progress, and pass/fail counts refresh as the runner reports them.
-        </Alert>
+      {canControl && open && (
+        <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
+          {current.status === 'paused'
+            ? <Button variant="contained" disabled={controlPending} onClick={() => onControl('resume')}>Resume</Button>
+            : <Button disabled={controlPending} onClick={() => onControl('pause')}>Pause</Button>}
+          <Button color="error" disabled={controlPending} onClick={() => onControl('cancel')}>Cancel</Button>
+        </Stack>
       )}
-      {shown.squashSync && (
-        <Alert sx={{ mt: 2 }} severity={squashSyncAlertSeverity(shown.squashSync)} aria-label="Squash sync status">
-          {shown.squashSync}
-        </Alert>
-      )}
-      {shown.results && shown.results.length > 0 && (
-        <List sx={{ mt: 1 }}>
-          {shown.results.map((row) => (
-            <ListItem key={row.id} alignItems="flex-start" sx={{ flexDirection: 'column', alignItems: 'stretch' }}>
-              <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
-                <Typography sx={{ fontWeight: 600 }}>{row.name}</Typography>
-                <Chip size="small" label={row.status} color={CASE_CHIP[row.status] ?? 'default'} />
-                {row.squashExecutionId && <Chip size="small" variant="outlined" label={`Squash ${row.squashExecutionId}`} />}
-              </Stack>
-              {row.message && <Typography variant="body2" color="text.secondary">{row.message}</Typography>}
-              {row.steps && row.steps.length > 0 && (
-                <Stack spacing={0.5} sx={{ mt: 1 }} aria-label={`Steps for ${row.name}`}>
-                  {row.steps.map((step, index) => (
-                    <Stack key={`${row.id}-step-${index}`} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-                      <Chip size="small" variant="outlined" label={step.status} color={CASE_CHIP[step.status] ?? 'default'} />
-                      <Typography variant="body2">{step.name}</Typography>
-                    </Stack>
-                  ))}
+      {controlError && <ErrorNotice message="That command was rejected." />}
+      {eventsError && <ErrorNotice message="The step history could not be loaded." onRetry={onRetryEvents} />}
+      {stepEvents.length === 0 && !eventsError && <Alert severity="info">This run has no recorded steps yet.</Alert>}
+      {stepEvents.length > 0 && (
+        <Stack spacing={1.5}>
+          {stepEvents.map((event) => {
+            const stepId = String(event.payload.stepId ?? '');
+            const stepType = String(event.payload.stepType ?? '');
+            const label = STEP_LABEL[stepId] || STEP_LABEL[stepType] || stepId || stepType || event.kind;
+            const summary = typeof event.payload.summary === 'string' ? event.payload.summary : '';
+            const message = typeof event.payload.message === 'string' ? event.payload.message : '';
+            const failed = event.kind === 'step.failed';
+            const output = summary || message;
+            const qualityRefuse = failed && /quality gate|stub-forbidden|Publish refused/i.test(output);
+            const artifact = markdownFromStepPayload(event.payload);
+            return (
+              <Paper key={event.seq} variant="outlined" sx={{ p: 1.5 }}>
+                <Stack direction="row" spacing={1} useFlexGap sx={{ mb: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Chip size="small" color={failed ? 'error' : 'success'} label={failed ? 'Failed' : 'Done'} />
+                  <Typography sx={{ fontWeight: 600 }}>{label}</Typography>
+                  <Typography variant="caption" color="text.secondary">#{event.seq}</Typography>
                 </Stack>
-              )}
-              {row.status !== 'Queued' && row.status !== 'Running' && (
-                row.hasScreenshot
-                  ? <CaseScreenshot executionId={shown.id} testCaseId={row.testCaseId} name={row.name} />
-                  : (
-                    <Alert sx={{ mt: 1 }} severity="info" aria-label={`No screenshot for ${row.name}`}>
-                      {screenshotEmptyHint(row.message)}
-                    </Alert>
-                  )
-              )}
-            </ListItem>
-          ))}
-        </List>
-      )}
-      {shown.status === 'queued' && (!shown.results || shown.results.length === 0) && (
-        <Alert sx={{ mt: 2 }} severity="info">Queued. Case placeholders appear when the worker claims this run.</Alert>
+                <Typography variant="subtitle2" color="text.secondary">Output</Typography>
+                {qualityRefuse && (
+                  <Alert severity="error" sx={{ mb: 1 }}>
+                    Case quality gate refused this step. Fix stub / body-only cases (or regenerate) before publish.
+                  </Alert>
+                )}
+                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                  {output || (failed ? 'This step failed without a summary.' : 'This step completed without a summary.')}
+                </Typography>
+                {artifact && <StepArtifact markdown={artifact.markdown} path={artifact.path} />}
+              </Paper>
+            );
+          })}
+        </Stack>
       )}
     </Paper>
-  );
-}
-
-/** Sync line: info when Squash accepted status/attachments; warning when status or screenshots degraded. */
-function squashSyncAlertSeverity(message: string): 'info' | 'warning' {
-  if (/Squash was not updated|No writable Squash|was not available|Screenshot attachments were not uploaded|then stopped:/i.test(message)) {
-    return 'warning';
-  }
-  return 'info';
-}
-
-function screenshotEmptyHint(message: string | undefined): string {
-  const m = message ?? '';
-  if (/pool is full|pool stayed full/i.test(m)) {
-    return 'No screenshot: the runner pool was full. In PowerShell, reclaim leftovers with docker ps -a --filter "label=qa.platform/managed=true" then docker rm -f on those ids, or raise RUNNER_MAX_CONCURRENT, then re-run.';
-  }
-  if (/runner-launcher is not available|Playwright runner|runner image qa-runner/i.test(m)) {
-    return 'No screenshot: the Playwright runner was not available. In PowerShell from the repo root: docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d, then re-run.';
-  }
-  if (/HTTP probe|runner-launcher unavailable|runner returned no RESULT_JSON/i.test(m)) {
-    return 'No screenshot: this case did not run through Playwright. Rebuild and start the local runner stack, then re-run.';
-  }
-  if (/no screenshot/i.test(m)) {
-    return m.includes('·') ? m.slice(m.indexOf('·') + 1).trim() : 'No screenshot was captured for this case.';
-  }
-  return 'No screenshot was captured for this case. Rebuild qa-runner:local with the local compose stack, then re-run so Playwright can capture evidence.';
-}
-
-function CaseScreenshot({ executionId, testCaseId, name }: { executionId: string; testCaseId: string; name: string }) {
-  const api = useApi();
-  const [broken, setBroken] = useState(false);
-  const shot = useQuery({
-    queryKey: ['work-item-screenshot', executionId, testCaseId],
-    queryFn: () => api.get(`/api/v1/work-item-executions/${executionId}/cases/${testCaseId}/screenshot`, WorkItemCaseScreenshot),
-  });
-  if (shot.isError || broken) {
-    return (
-      <Alert sx={{ mt: 1 }} severity="warning" aria-label={`Screenshot missing for ${name}`}>
-        Screenshot evidence for {name} could not be shown.
-      </Alert>
-    );
-  }
-  if (!shot.data) return <Typography variant="body2">Loading screenshot…</Typography>;
-  return (
-    <Box
-      component="img"
-      sx={{
-        mt: 1,
-        display: 'block',
-        maxHeight: 240,
-        maxWidth: '100%',
-        width: 'auto',
-        height: 'auto',
-        objectFit: 'contain',
-        border: 1,
-        borderColor: 'divider',
-        borderRadius: 1,
-        backgroundColor: 'background.paper',
-      }}
-      alt={`Screenshot evidence for ${name}`}
-      src={`data:${shot.data.contentType};base64,${shot.data.pngBase64}`}
-      onError={() => setBroken(true)}
-    />
   );
 }

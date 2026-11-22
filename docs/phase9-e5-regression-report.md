@@ -26,4 +26,4 @@ docker compose -f deploy/compose/local/docker-compose.local.yml up --build -d
 1. Approve at least one automation mapping; run Regression through execute.
 2. With a WRITE Squash connector switched on — `rg.update-squash` records execution statuses (and attachments when allowed).
 3. With Squash read-only / no WRITE connector — sync summary shows the degrade message; report still marks Squash sync as degraded.
-4. Open the report step artifact (`regression-report.md`) for tallies and optional previous-run compare.
+4. Open **Reports** (`/reports?focus=<evidenceExecutionId>`) or the report step artifact (`regression-report.md`) for tallies and optional previous-run compare. Screenshots: **Evidence** (`/evidence?focus=…`). See [`phase9-report-evidence-ui.md`](./phase9-report-evidence-ui.md).
