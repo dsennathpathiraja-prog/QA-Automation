@@ -25,6 +25,7 @@ import { useApi } from '../../api/context';
 import { useSession } from '../../auth/session';
 import { ErrorNotice, PageHeader } from '../common';
 import { errorText } from '../connectors/shared';
+import { findEvidenceExecutionId } from '../run-detail/helpers';
 import { StepArtifact, markdownFromStepPayload } from '../StepArtifact';
 
 interface Step { id: string; type: string; enabled?: boolean; mandatory?: boolean; locked?: boolean | string[]; dependsOn?: string[] }
@@ -166,6 +167,7 @@ export function WorkflowPage() {
   const exploreCodeOn = enabled.some((s) => s.type === 'rv.explore-code' || s.id === 'explore_code');
   const selectableEnvironments = (environments.data?.items ?? []).filter((item) => item.enabled && item.selectable);
   const stepEvents = (events.data?.items ?? []).filter((event) => event.kind === 'step.completed' || event.kind === 'step.failed');
+  const evidenceExecutionId = findEvidenceExecutionId(events.data?.items);
   const runParams = (def?.spec?.parameters ?? []).filter((p) => {
     if (p.pinned !== undefined && p.pinned !== null) return false;
     if (p.name === 'environment') return exploreUiOn || regression;
@@ -503,6 +505,26 @@ export function WorkflowPage() {
               {pausedForPlan && (
                 <Alert severity="warning" sx={{ mb: 2 }}>
                   Paused after the test plan so you can review AC coverage and explore-gap notes in the Markdown artifact. Resume on Executions (or send resume) to generate cases.
+                </Alert>
+              )}
+              {evidenceExecutionId && (session.can('report.view') || session.can('evidence.view')) && (
+                <Alert severity="success" sx={{ mb: 2 }} aria-label="Open report and evidence">
+                  Evidence for this run is on the platform.
+                  <Stack direction="row" spacing={1} useFlexGap sx={{ mt: 1, flexWrap: 'wrap' }}>
+                    {session.can('report.view') && (
+                      <Link to="/reports" search={{ focus: evidenceExecutionId } as never}>
+                        <Button size="small" variant="contained">Open report</Button>
+                      </Link>
+                    )}
+                    {session.can('evidence.view') && (
+                      <Link to="/evidence" search={{ focus: evidenceExecutionId } as never}>
+                        <Button size="small">Open evidence</Button>
+                      </Link>
+                    )}
+                    <Link to="/executions" search={{ focus: evidenceExecutionId, view: 'evidence' } as never}>
+                      <Button size="small">Open on Executions</Button>
+                    </Link>
+                  </Stack>
                 </Alert>
               )}
               {stepEvents.length === 0 && activeId && (

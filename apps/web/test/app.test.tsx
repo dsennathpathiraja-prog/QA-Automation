@@ -162,9 +162,164 @@ describe('route guard', () => {
     expect(screen.getByText(/239 — Draft \(not approved\)/)).toBeTruthy();
   });
 
-  it('Evidence placeholder still names Phase 8', async () => {
-    renderApp('/evidence', { me: { status: 200, body: meFor('qa_lead') } });
-    expect(await screen.findByText(/Phase 8/)).toBeTruthy();
+  it('Evidence page lists finished runs and opens the Evidence tab', async () => {
+    const user = userEvent.setup();
+    const runId = '44444444-4444-4444-8444-444444444444';
+    const caseId = '55555555-5555-4555-8555-555555555555';
+    renderApp('/evidence', {
+      me: { status: 200, body: meFor('qa_lead') },
+      routes: {
+        '/api/v1/work-item-executions': {
+          status: 200,
+          body: {
+            workItems: [],
+            environments: [],
+            items: [{
+              id: runId,
+              workItem: 'rg:1436518e-0000-4000-8000-000000000001',
+              environmentId: '33333333-3333-4333-8333-333333333333',
+              environmentName: 'QA',
+              caseCount: 1,
+              status: 'completed',
+              createdAt: '2026-11-22T10:00:00.000Z',
+              finishedAt: '2026-11-22T10:05:00.000Z',
+              counts: { total: 1, queued: 0, running: 0, passed: 1, failed: 0, blocked: 0, skipped: 0, completed: 1 },
+              results: [{
+                id: 'r1',
+                testCaseId: caseId,
+                name: 'Login smoke',
+                status: 'Passed',
+                message: 'ok',
+                hasScreenshot: true,
+              }],
+            }],
+          },
+        },
+        [`/api/v1/work-item-executions/${runId}`]: {
+          status: 200,
+          body: {
+            id: runId,
+            workItem: 'rg:1436518e-0000-4000-8000-000000000001',
+            environmentId: '33333333-3333-4333-8333-333333333333',
+            environmentName: 'QA',
+            caseCount: 1,
+            status: 'completed',
+            createdAt: '2026-11-22T10:00:00.000Z',
+            finishedAt: '2026-11-22T10:05:00.000Z',
+            counts: { total: 1, queued: 0, running: 0, passed: 1, failed: 0, blocked: 0, skipped: 0, completed: 1 },
+            results: [{
+              id: 'r1',
+              testCaseId: caseId,
+              name: 'Login smoke',
+              status: 'Passed',
+              message: 'ok',
+              hasScreenshot: true,
+            }],
+          },
+        },
+        [`/api/v1/work-item-executions/${runId}/cases/${caseId}/screenshot`]: {
+          status: 200,
+          body: {
+            testCaseId: caseId,
+            name: 'Login smoke',
+            contentType: 'image/png',
+            pngBase64: 'a'.repeat(220),
+          },
+        },
+        '/api/v1/executions/1436518e-0000-4000-8000-000000000001/events': {
+          status: 200,
+          body: { items: [] },
+        },
+      },
+    });
+    expect(await screen.findByText(/Browse screenshots/i)).toBeTruthy();
+    expect(await screen.findByRole('region', { name: 'Runs with evidence' })).toBeTruthy();
+    await user.click(await screen.findByRole('button', { name: 'Open evidence' }));
+    expect(await screen.findByRole('tab', { name: 'Evidence' })).toBeTruthy();
+    expect(await screen.findByRole('region', { name: 'Run evidence' })).toBeTruthy();
+    expect(await screen.findByAltText(/Screenshot evidence for Login smoke/)).toBeTruthy();
+  });
+
+  it('Reports page shows tallies and regression-report.md for a focused run', async () => {
+    const runId = '66666666-6666-4666-8666-666666666666';
+    const workflowRunId = '1436518e-0000-4000-8000-000000000099';
+    const eventsPath = `/api/v1/executions/${workflowRunId}/events`;
+    const { calls } = renderApp(`/reports?focus=${runId}`, {
+      me: { status: 200, body: meFor('qa_engineer') },
+      routes: {
+        '/api/v1/work-item-executions': {
+          status: 200,
+          body: {
+            workItems: [],
+            environments: [],
+            items: [{
+              id: runId,
+              workItem: `rg:${workflowRunId}`,
+              environmentId: '33333333-3333-4333-8333-333333333333',
+              environmentName: 'QA',
+              caseCount: 2,
+              status: 'completed',
+              createdAt: '2026-11-22T11:00:00.000Z',
+              finishedAt: '2026-11-22T11:05:00.000Z',
+              squashSync: 'Squash recorded 1 execution status.',
+              counts: { total: 2, queued: 0, running: 0, passed: 1, failed: 0, blocked: 0, skipped: 1, completed: 2 },
+              results: [
+                { id: 'r1', testCaseId: 'c1', name: 'Login', status: 'Passed', message: 'ok', hasScreenshot: true },
+                { id: 'r2', testCaseId: 'c2', name: 'Draft', status: 'Skipped', message: 'Not Automated: draft', hasScreenshot: false },
+              ],
+            }],
+          },
+        },
+        [`/api/v1/work-item-executions/${runId}`]: {
+          status: 200,
+          body: {
+            id: runId,
+            workItem: `rg:${workflowRunId}`,
+            environmentId: '33333333-3333-4333-8333-333333333333',
+            environmentName: 'QA',
+            caseCount: 2,
+            status: 'completed',
+            createdAt: '2026-11-22T11:00:00.000Z',
+            finishedAt: '2026-11-22T11:05:00.000Z',
+            squashSync: 'Squash recorded 1 execution status.',
+            counts: { total: 2, queued: 0, running: 0, passed: 1, failed: 0, blocked: 0, skipped: 1, completed: 2 },
+            results: [
+              { id: 'r1', testCaseId: 'c1', name: 'Login', status: 'Passed', message: 'ok', hasScreenshot: true },
+              { id: 'r2', testCaseId: 'c2', name: 'Draft', status: 'Skipped', message: 'Not Automated: draft', hasScreenshot: false },
+            ],
+          },
+        },
+        [eventsPath]: {
+          status: 200,
+          body: {
+            items: [{
+              seq: 9,
+              kind: 'step.completed',
+              at: '2026-11-22T11:05:00.000Z',
+              payload: {
+                stepId: 'report',
+                stepType: 'rg.regression-report',
+                summary: 'Wrote regression report.',
+                outputs: {
+                  artifactMarkdown: '# Regression report: demo\n\n## Summary\n\n- **Passed:** 1\n- **Not Automated:** 1\n',
+                  artifactPath: 'reports/regression/demo.regression-report.md',
+                  tallies: { passed: 1, failed: 0, blocked: 0, skipped: 0, notAutomated: 1 },
+                  syncSummary: 'Squash recorded 1 execution status.',
+                },
+              },
+            }],
+          },
+        },
+      },
+    });
+    const report = await screen.findByRole('region', { name: 'Run report' });
+    expect(within(report).getByText('1 passed')).toBeTruthy();
+    expect(within(report).getByText('1 not automated')).toBeTruthy();
+    await waitFor(() => {
+      expect(calls.some((c) => c.url === eventsPath)).toBe(true);
+    });
+    expect(await screen.findByText('reports/regression/demo.regression-report.md')).toBeTruthy();
+    expect(document.querySelector('pre')?.textContent).toMatch(/Passed:\*\* 1/);
   });
 
   it('lists test case collections kept in this platform', async () => {
@@ -230,7 +385,7 @@ describe('route guard', () => {
     expect(screen.getByText(/Only recently added preparations/i)).toBeTruthy();
     await user.click(screen.getByRole('tab', { name: 'History' }));
     expect(await screen.findByText(/Regression runs resolve approved automation/i)).toBeTruthy();
-    expect(screen.getByText(/Approve drafts on/i)).toBeTruthy();
+    expect(screen.getByText(/After a run finishes, open/i)).toBeTruthy();
     expect(screen.getByText('Succeeded')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Open workflow' })).toBeTruthy();
     const checkout = await screen.findByRole('button', { name: /Checkout/ });

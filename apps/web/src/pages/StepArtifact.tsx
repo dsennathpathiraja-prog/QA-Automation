@@ -21,8 +21,8 @@ export function markdownFromStepPayload(payload: Record<string, unknown>): { mar
 }
 
 /** Expandable Markdown block for Run / History step output. */
-export function StepArtifact({ markdown, path }: { markdown: string; path: string }) {
-  const [open, setOpen] = useState(false);
+export function StepArtifact({ markdown, path, defaultOpen = false }: { markdown: string; path: string; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <Stack spacing={0.5} sx={{ mt: 1 }}>
       <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
