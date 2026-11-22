@@ -117,7 +117,9 @@ describe('route guard', () => {
     expect(await screen.findByRole('tab', { name: 'Execution' })).toBeTruthy();
     expect(await screen.findByRole('button', { name: 'Prepare execution' })).toBeTruthy();
     expect(screen.getByText(/soft-deleted cases are excluded/i)).toBeTruthy();
-    await user.click(screen.getByRole('tab', { name: 'Prepared test execution' }));
+    expect(await screen.findByRole('region', { name: 'Setup ready to run' })).toBeTruthy();
+    expect(screen.getByText(/recent preparation/i)).toBeTruthy();
+    await user.click(screen.getByRole('tab', { name: /Prepared test execution/ }));
     expect(await screen.findByRole('button', { name: 'Run' })).toBeTruthy();
     expect(screen.getByText(/Only recently added preparations/i)).toBeTruthy();
     await user.click(screen.getByRole('tab', { name: 'History' }));

@@ -1,5 +1,6 @@
 import {
   Alert,
+  Badge,
   Box,
   Button,
   Chip,
@@ -20,7 +21,7 @@ import {
 import { ExecutionEventList, ExecutionListResponse, ExecutionSchema, WorkItemCaseScreenshot, WorkItemExecutionBoard, WorkItemExecutionSchema } from '@qa/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useApi } from '../api/context';
 import { useSession } from '../auth/session';
 import { ErrorNotice, PageHeader } from './common';
@@ -32,6 +33,28 @@ const LIVE = new Set(['queued', 'running']);
 const WI_LIVE = new Set(['queued', 'running']);
 /** How many recently prepared rows the Prepared tab keeps visible. */
 const RECENT_PREPARED_LIMIT = 15;
+/** Drop preparations older than this from the Prepared tab (still limited by RECENT_PREPARED_LIMIT). */
+const RECENT_PREPARED_MS = 72 * 60 * 60 * 1000;
+const PREPARED_VISITED_KEY = 'qa.executions.preparedVisitedAt';
+
+function readPreparedVisitedAt(): number {
+  try {
+    const raw = sessionStorage.getItem(PREPARED_VISITED_KEY);
+    if (!raw) return Date.now();
+    const at = Date.parse(raw);
+    return Number.isFinite(at) ? at : Date.now();
+  } catch {
+    return Date.now();
+  }
+}
+
+function writePreparedVisitedAt(at: number) {
+  try {
+    sessionStorage.setItem(PREPARED_VISITED_KEY, new Date(at).toISOString());
+  } catch {
+    /* ignore private-mode / blocked storage */
+  }
+}
 
 const STATUS: Record<string, string> = {
   queued: 'Queued',
@@ -103,6 +126,12 @@ export function Executions() {
   const [workItem, setWorkItem] = useState('');
   const [environmentId, setEnvironmentId] = useState('');
   const [openRun, setOpenRun] = useState<string | null>(null);
+  const [preparedVisitedAt, setPreparedVisitedAt] = useState(readPreparedVisitedAt);
+  const [justPreparedId, setJustPreparedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sessionStorage.getItem(PREPARED_VISITED_KEY)) writePreparedVisitedAt(preparedVisitedAt);
+  }, [preparedVisitedAt]);
 
   const board = useQuery({
     queryKey: ['work-item-executions'],
@@ -119,6 +148,7 @@ export function Executions() {
     mutationFn: () => api.post('/api/v1/work-item-executions', { workItem, environmentId }, WorkItemExecutionSchema),
     onSuccess: async (row) => {
       setOpenRun(row.id);
+      setJustPreparedId(row.id);
       setTab('prepared');
       await qc.invalidateQueries({ queryKey: ['work-item-executions'] });
     },
@@ -127,6 +157,7 @@ export function Executions() {
     mutationFn: (id: string) => api.post(`/api/v1/work-item-executions/${id}/run`, {}, WorkItemExecutionSchema),
     onSuccess: async (row) => {
       setOpenRun(row.id);
+      setJustPreparedId(null);
       setTab('execution');
       await qc.invalidateQueries({ queryKey: ['work-item-executions'] });
       await qc.invalidateQueries({ queryKey: ['work-item-execution', row.id] });
@@ -163,22 +194,66 @@ export function Executions() {
     [board.data?.workItems, workItem],
   );
   const preparedRecent = useMemo(() => {
-    const rows = (board.data?.items ?? []).filter((item) => item.status === 'prepared');
+    const cutoff = Date.now() - RECENT_PREPARED_MS;
+    const rows = (board.data?.items ?? []).filter((item) => {
+      if (item.status !== 'prepared') return false;
+      const created = Date.parse(item.createdAt);
+      return Number.isFinite(created) ? created >= cutoff : true;
+    });
     return rows.slice(0, RECENT_PREPARED_LIMIT);
   }, [board.data?.items]);
+  const unreadPrepared = useMemo(() => {
+    return preparedRecent.filter((item) => {
+      if (item.id === justPreparedId) return true;
+      const created = Date.parse(item.createdAt);
+      return Number.isFinite(created) && created > preparedVisitedAt;
+    });
+  }, [preparedRecent, preparedVisitedAt, justPreparedId]);
+  const isNewPrepared = (id: string, createdAt: string) => {
+    if (id === justPreparedId) return true;
+    const created = Date.parse(createdAt);
+    return Number.isFinite(created) && created > preparedVisitedAt;
+  };
   const activeRuns = useMemo(() => {
     const rows = board.data?.items ?? [];
     return rows.filter((item) => WI_LIVE.has(item.status) || item.status === 'completed' || item.status === 'failed').slice(0, 20);
   }, [board.data?.items]);
   const stepEvents = (events.data?.items ?? []).filter((event) => event.kind === 'step.completed' || event.kind === 'step.failed');
 
+  useEffect(() => {
+    if (tab !== 'prepared') return;
+    const at = Date.now();
+    setPreparedVisitedAt(at);
+    writePreparedVisitedAt(at);
+    // Keep justPreparedId so the newest row stays highlighted after the badge clears.
+  }, [tab]);
+
   return (
     <>
       <PageHeader title="Executions" description="Prepare work-item cases, watch live Playwright runs, or review workflow history." />
       <Paper sx={{ mb: 2 }}>
-        <Tabs value={tab} onChange={(_, value: ExecTab) => setTab(value)} aria-label="Executions sections">
+        <Tabs
+          value={tab}
+          onChange={(_, value: ExecTab) => setTab(value)}
+          aria-label="Executions sections"
+        >
           <Tab value="execution" label="Execution" id="exec-tab-execution" aria-controls="exec-panel-execution" />
-          <Tab value="prepared" label="Prepared test execution" id="exec-tab-prepared" aria-controls="exec-panel-prepared" />
+          <Tab
+            value="prepared"
+            id="exec-tab-prepared"
+            aria-controls="exec-panel-prepared"
+            label={(
+              <Badge
+                color="error"
+                badgeContent={unreadPrepared.length}
+                invisible={tab === 'prepared' || unreadPrepared.length === 0}
+                max={9}
+                aria-label={unreadPrepared.length > 0 ? `${unreadPrepared.length} new preparations` : undefined}
+              >
+                <Box component="span" sx={{ pr: unreadPrepared.length > 0 && tab !== 'prepared' ? 1.5 : 0 }}>Prepared test execution</Box>
+              </Badge>
+            )}
+          />
           <Tab value="history" label="History" id="exec-tab-history" aria-controls="exec-panel-history" />
         </Tabs>
       </Paper>
@@ -243,6 +318,66 @@ export function Executions() {
             )}
           </Paper>
 
+          <Paper component="section" sx={{ p: 2 }} aria-label="Setup ready to run">
+            <Typography variant="h2" gutterBottom>Ready to run</Typography>
+            {preparedRecent.length === 0 ? (
+              <Alert severity="info">
+                No recent preparations yet. Choose a work item and environment above, then Prepare execution. New rows appear here and on the Prepared test execution tab.
+              </Alert>
+            ) : (
+              <>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                  {preparedRecent.length} recent {preparedRecent.length === 1 ? 'preparation is' : 'preparations are'} ready
+                  {unreadPrepared.length > 0 ? ` · ${unreadPrepared.length} new` : ''}. Open the Prepared tab for the full list, or run from here.
+                </Typography>
+                <List dense>
+                  {preparedRecent.slice(0, 5).map((item) => {
+                    const isNew = isNewPrepared(item.id, item.createdAt);
+                    return (
+                      <ListItem
+                        key={item.id}
+                        disablePadding
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 1,
+                          px: 1,
+                          py: 0.5,
+                          bgcolor: isNew ? 'action.selected' : undefined,
+                          borderRadius: 1,
+                        }}
+                      >
+                        <ListItemButton
+                          selected={openRun === item.id}
+                          onClick={() => { setOpenRun(item.id); setTab('prepared'); }}
+                          sx={{ flex: '1 1 auto', minWidth: 0, py: 0.75 }}
+                        >
+                          <ListItemText
+                            primary={`${item.workItem} · ${item.environmentName}`}
+                            secondary={`${item.caseCount} ${item.caseCount === 1 ? 'case' : 'cases'} · prepared ${new Date(item.createdAt).toLocaleString()}`}
+                            slotProps={{ primary: { noWrap: true }, secondary: { noWrap: true } }}
+                            sx={{ minWidth: 0 }}
+                          />
+                        </ListItemButton>
+                        {isNew && <Chip size="small" color="error" label="New" sx={{ flexShrink: 0 }} />}
+                        <Chip size="small" label="Prepared" sx={{ flexShrink: 0 }} />
+                        <Button size="small" variant="contained" disabled={run.isPending} onClick={() => run.mutate(item.id)} sx={{ flexShrink: 0 }}>
+                          Run
+                        </Button>
+                      </ListItem>
+                    );
+                  })}
+                </List>
+                <Box sx={{ mt: 1 }}>
+                  <Button size="small" onClick={() => setTab('prepared')}>
+                    Open Prepared test execution{unreadPrepared.length > 0 ? ` (${unreadPrepared.length} new)` : ''}
+                  </Button>
+                </Box>
+              </>
+            )}
+            {run.isError && <ErrorNotice message={errorText(run.error, 'The execution could not be started.')} />}
+          </Paper>
+
           {activeRuns.length > 0 && (
             <Paper sx={{ p: 2 }} aria-label="Live and recent runs">
               <Typography variant="h2" gutterBottom>Live and recent runs</Typography>
@@ -274,17 +409,11 @@ export function Executions() {
                   </ListItem>
                 ))}
               </List>
-              {run.isError && <ErrorNotice message={errorText(run.error, 'The execution could not be started.')} />}
             </Paper>
           )}
 
           {shown && shown.status !== 'prepared' && (
             <WorkItemRunDetail shown={shown} />
-          )}
-          {shown?.status === 'prepared' && (
-            <Alert severity="info">
-              This preparation is ready on the Prepared test execution tab. Open that tab to run it.
-            </Alert>
           )}
         </Stack>
       )}
@@ -294,7 +423,7 @@ export function Executions() {
           <Paper sx={{ p: 2 }} aria-label="Prepared test execution">
             <Typography variant="h2" gutterBottom>Prepared test execution</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Only recently added preparations are listed here (latest {RECENT_PREPARED_LIMIT}). Older completed runs stay on Execution.
+              Only recently added preparations (last 72 hours, up to {RECENT_PREPARED_LIMIT}). New rows stay highlighted until you leave this tab. Live runs stay on Execution.
             </Typography>
             {board.isError && <ErrorNotice message="Prepared executions could not be loaded." onRetry={() => void board.refetch()} />}
             {board.data && preparedRecent.length === 0 && (
@@ -302,30 +431,42 @@ export function Executions() {
             )}
             {preparedRecent.length > 0 && (
               <List dense>
-                {preparedRecent.map((item) => (
-                  <ListItem
-                    key={item.id}
-                    disablePadding
-                    sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5 }}
-                  >
-                    <ListItemButton
-                      selected={openRun === item.id}
-                      onClick={() => setOpenRun(item.id)}
-                      sx={{ flex: '1 1 auto', minWidth: 0, py: 0.75 }}
+                {preparedRecent.map((item) => {
+                  const isNew = isNewPrepared(item.id, item.createdAt);
+                  return (
+                    <ListItem
+                      key={item.id}
+                      disablePadding
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        px: 1,
+                        py: 0.5,
+                        bgcolor: isNew ? 'action.selected' : undefined,
+                        borderRadius: 1,
+                      }}
                     >
-                      <ListItemText
-                        primary={`${item.workItem} · ${item.environmentName}`}
-                        secondary={`${item.caseCount} ${item.caseCount === 1 ? 'case' : 'cases'} · prepared ${new Date(item.createdAt).toLocaleString()}`}
-                        slotProps={{ primary: { noWrap: true }, secondary: { noWrap: true } }}
-                        sx={{ minWidth: 0 }}
-                      />
-                    </ListItemButton>
-                    <Chip size="small" label="Prepared" sx={{ flexShrink: 0 }} />
-                    <Button size="small" variant="contained" disabled={run.isPending} onClick={() => run.mutate(item.id)} sx={{ flexShrink: 0 }}>
-                      Run
-                    </Button>
-                  </ListItem>
-                ))}
+                      <ListItemButton
+                        selected={openRun === item.id}
+                        onClick={() => setOpenRun(item.id)}
+                        sx={{ flex: '1 1 auto', minWidth: 0, py: 0.75 }}
+                      >
+                        <ListItemText
+                          primary={`${item.workItem} · ${item.environmentName}`}
+                          secondary={`${item.caseCount} ${item.caseCount === 1 ? 'case' : 'cases'} · prepared ${new Date(item.createdAt).toLocaleString()}`}
+                          slotProps={{ primary: { noWrap: true }, secondary: { noWrap: true } }}
+                          sx={{ minWidth: 0 }}
+                        />
+                      </ListItemButton>
+                      {isNew && <Chip size="small" color="error" label="New" sx={{ flexShrink: 0 }} />}
+                      <Chip size="small" label="Prepared" sx={{ flexShrink: 0 }} />
+                      <Button size="small" variant="contained" disabled={run.isPending} onClick={() => run.mutate(item.id)} sx={{ flexShrink: 0 }}>
+                        Run
+                      </Button>
+                    </ListItem>
+                  );
+                })}
               </List>
             )}
             {run.isError && <ErrorNotice message={errorText(run.error, 'The execution could not be started.')} />}
