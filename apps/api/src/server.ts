@@ -1,9 +1,9 @@
 import { PlatformError, type DeploymentProfile, type PlatformEnv } from '@qa/domain';
 import { EgressPolicy, HardenedHttpClient, OidcProvider, initTelemetry, OllamaAdapter, OpenAiCompatibleAdapter, readSecretFile, type EgressRule } from '@qa/infrastructure';
 import type { LlmPort } from '@qa/llm';
-import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgAutomationRepository, PgConnectorRepository, PgEnvironmentRepository, PgOperationLogReader, PgSessionStore, PgTestRequestQueue, PgExecutionRepository, PgTestCaseRepository, PgUserRepository, PgWorkflowRepository, PgWorkflowVersionRepository, connectPostgres, migrate, pingDb, seedDefaultGroupMappings, seedRoles, type Db } from '@qa/persistence';
+import { AutomationService, ConnectorService, EnvironmentService, RegressionCollectionService, TestCaseService, WorkflowService } from '@qa/application';
+import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgAutomationRepository, PgConnectorRepository, PgEnvironmentRepository, PgOperationLogReader, PgRegressionCollectionRepository, PgSessionStore, PgTestRequestQueue, PgExecutionRepository, PgTestCaseRepository, PgUserRepository, PgWorkflowRepository, PgWorkflowVersionRepository, connectPostgres, migrate, pingDb, seedDefaultGroupMappings, seedRegressionCollections, seedRoles, type Db } from '@qa/persistence';
 import { buildProviders, buildSecretStore } from '@qa/bootstrap';
-import { AutomationService, ConnectorService, EnvironmentService, TestCaseService, WorkflowService } from '@qa/application';
 import { buildApp } from './app';
 import { OidcSessionResolver, type AuthConfig } from './auth';
 import { DevHeaderSessionResolver } from './session';
@@ -139,7 +139,8 @@ if (conn && env.MIGRATE_ON_START !== 'false') {
   const r = await migrate(conn.db);
   await seedRoles(conn.db);
   await seedDefaultGroupMappings(conn.db);
-  console.log(JSON.stringify({ msg: 'database ready', migrationsApplied: r.applied }));
+  const smoke = await seedRegressionCollections(conn.db);
+  console.log(JSON.stringify({ msg: 'database ready', migrationsApplied: r.applied, smokeCollectionCreated: smoke.created }));
 }
 
 const auth = useOidc ? buildOidc(conn?.db) : undefined;
@@ -201,6 +202,12 @@ const app = buildApp({
     : undefined,
   automation: conn
     ? new AutomationService({ automation: new PgAutomationRepository(conn.db), audit: new PgAuditSink(new PgAuditLog(conn.db)) })
+    : undefined,
+  regressionCollections: conn
+    ? new RegressionCollectionService({
+      collections: new PgRegressionCollectionRepository(conn.db),
+      audit: new PgAuditSink(new PgAuditLog(conn.db)),
+    })
     : undefined,
   llm: buildLlmStatus(),
   readiness: conn ? { database: () => pingDb(conn.db) } : undefined,

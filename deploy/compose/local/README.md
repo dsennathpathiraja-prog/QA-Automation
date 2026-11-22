@@ -214,6 +214,8 @@ After cases are published to Squash, the worker seeds a **draft** automation ass
 
 **Regression scope (Phase 9 E3):** pick suite (project cases), campaign/iteration, platform `collectionKey`, or selected case ids — `POST /api/v1/automation/scope` or Automation Mapping → **Expand scope**, then resolve. Live Squash campaign listing runs in `rg.configure-scope`. See [`docs/phase9-e3-regression-scope.md`](../../../docs/phase9-e3-regression-scope.md).
 
+**Smoke collection (Phase 9 E4):** curated `regression_collection` key `smoke` holds Squash case ids (no Squash tags). After approving mappings, **Sync approved mappings into smoke** on Automation Mapping (or `POST /api/v1/automation/collections/smoke/sync-approved`), then expand scope with `collectionKey: smoke` or start **Smoke Regression**. See [`docs/phase9-e4-regression-collections.md`](../../../docs/phase9-e4-regression-collections.md).
+
 PowerShell-safe check:
 
 ```powershell

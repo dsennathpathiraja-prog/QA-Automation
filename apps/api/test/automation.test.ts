@@ -1,22 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { AutomationService } from '@qa/application';
-import { InMemoryAuditSink, InMemoryAutomationRepository } from '@qa/testing';
+import { AutomationService, RegressionCollectionService } from '@qa/application';
+import { InMemoryAuditSink, InMemoryAutomationRepository, InMemoryRegressionCollectionRepository } from '@qa/testing';
 import { buildApp, DevHeaderSessionResolver } from '../src';
 
 const lead = { 'x-dev-user': 'lead', 'x-dev-groups': 'QA-Platform-Leads' };
 const engineer = { 'x-dev-user': 'eng', 'x-dev-groups': 'QA-Platform-Engineers' };
 let app: FastifyInstance;
 let automation: AutomationService;
+let collections: RegressionCollectionService;
 const spies: { mockRestore(): void }[] = [];
 
 beforeEach(async () => {
   for (const m of ['log', 'info', 'warn', 'error', 'debug'] as const) spies.push(vi.spyOn(console, m).mockImplementation(() => undefined));
   automation = new AutomationService({ automation: new InMemoryAutomationRepository(), audit: new InMemoryAuditSink() });
+  collections = new RegressionCollectionService({
+    collections: new InMemoryRegressionCollectionRepository(),
+    audit: new InMemoryAuditSink(),
+  });
+  await collections.ensureSmoke();
   app = buildApp({
     sessions: new DevHeaderSessionResolver('test'),
     profile: 'standard',
     automation,
+    regressionCollections: collections,
   });
 });
 afterEach(() => { for (const s of spies.splice(0)) s.mockRestore(); });
@@ -97,7 +104,7 @@ describe('automation scope (Phase 9 E3)', () => {
     });
   });
 
-  it('expands collection when caseIds override is supplied (E4 stub path)', async () => {
+  it('expands collection when caseIds override is supplied', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/automation/scope',
@@ -122,5 +129,70 @@ describe('automation scope (Phase 9 E3)', () => {
     });
     expect(res.statusCode).toBe(403);
     expect(res.json().error.message).toMatch(/Squash suite\/campaign scope needs the test-management connector/i);
+  });
+});
+
+describe('regression collections (Phase 9 E4)', () => {
+  it('seeds smoke, syncs approved mappings, and expands collectionKey without caseIds', async () => {
+    const draft = await automation.register({ id: 'eng' }, {
+      key: 'QAP-smoke',
+      name: 'Smoke case',
+      scriptPath: 'tests/smoke.spec.js',
+      squashCaseId: '238',
+    });
+    await automation.register({ id: 'eng' }, {
+      key: 'QAP-draft',
+      name: 'Draft case',
+      scriptPath: 'tests/draft.spec.js',
+      squashCaseId: '239',
+    });
+    await automation.approve({ id: 'lead' }, draft.id);
+
+    const listed = await app.inject({ method: 'GET', url: '/api/v1/automation/collections', headers: engineer });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().items).toEqual([expect.objectContaining({ key: 'smoke', size: 0 })]);
+
+    const synced = await app.inject({
+      method: 'POST',
+      url: '/api/v1/automation/collections/smoke/sync-approved',
+      headers: lead,
+    });
+    expect(synced.statusCode).toBe(200);
+    expect(synced.json()).toMatchObject({ key: 'smoke', squashCaseIds: ['238'], size: 1 });
+
+    const scope = await app.inject({
+      method: 'POST',
+      url: '/api/v1/automation/scope',
+      headers: engineer,
+      payload: { kind: 'collection', collectionKey: 'smoke' },
+    });
+    expect(scope.statusCode).toBe(200);
+    expect(scope.json()).toEqual({
+      caseIds: ['238'],
+      kind: 'collection',
+      mode: 'regression-collection',
+      collectionKey: 'smoke',
+    });
+
+    const prep = await app.inject({
+      method: 'POST',
+      url: '/api/v1/automation/resolve-regression',
+      headers: lead,
+      payload: { squashCaseIds: scope.json().caseIds },
+    });
+    expect(prep.json().resolved).toEqual([
+      expect.objectContaining({ squashCaseId: '238', status: 'approved' }),
+    ]);
+  });
+
+  it('replaces smoke members via PUT', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/automation/collections/smoke/members',
+      headers: engineer,
+      payload: { squashCaseIds: ['100', '101', '100'] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ key: 'smoke', squashCaseIds: ['100', '101'], size: 2 });
   });
 });

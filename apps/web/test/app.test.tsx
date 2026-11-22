@@ -115,12 +115,38 @@ describe('route guard', () => {
             mode: 'selected',
           },
         },
+        '/api/v1/automation/collections/smoke': {
+          status: 200,
+          body: {
+            id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+            key: 'smoke',
+            name: 'Smoke',
+            description: 'Curated smoke',
+            squashCaseIds: ['238'],
+            size: 1,
+            updatedAt: '2026-11-22T10:00:00.000Z',
+          },
+        },
+        '/api/v1/automation/collections/smoke/sync-approved': {
+          status: 200,
+          body: {
+            id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+            key: 'smoke',
+            name: 'Smoke',
+            description: 'Curated smoke',
+            squashCaseIds: ['238'],
+            size: 1,
+            updatedAt: '2026-11-22T10:05:00.000Z',
+          },
+        },
       },
     });
     expect(await screen.findByRole('heading', { name: 'Automation Mapping' })).toBeTruthy();
     expect(await screen.findByText('238')).toBeTruthy();
     expect(screen.getByText('tests/app/7259.spec.js')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy();
+    expect(await screen.findByText(/smoke: 1 member/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Sync approved mappings into smoke' })).toBeTruthy();
     await userEvent.type(screen.getByLabelText('Squash case id'), '238');
     await userEvent.click(screen.getByRole('button', { name: 'Resolve' }));
     expect(await screen.findByText(/Squash 238 → asset/)).toBeTruthy();
