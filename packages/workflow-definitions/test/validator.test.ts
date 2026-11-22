@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TEMPLATES, errorsOf, templateDefinition, validateWorkflow, type BoundInstance, type WfDef } from '../src';
+import { TEMPLATES, TYPE_SPECS, errorsOf, templateDefinition, validateWorkflow, type BoundInstance, type WfDef } from '../src';
 
 const bind = (def: WfDef): BoundInstance[] => def.spec.connectors.map((c) => ({
   role: c.role,
@@ -85,5 +85,16 @@ describe('workflow validator', () => {
     const regression = templateDefinition('tpl-rg-full')!;
     const rg = bind(regression).map((i) => i.role === 'testManagement' ? { ...i, capabilities: ['tm.project.list', 'tm.campaign.list', 'tm.testcase.list', 'tm.testcase.read'] } : i);
     expect(errorsOf(validateWorkflow(regression, { instances: rg }))).toEqual([]);
+  });
+
+  it('keeps the Phase 9 Regression deny-list on every Regression template (E6)', () => {
+    const required = ['tm.testcase.upsert', 'scm.*', 'browser.*', 'agent.*'];
+    expect([...TYPE_SPECS['regression-testing'].deny]).toEqual(required);
+    for (const key of ['tpl-rg-full', 'tpl-rg-selected', 'tpl-rg-smoke'] as const) {
+      const deny = templateDefinition(key)!.spec.policy.capabilityDeny;
+      for (const pattern of required) {
+        expect(deny).toContain(pattern);
+      }
+    }
   });
 });

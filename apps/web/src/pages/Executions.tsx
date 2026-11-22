@@ -239,7 +239,7 @@ export function Executions() {
 
   return (
     <>
-      <PageHeader title="Executions" description="Prepare work-item cases, watch live Playwright runs, or review workflow history." />
+      <PageHeader title="Executions" description="Prepare work-item cases, watch Regression and Playwright runs, or review workflow history." />
       <Paper sx={{ mb: 2 }}>
         <Tabs
           value={tab}
@@ -269,6 +269,22 @@ export function Executions() {
 
       {tab === 'execution' && (
         <Stack spacing={2} id="exec-panel-execution" role="tabpanel" aria-labelledby="exec-tab-execution">
+          <Paper component="section" sx={{ p: 2 }} aria-label="Regression">
+            <Typography variant="h2" gutterBottom>Regression</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Full / Selected / Smoke Regression starts from a published Regression workflow (Run &amp; output). Approve Squash↔script mappings first — drafts and unmapped cases stay Not Automated.
+            </Typography>
+            <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
+              <Link to="/workflows">
+                <Button variant="contained">Open Workflows</Button>
+              </Link>
+              {session.can('automation.view') && (
+                <Link to="/automation">
+                  <Button>Automation Mapping</Button>
+                </Link>
+              )}
+            </Stack>
+          </Paper>
           <Paper sx={{ p: 2 }} aria-label="Work item">
             <Typography variant="h2" gutterBottom>Prepare work-item run</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -511,10 +527,14 @@ export function Executions() {
           <Paper sx={{ p: 2 }} aria-label="Workflow runs">
             <Typography variant="h2" gutterBottom>Workflow run history</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              These runs create and publish test cases. They are not the work-item Playwright execution.
+              Requirement-validation runs create and publish test cases. Regression runs resolve approved automation and execute with evidence (see <code>rg:&lt;runId&gt;</code> on the Execution tab). Neither replaces the work-item Playwright prepare flow above.
             </Typography>
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Start Regression from <Link to="/workflows">Workflows</Link> (Full / Selected / Smoke templates). Approve drafts on{' '}
+              {session.can('automation.view') ? <Link to="/automation">Automation Mapping</Link> : 'Automation Mapping'} before you run.
+            </Alert>
             {runs.isError && <ErrorNotice message="Runs could not be loaded." onRetry={() => void runs.refetch()} />}
-            {runs.data && items.length === 0 && <Alert severity="info">No workflow runs yet. Start one from a published workflow.</Alert>}
+            {runs.data && items.length === 0 && <Alert severity="info">No workflow runs yet. Start one from a published workflow (including Regression).</Alert>}
             {items.length > 0 && (
               <List dense>
                 {items.map((item) => (

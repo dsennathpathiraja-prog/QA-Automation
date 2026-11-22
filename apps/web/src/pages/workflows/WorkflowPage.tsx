@@ -205,6 +205,12 @@ export function WorkflowPage() {
                   This workflow ends when test cases are stored. Running the work item against an environment is a separate action on Executions.
                 </Alert>
               )}
+              {regression && (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  Regression runs only <strong>approved</strong> Squash↔script mappings. Draft or unmapped cases stay <strong>Not Automated</strong> — never executed, generated, or explored.
+                  Approve drafts on <Link to="/automation">Automation Mapping</Link> before you start a run.
+                </Alert>
+              )}
               {steps.length === 0 && <Alert severity="warning">This draft has no steps. Create it from a template to get the guided list.</Alert>}
               <Stack spacing={1.5}>
                 {steps.map((s, index) => {
@@ -393,6 +399,12 @@ export function WorkflowPage() {
                     <Typography variant="caption" color="text.secondary">
                       Publish refuses body-only stubs. Explore-gap / needs-surface cases are flagged; AC coverage gaps appear in the plan Markdown.
                     </Typography>
+                  )}
+                  {regression && (
+                    <Alert severity="warning" sx={{ mb: 1 }}>
+                      Approve mappings before you run. Draft or unmapped Squash cases become Not Automated and are skipped — Regression never generates cases or opens explore connectors.
+                      Use <Link to="/automation">Automation Mapping</Link> to Approve, then preview resolve.
+                    </Alert>
                   )}
                   {regression && (
                     <Alert severity="info">
