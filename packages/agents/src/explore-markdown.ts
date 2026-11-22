@@ -60,6 +60,10 @@ export function renderExploreUiMarkdown(input: {
   application: string;
   findings: string;
   details?: ExploreFinding[];
+  surfaceKind?: string;
+  primarySurfaceUrl?: string;
+  blockingGap?: boolean;
+  candidateRoutes?: string[];
 }): string {
   const lines = [
     `# Explore UI: ${input.workItem} — ${input.application}`,
@@ -69,6 +73,20 @@ export function renderExploreUiMarkdown(input: {
     input.findings.trim() || '_(none)_',
     '',
   ];
+  if (input.surfaceKind || input.primarySurfaceUrl || input.blockingGap || (input.candidateRoutes && input.candidateRoutes.length > 0)) {
+    lines.push('## Story surface binding', '');
+    if (input.surfaceKind) lines.push(`- **Surface kind:** ${input.surfaceKind}`);
+    lines.push(input.primarySurfaceUrl
+      ? `- **Primary validation URL:** ${input.primarySurfaceUrl}`
+      : '- **Primary validation URL:** _(not bound)_');
+    if (input.candidateRoutes && input.candidateRoutes.length > 0) {
+      lines.push(`- **Candidate routes:** ${input.candidateRoutes.slice(0, 8).map((r) => `\`${r}\``).join(', ')}`);
+    }
+    if (input.blockingGap) {
+      lines.push('- **Blocking gap:** true — mismatched surface; do not Pass email/template ACs on this host');
+    }
+    lines.push('');
+  }
   if (input.details && input.details.length > 0) {
     lines.push('## Pages', '');
     for (const d of input.details) {

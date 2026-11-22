@@ -59,6 +59,15 @@ const casesOf = (value: unknown) => {
         return [{ action, expected: text(s?.expected) }];
       })
       : undefined;
+    const tags = Array.isArray(row.tags)
+      ? (row.tags as unknown[]).map((t) => text(t)).filter(Boolean)
+      : undefined;
+    const runStatus: 'Blocked' | 'Skipped' | undefined = row.runStatus === 'Blocked' || row.runStatus === 'Skipped'
+      ? row.runStatus
+      : undefined;
+    const surfaceKind = row.surfaceKind === 'shop' || row.surfaceKind === 'template' || row.surfaceKind === 'other'
+      ? row.surfaceKind as 'shop' | 'template' | 'other'
+      : undefined;
     return [{
       name,
       kind: kind as 'positive' | 'negative' | 'edge',
@@ -70,6 +79,10 @@ const casesOf = (value: unknown) => {
       reference: text(row.reference),
       file: text(row.file),
       testId: text(row.testId),
+      ...(runStatus ? { runStatus } : {}),
+      ...(tags && tags.length > 0 ? { tags } : {}),
+      ...(text(row.primarySurfaceUrl) ? { primarySurfaceUrl: text(row.primarySurfaceUrl) } : {}),
+      ...(surfaceKind ? { surfaceKind } : {}),
     }];
   });
 };
@@ -143,6 +156,10 @@ export async function performRequirementStep(
       application,
       findings: explored.findings,
       details: explored.details,
+      surfaceKind: explored.surfaceKind,
+      primarySurfaceUrl: explored.primarySurfaceUrl,
+      blockingGap: explored.blockingGap,
+      candidateRoutes: explored.candidateRoutes,
     });
     return {
       summary: explored.summary,
@@ -152,6 +169,10 @@ export async function performRequirementStep(
         source: explored.source,
         warning: explored.warning,
         relevant: explored.relevant,
+        blockingGap: explored.blockingGap,
+        surfaceKind: explored.surfaceKind,
+        primarySurfaceUrl: explored.primarySurfaceUrl,
+        candidateRoutes: explored.candidateRoutes,
         artifactMarkdown,
         artifactPath: exploreUiArtifactPath(workItem, application),
       },
@@ -197,12 +218,16 @@ export async function performRequirementStep(
   }
 
   if (step.type === 'rv.generate-test-plan' && ports.planner) {
+    const environmentUrl = ports.resolveEnvironmentUrl && environment
+      ? await ports.resolveEnvironmentUrl(environment)
+      : undefined;
     const planned: PlanResult = await ports.planner.plan({
       workItem,
       application,
       story: fullStory,
       criteria,
       findings: findings || undefined,
+      environmentUrl: environmentUrl || undefined,
       executionId: step.runId,
       stepId: step.id,
     });
@@ -217,11 +242,18 @@ export async function performRequirementStep(
         environment,
         agent: 'playwright-test-planner',
         source: planned.source,
+        exploreWarning: planned.exploreWarning,
+        blockingGap: planned.blockingGap,
+        surfaceKind: planned.surfaceKind,
+        primarySurfaceUrl: planned.primarySurfaceUrl,
       },
     };
   }
 
   if (step.type === 'rv.generate-tests' && ports.generator) {
+    const environmentUrl = ports.resolveEnvironmentUrl && environment
+      ? await ports.resolveEnvironmentUrl(environment)
+      : undefined;
     const fromMd = planMarkdown ? parsePlanMarkdown(planMarkdown) : [];
     const source = scenarios.length > 0
       ? scenarios
@@ -233,6 +265,7 @@ export async function performRequirementStep(
           story: fullStory,
           criteria,
           findings: findings || undefined,
+          environmentUrl: environmentUrl || undefined,
           executionId: step.runId,
           stepId: step.id,
         }) ?? { scenarios: [] })).scenarios;
@@ -243,6 +276,8 @@ export async function performRequirementStep(
       planMarkdown: planMarkdown || undefined,
       planArtifact: planArtifact || undefined,
       findings: findings || undefined,
+      story: fullStory || undefined,
+      environmentUrl: environmentUrl || undefined,
       executionId: step.runId,
       stepId: step.id,
     });

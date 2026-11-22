@@ -3,7 +3,8 @@
  * and reject body-only stubs. Also assesses whether explore coverage matches the WI.
  */
 
-import type { PlannerScenario, ScenarioKind, ScenarioPriority } from './types';
+import { buildNeedsSurfacePlaywrightSource } from './surface-binding';
+import type { PlannerScenario, ScenarioKind, ScenarioPriority, SurfaceKind } from './types';
 
 export interface ExplorationCues {
   url: string;
@@ -27,6 +28,13 @@ export interface ExploreCoverage {
   shopSurface: boolean;
   /** Work item / criteria look like email/notification template content. */
   templateWorkItem: boolean;
+  /**
+   * Fail-closed: explored surface does not match the story (e.g. shop-only for email WI).
+   * Cases must not Pass assertions against the wrong surface.
+   */
+  blockingGap: boolean;
+  surfaceKind: SurfaceKind;
+  primarySurfaceUrl?: string;
   /** Human warning for the plan artifact / Done line. */
   warning: string;
   cues: ExplorationCues;
@@ -154,34 +162,46 @@ export function assessExplorationCoverage(input: {
     ...[...(input.findings || '').matchAll(/\bhttps?:\/\/[^\s)\]"'<>]+/gi)].map((m) => m[0].replace(/[),.;]+$/, '')),
     ...(cues.url ? [cues.url] : []),
   ]);
+  const templateWorkItem = looksLikeTemplateWorkItem(storyBlob);
+  const surfaceKind: SurfaceKind = templateWorkItem ? 'template' : looksLikeShopSurface(cues, input.findings) ? 'shop' : 'other';
+  const findingsGap = /Explore (?:UI )?gap:|blocking explore gap|needs-surface|escrow notification email template \/ preview was not found/i
+    .test(input.findings || '');
+
   if (!input.findings?.trim() || (!cues.url && cues.buttons.length === 0 && cues.headings.length === 0)) {
     return {
       kind: 'none',
       duplicateSurfaces: false,
       urls,
       shopSurface: false,
-      templateWorkItem: looksLikeTemplateWorkItem(storyBlob),
-      warning: 'No usable UI exploration — scenarios are grounded in the work item description/AC only.',
+      templateWorkItem,
+      blockingGap: templateWorkItem || findingsGap,
+      surfaceKind,
+      warning: templateWorkItem
+        ? 'Blocking explore gap: no usable notification/template surface was explored — cases must not Pass against an unknown host.'
+        : 'No usable UI exploration — scenarios are grounded in the work item description/AC only.',
       cues,
     };
   }
   const duplicateSurfaces = hasNearDuplicateExploreFindings(input.findings);
   const shopSurface = looksLikeShopSurface(cues, input.findings);
-  const templateWorkItem = looksLikeTemplateWorkItem(storyBlob);
   const surfaceMatchesTemplate = /template|email|notif|preview|greeting|paid amount/i.test(
     `${cues.url} ${cues.title} ${cues.headings.join(' ')} ${cues.fields.join(' ')} ${cues.buttons.join(' ')}`,
   );
 
   if (templateWorkItem && shopSurface && !surfaceMatchesTemplate) {
+    const warning = duplicateSurfaces
+      ? 'Blocking explore gap: repeated identical shop/catalog snapshots across AC labels — not the notification/template surface. Do not treat catalog as email-field coverage; mark template scenarios needs-surface / Blocked.'
+      : 'Blocking explore gap: Explore UI reached a shop/catalog surface, but the work item is a notification/email template. Do not Pass email-field assertions against the catalog; mark those scenarios needs-surface / Blocked.';
     return {
       kind: 'secondary',
       duplicateSurfaces,
       urls,
       shopSurface,
       templateWorkItem,
-      warning: duplicateSurfaces
-        ? 'Weak Explore UI: repeated identical shop/catalog snapshots across AC labels — not the notification/template surface. Use shop only as a secondary order-placement path; do not invent distinct Greeting/Title/template UI scenarios from these findings.'
-        : 'Explore UI reached a shop/catalog surface, but the work item is a notification/email template. Use shop selectors only for order→notification trigger flows; prioritize WI description/AC for scenario identity.',
+      blockingGap: true,
+      surfaceKind: 'template',
+      primarySurfaceUrl: undefined,
+      warning,
       cues,
     };
   }
@@ -193,6 +213,8 @@ export function assessExplorationCoverage(input: {
       urls,
       shopSurface,
       templateWorkItem,
+      blockingGap: templateWorkItem || findingsGap,
+      surfaceKind,
       warning: 'Weak Explore UI: near-duplicate URL/snapshots across different AC targets — do not invent distinct UI scenarios from these findings; prioritize work item description/AC.',
       cues,
     };
@@ -204,9 +226,22 @@ export function assessExplorationCoverage(input: {
     urls,
     shopSurface,
     templateWorkItem,
+    blockingGap: false,
+    surfaceKind: surfaceMatchesTemplate ? 'template' : shopSurface ? 'shop' : surfaceKind,
+    primarySurfaceUrl: cues.url || undefined,
     warning: '',
     cues,
   };
+}
+
+/** True when a planned scenario asserts email/notification template content (not shop order trigger). */
+export function isTemplateSurfaceScenario(scenario: PlannerScenario): boolean {
+  const blob = `${scenario.name} ${scenario.criterion} ${scenario.steps} ${scenario.expected}`;
+  if (/order.?placement|checkout|cart|trigger only|payment COMPLETED|order Placed|do not send before/i.test(blob)
+    && !/subject|greeting|Paid Amount|Confirm Delivery|support@|placeholder|main message|order details table/i.test(blob)) {
+    return false;
+  }
+  return /escrow|notification|greeting|paid amount|confirm delivery|subject|placeholder|email template|order details|support@|held in escrow|Customer Name/i.test(blob);
 }
 
 /** Whether explore cues may drive distinct per-control UI scenario seeds. */
@@ -259,6 +294,7 @@ function assertionText(scenario: PlannerScenario): string {
  * Build a distinct Playwright `.spec.js` body for one planned scenario.
  * Uses explore cues only when the surface matches (or as secondary shop→order flow).
  * Never emits body-visibility as the sole assertion; never fakes template-field UI on a catalog page.
+ * When explore is a blocking surface gap, template scenarios fail closed (needs-surface skip).
  */
 export function buildMeaningfulPlaywrightSource(input: {
   scenario: PlannerScenario;
@@ -278,10 +314,18 @@ export function buildMeaningfulPlaywrightSource(input: {
   const cues = coverage.cues;
   const targetUrl = cues.url || '/';
   const name = esc(scenario.name);
-  const templateScenario = /escrow|notification|greeting|paid amount|confirm delivery|subject|placeholder|COMPLETED|Placed/i.test(
-    `${scenario.name} ${scenario.criterion} ${scenario.steps}`,
-  );
+  const templateScenario = isTemplateSurfaceScenario(scenario);
   const weakShop = coverage.kind === 'secondary' || (coverage.shopSurface && coverage.templateWorkItem);
+  // Fail closed: do not assert email fields against shop catalog when surface is mismatched.
+  if (coverage.blockingGap && templateScenario) {
+    return buildNeedsSurfacePlaywrightSource({
+      name: scenario.name,
+      gapMessage: coverage.warning
+        || 'Explore did not reach the notification/template surface; case is Blocked (needs-surface).',
+      primarySurfaceUrl: coverage.primarySurfaceUrl,
+      surfaceKind: coverage.surfaceKind,
+    });
+  }
   // Story-grounded template cases: do not invent shop-catalog clicks from weak explore.
   const storyTemplatePath = templateScenario && (weakShop || coverage.kind !== 'strong');
   const useUiSelectors = coverage.kind === 'strong' && !storyTemplatePath;

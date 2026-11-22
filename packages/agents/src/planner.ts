@@ -4,6 +4,7 @@ import { PLAYWRIGHT_TEST_PLANNER, planHeuristically, workItemTitleFromStory } fr
 import { MAX_PLAN_SCENARIOS } from './limits';
 import { planArtifactPath, renderPlanMarkdown } from './plan-markdown';
 import { assessExplorationCoverage } from './playwright-source';
+import { bindStorySurface } from './surface-binding';
 import { planStructured } from './schemas';
 import type { PlanRequest, PlanResult, PlannerScenario, TestPlannerPort } from './types';
 
@@ -24,9 +25,10 @@ const PLAN_SYSTEM = [
   'If Explore UI returns near-duplicate snapshots of the same URL for different AC labels',
   '(e.g. every AC lands on /shop with the same catalog), do NOT invent distinct UI scenarios from those findings.',
   'Prefer flagging weak explore coverage over fabricating Greeting/Title/template tests on a catalog page.',
-  'If only a shop/catalog host is reachable for a notification/email-template work item,',
-  'write honest order-placement → notification-trigger scenarios grounded in that shop UI + WI constraints —',
-  'not fake assertions of email template fields that were never explored.',
+  'If only a shop/catalog host is reachable for a notification/email-template work item (blocking explore gap),',
+  'keep scenario identity from the WI but flag those email-field scenarios as needs-surface / Blocked —',
+  'not fake Passed assertions of email template fields that were never explored.',
+  'Order-placement → notification-trigger scenarios may still use shop UI when the WI requires that path.',
   'STEP 2 — Plan test cases mapped 1:1 to those scenarios.',
   'Produce a solid, high-volume set of Positive, Negative, and Edge scenarios.',
   'Do NOT stop at one positive + one negative + one edge per criterion.',
@@ -57,6 +59,15 @@ export function createLlmTestPlanner(gateway: LlmGateway | undefined): TestPlann
         story: input.story,
         criteria: input.criteria,
       });
+      const binding = bindStorySurface({
+        story: input.story,
+        criteria: input.criteria,
+        workItemTitle,
+        application: input.application,
+        environmentUrl: input.environmentUrl,
+      });
+      const blockingGap = coverage.blockingGap
+        || (coverage.templateWorkItem && coverage.shopSurface);
       const criteriaBlock = input.criteria.length > 0
         ? input.criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')
         : '(no separate acceptance criteria — derive scenarios from the story Description)';
@@ -68,16 +79,23 @@ export function createLlmTestPlanner(gateway: LlmGateway | undefined): TestPlann
             `Work item: ${input.workItem}`,
             workItemTitle ? `Work item title: ${workItemTitle}` : 'Work item title: (not provided — use the story headline)',
             `Application: ${input.application}`,
+            `Expected surface kind: ${binding.surfaceKind}`,
+            binding.primarySurfaceUrl
+              ? `Primary validation URL: ${binding.primarySurfaceUrl}`
+              : 'Primary validation URL: (not bound from WI)',
             'Identify distinct scenarios first from WI description/AC, then map one plan entry per scenario.',
             'Write many Positive / Negative / Edge scenarios covering each acceptance criterion and Description path.',
             'Put the work item title in every scenario name after the kind prefix.',
             coverage.warning
               ? `Explore coverage warning: ${coverage.warning}`
               : 'When findings include a matching URL or controls, put them in Steps.',
+            blockingGap
+              ? 'Blocking explore gap is set — email/template scenarios must not be treated as covered by shop catalog.'
+              : '',
             'Acceptance criteria:',
             criteriaBlock,
             input.findings ? `Exploration findings:\n${input.findings}` : 'Exploration findings: (none yet)',
-          ].join('\n'),
+          ].filter(Boolean).join('\n'),
           context: [
             { class: 'story', label: 'work-item-story', text: input.story.slice(0, 12_000) },
             ...(input.findings ? [{ class: 'page' as const, label: 'exploration-findings', text: input.findings.slice(0, 6_000) }] : []),
@@ -98,23 +116,36 @@ export function createLlmTestPlanner(gateway: LlmGateway | undefined): TestPlann
         steps: row.steps,
         expected: row.expected,
       }));
+      const exploreWarning = [
+        coverage.warning,
+        blockingGap
+          ? 'Template/email scenarios will be Blocked (needs-surface) until a matching preview/template URL is reachable.'
+          : '',
+      ].filter(Boolean).join(' ');
       const planMarkdown = renderPlanMarkdown(scenarios, {
         workItem: input.workItem,
         application: input.application,
         criteria: input.criteria,
         findings: input.findings,
         source: 'model',
-        exploreWarning: coverage.warning || undefined,
+        exploreWarning: exploreWarning || undefined,
+        blockingGap,
+        surfaceKind: binding.surfaceKind,
+        primarySurfaceUrl: binding.primarySurfaceUrl || coverage.primarySurfaceUrl,
+        candidateRoutes: binding.candidateRoutes,
       });
       const planArtifact = planArtifactPath(input.workItem, input.application);
-      const warn = coverage.warning ? ` ${coverage.warning}` : '';
+      const warn = exploreWarning ? ` ${exploreWarning}` : '';
       return {
         summary: `${PLAYWRIGHT_TEST_PLANNER} wrote ${scenarios.length} scenario${scenarios.length === 1 ? '' : 's'} for ${input.workItem} with a model${result.repaired ? ' (repaired once)' : ''}. Plan artifact ${planArtifact}.${warn}`,
         scenarios,
         planMarkdown,
         planArtifact,
         source: 'model',
-        exploreWarning: coverage.warning || undefined,
+        exploreWarning: exploreWarning || undefined,
+        blockingGap,
+        surfaceKind: binding.surfaceKind,
+        primarySurfaceUrl: binding.primarySurfaceUrl || coverage.primarySurfaceUrl,
       };
     },
   };

@@ -2,6 +2,10 @@
 
 export type ScenarioKind = 'positive' | 'negative' | 'edge';
 export type ScenarioPriority = 'high' | 'medium' | 'low';
+/** Story-expected UI surface for validation (Phase 8 E1). */
+export type SurfaceKind = 'shop' | 'template' | 'other';
+/** Intended execution outcome when explore cannot cover the required surface. */
+export type GeneratedCaseRunStatus = 'Blocked' | 'Skipped';
 
 export interface PlannerScenario {
   name: string;
@@ -28,6 +32,13 @@ export interface GeneratedPlaywrightCase {
   reference: string;
   file: string;
   testId: string;
+  /** Execute should treat as Blocked/Skipped (surface gap) instead of asserting on a mismatched host. */
+  runStatus?: GeneratedCaseRunStatus;
+  /** e.g. `needs-surface` when the primary validation URL/surface was never reached. */
+  tags?: string[];
+  /** Bound primary validation URL when known. */
+  primarySurfaceUrl?: string;
+  surfaceKind?: SurfaceKind;
 }
 
 export interface PlanRequest {
@@ -38,6 +49,8 @@ export interface PlanRequest {
   criteria: string[];
   /** Exploration findings from UI / source (available before planning). */
   findings?: string;
+  /** Environment application URL used during Explore (for surface binding). */
+  environmentUrl?: string;
   executionId?: string;
   stepId?: string;
 }
@@ -53,6 +66,10 @@ export interface PlanResult {
   source: 'model' | 'heuristic' | 'mcp';
   /** Weak / mismatched Explore UI coverage (duplicate snapshots, wrong surface). */
   exploreWarning?: string;
+  /** Structural fail-closed gap: explored surface does not match the story. */
+  blockingGap?: boolean;
+  surfaceKind?: SurfaceKind;
+  primarySurfaceUrl?: string;
 }
 
 export interface GenerateRequest {
@@ -64,6 +81,9 @@ export interface GenerateRequest {
   planArtifact?: string;
   /** Optional notes from UI / source exploration. */
   findings?: string;
+  /** Full story blob for surface binding when findings are weak. */
+  story?: string;
+  environmentUrl?: string;
   executionId?: string;
   stepId?: string;
 }
@@ -140,6 +160,13 @@ export interface ExploreResult {
   warning?: string;
   /** False when findings are not useful as distinct scenario evidence. */
   relevant?: boolean;
+  /** True when only a mismatched surface was reached (e.g. shop for email template WI). */
+  blockingGap?: boolean;
+  surfaceKind?: SurfaceKind;
+  /** Primary validation URL when known from WI or a matching explore hit. */
+  primarySurfaceUrl?: string;
+  /** Candidate routes tried / suggested beyond the environment root. */
+  candidateRoutes?: string[];
 }
 
 export interface CodeExploreRequest {

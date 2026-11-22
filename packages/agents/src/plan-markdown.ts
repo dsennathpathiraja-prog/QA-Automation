@@ -1,4 +1,4 @@
-import type { PlannerScenario, ScenarioKind, ScenarioPriority } from './types';
+import type { PlannerScenario, ScenarioKind, ScenarioPriority, SurfaceKind } from './types';
 
 export interface PlanMarkdownMeta {
   workItem: string;
@@ -8,6 +8,11 @@ export interface PlanMarkdownMeta {
   source?: string;
   /** Weak / mismatched Explore UI note (duplicate shop snapshots, template WI, etc.). */
   exploreWarning?: string;
+  /** Structural fail-closed gap — wrong surface only. */
+  blockingGap?: boolean;
+  surfaceKind?: SurfaceKind;
+  primarySurfaceUrl?: string;
+  candidateRoutes?: string[];
 }
 
 const kindOf = (raw: string): ScenarioKind => {
@@ -48,7 +53,27 @@ export function renderPlanMarkdown(scenarios: PlannerScenario[], meta: PlanMarkd
     lines.push('');
   }
 
-  if (meta.exploreWarning?.trim()) {
+  if (meta.surfaceKind || meta.primarySurfaceUrl || (meta.candidateRoutes && meta.candidateRoutes.length > 0)) {
+    lines.push('## Story surface binding', '');
+    if (meta.surfaceKind) lines.push(`- **Surface kind:** ${meta.surfaceKind}`);
+    lines.push(meta.primarySurfaceUrl
+      ? `- **Primary validation URL:** ${meta.primarySurfaceUrl}`
+      : '- **Primary validation URL:** _(not bound — no matching WI URL or explore hit)_');
+    if (meta.candidateRoutes && meta.candidateRoutes.length > 0) {
+      lines.push(`- **Candidate routes:** ${meta.candidateRoutes.slice(0, 8).map((r) => `\`${r}\``).join(', ')}`);
+    }
+    lines.push('');
+  }
+
+  if (meta.blockingGap) {
+    lines.push(
+      '## Explore surface gap (blocking)',
+      '',
+      meta.exploreWarning?.trim()
+        || 'Explore only reached a mismatched surface for this work item. Template/email scenarios are **Blocked / needs-surface** — do not treat shop/catalog coverage as a pass.',
+      '',
+    );
+  } else if (meta.exploreWarning?.trim()) {
     lines.push('## Explore coverage warning', '', meta.exploreWarning.trim(), '');
   }
 

@@ -56,7 +56,7 @@ describe('story analysis 2357', () => {
     expect(planned.scenarios.every((s) => !/use Search control|Kitchen/i.test(s.name))).toBe(true);
   });
 
-  it('generates non-stub Playwright with distinct assertions per scenario', () => {
+  it('generates needs-surface Blocked cases — not false shop passes for email ACs', () => {
     const planned = planHeuristically({
       workItem: '2357',
       application: 'PayNSure',
@@ -64,16 +64,23 @@ describe('story analysis 2357', () => {
       criteria: ['Paid Amount'],
       findings: shopFindings,
     });
+    expect(planned.blockingGap).toBe(true);
+    expect(planned.surfaceKind).toBe('template');
+    expect(planned.planMarkdown).toMatch(/Explore surface gap \(blocking\)|needs-surface/i);
     const generated = generateHeuristically({
       workItem: '2357',
       application: 'PayNSure',
+      story: story2357,
       scenarios: planned.scenarios,
       findings: shopFindings,
     });
     expect(generated.cases.every((c) => !isStubPlaywrightSource(c.steps))).toBe(true);
     expect(generated.cases.every((c) => !/locator\(['"]body['"]\)\s*\)\s*\.toBeVisible/.test(c.steps))).toBe(true);
-    const texts = generated.cases.map((c) => c.steps).join('\n');
-    expect(texts).toMatch(/held in escrow|Paid Amount|Confirm Delivery|Customer Name|COMPLETED|support@paynsure/i);
+    const templateCases = generated.cases.filter((c) => /subject|greeting|Paid Amount|Confirm Delivery|support@|placeholder|held in escrow/i.test(c.name + c.expected));
+    expect(templateCases.length).toBeGreaterThan(0);
+    expect(templateCases.every((c) => c.runStatus === 'Blocked')).toBe(true);
+    expect(templateCases.every((c) => c.tags?.includes('needs-surface'))).toBe(true);
+    expect(templateCases.every((c) => /@qa-platform:needs-surface|test\.skip/i.test(c.steps))).toBe(true);
     expect(notificationTemplateScenarioSeeds({ story: story2357 }).length).toBeGreaterThan(5);
   });
 });
