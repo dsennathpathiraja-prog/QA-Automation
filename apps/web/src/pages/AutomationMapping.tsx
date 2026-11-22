@@ -1,9 +1,24 @@
-import { AutomationAssetSchema, AutomationMappingListResponse, AutomationResolveResponse } from '@qa/contracts';
+import {
+  AutomationAssetSchema,
+  AutomationMappingListResponse,
+  AutomationResolveResponse,
+  RegressionResolveResponse,
+} from '@qa/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useApi } from '../api/context';
 import { useSession } from '../auth/session';
 import { Card, ErrorNotice, PageHeader } from './common';
+
+const reasonLabel = (reason: string) => {
+  if (reason === 'mapping-unapproved') return 'Draft (not approved)';
+  if (reason === 'no-mapping') return 'No mapping';
+  if (reason === 'asset-missing') return 'Asset missing';
+  return reason;
+};
+
+const parseCaseIds = (raw: string) =>
+  [...new Set(raw.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean))];
 
 export function AutomationMapping() {
   const api = useApi();
@@ -11,6 +26,7 @@ export function AutomationMapping() {
   const qc = useQueryClient();
   const [resolveId, setResolveId] = useState('');
   const [resolved, setResolved] = useState('');
+  const [prepIds, setPrepIds] = useState('');
   const mappings = useQuery({
     queryKey: ['automation-mappings'],
     queryFn: () => api.get('/api/v1/automation/mappings', AutomationMappingListResponse),
@@ -32,11 +48,16 @@ export function AutomationMapping() {
     onError: () => setResolved('No mapping for that Squash case id.'),
   });
 
+  const prep = useMutation({
+    mutationFn: (squashCaseIds: string[]) =>
+      api.post('/api/v1/automation/resolve-regression', { squashCaseIds }, RegressionResolveResponse),
+  });
+
   return (
     <>
       <PageHeader
         title="Automation Mapping"
-        description="Link Squash cases to platform Playwright scripts. Approve a draft asset before Regression can treat it as runnable. Full Regression collections and campaigns come later."
+        description="Link Squash cases to platform Playwright scripts. Approve a draft asset before Regression can run it. Regression prep below lists approved vs Not Automated — no generation or explore."
       />
       {mappings.isError && <ErrorNotice message="Mappings could not be loaded." onRetry={() => void mappings.refetch()} />}
       {mappings.isPending && <p role="status">Loading mappings…</p>}
@@ -95,7 +116,7 @@ export function AutomationMapping() {
       <Card label="Resolve Squash case">
         <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
           Look up the platform automation asset id for a Squash case (same as{' '}
-          <code className="text-xs">GET /api/v1/automation/resolve?squashCaseId=…</code>).
+          <code className="text-xs">GET /api/v1/automation/resolve?squashCaseId=…</code>). Draft or approved.
         </p>
         <form
           className="flex flex-wrap items-end gap-2"
@@ -118,6 +139,69 @@ export function AutomationMapping() {
           </button>
         </form>
         {resolved && <p className="mt-3 text-sm" role="status">{resolved}</p>}
+      </Card>
+
+      <Card label="Regression prep (approved-only)">
+        <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
+          Preview what <code className="text-xs">rg.resolve-automation</code> will run before execute. Only approved mappings are resolved;
+          draft, unmapped, or missing assets are Not Automated (
+          <code className="text-xs">mapping-unapproved</code> | <code className="text-xs">no-mapping</code> | <code className="text-xs">asset-missing</code>
+          ). Nothing is generated or explored.
+        </p>
+        <form
+          className="space-y-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const ids = parseCaseIds(prepIds);
+            if (ids.length > 0) prep.mutate(ids);
+          }}
+        >
+          <label className="block text-sm">
+            Squash case ids (comma, space, or newline separated)
+            <textarea
+              className="mt-1 block w-full rounded border border-slate-300 px-2 py-1 font-mono text-sm dark:border-slate-600 dark:bg-slate-950"
+              rows={3}
+              value={prepIds}
+              onChange={(e) => setPrepIds(e.target.value)}
+              placeholder={'238\n239'}
+            />
+          </label>
+          <button type="submit" className="rounded border border-slate-300 px-3 py-1 text-sm dark:border-slate-600" disabled={prep.isPending}>
+            Preview Regression resolve
+          </button>
+        </form>
+        {prep.isError && <p className="mt-2 text-sm text-red-700 dark:text-red-300" role="alert">Regression resolve failed.</p>}
+        {prep.data && (
+          <div className="mt-4 space-y-3 text-sm" role="status">
+            <p>
+              {prep.data.resolved.length} approved · {prep.data.notAutomated.length} Not Automated
+            </p>
+            {prep.data.resolved.length > 0 && (
+              <div>
+                <h3 className="font-medium">Resolved (approved)</h3>
+                <ul className="mt-1 list-disc pl-5 font-mono text-xs">
+                  {prep.data.resolved.map((row) => (
+                    <li key={row.squashCaseId}>
+                      {row.squashCaseId} → {row.assetId} ({row.assetKey}, {row.scriptPath})
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {prep.data.notAutomated.length > 0 && (
+              <div>
+                <h3 className="font-medium">Not Automated</h3>
+                <ul className="mt-1 list-disc pl-5 font-mono text-xs">
+                  {prep.data.notAutomated.map((row) => (
+                    <li key={`${row.squashCaseId}-${row.reason}`}>
+                      {row.squashCaseId} — {reasonLabel(row.reason)} ({row.reason})
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
       </Card>
     </>
   );

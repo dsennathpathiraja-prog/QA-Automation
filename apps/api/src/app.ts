@@ -128,6 +128,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   else {
     app.get('/api/v1/automation/assets', { config: { access: requires('automation.view') } }, async () => ({ items: [] }));
     app.get('/api/v1/automation/mappings', { config: { access: requires('automation.view') } }, async () => ({ items: [] }));
+    app.post('/api/v1/automation/resolve-regression', { config: { access: requires('automation.view') } }, async () => ({
+      resolved: [],
+      notAutomated: [],
+    }));
   }
 
   app.get('/api/v1/llm/providers', { config: { access: requires('llm.view') } }, async () =>

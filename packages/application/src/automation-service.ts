@@ -51,6 +51,33 @@ export interface AutomationResolveResult {
   approved: boolean;
 }
 
+/** Why Regression will not execute a Squash case (never generate / explore). */
+export type NotAutomatedReason = 'mapping-unapproved' | 'no-mapping' | 'asset-missing';
+
+export interface ResolvedAutomation {
+  squashCaseId: string;
+  squashReference: string;
+  assetId: string;
+  assetKey: string;
+  assetName: string;
+  scriptPath: string;
+  status: 'approved';
+}
+
+export interface NotAutomatedCase {
+  squashCaseId: string;
+  reason: NotAutomatedReason;
+  squashReference?: string;
+  assetId?: string;
+  status?: AutomationAssetStatus;
+}
+
+/** Phase 9 E1 — approved-only batch resolve for Regression prep / `rg.resolve-automation`. */
+export interface RegressionResolveResult {
+  resolved: ResolvedAutomation[];
+  notAutomated: NotAutomatedCase[];
+}
+
 export interface AutomationAssetInsert {
   id: string;
   key: string;
@@ -97,6 +124,19 @@ const viewOf = (asset: AutomationAssetRecord) => ({
   updatedAt: asset.updatedAt.toISOString(),
 });
 
+/** Dedupe Squash case ids while preserving first-seen order. */
+export function uniqueCaseIds(raw: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of raw) {
+    const id = String(item ?? '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
 export class AutomationService {
   constructor(private readonly d: { automation: AutomationRepository; audit: AuditSink }) {}
 
@@ -135,7 +175,7 @@ export class AutomationService {
 
   /**
    * Resolve a Squash case id to the linked platform automation asset.
-   * Returns draft or approved; Regression runners should require `approved`.
+   * Returns draft or approved; use {@link resolveForRegression} for approved-only runs.
    */
   async resolveBySquashCaseId(squashCaseId: string): Promise<AutomationResolveResult> {
     const id = squashCaseId.trim();
@@ -154,6 +194,57 @@ export class AutomationService {
       status: asset.status,
       approved: asset.status === 'approved',
     };
+  }
+
+  /**
+   * Regression resolve: only `approved` assets are runnable.
+   * Draft / missing mapping / missing asset → Not Automated (never generate or explore).
+   */
+  async resolveForRegression(squashCaseIds: readonly string[]): Promise<RegressionResolveResult> {
+    const ids = uniqueCaseIds(squashCaseIds);
+    if (ids.length === 0) throw new PlatformError('validation', 'At least one Squash case id is required.');
+
+    const resolved: ResolvedAutomation[] = [];
+    const notAutomated: NotAutomatedCase[] = [];
+
+    for (const squashCaseId of ids) {
+      const mapping = await this.d.automation.findMappingBySquashCaseId(squashCaseId);
+      if (!mapping) {
+        notAutomated.push({ squashCaseId, reason: 'no-mapping' });
+        continue;
+      }
+      const asset = await this.d.automation.getAsset(mapping.assetId);
+      if (!asset) {
+        notAutomated.push({
+          squashCaseId,
+          reason: 'asset-missing',
+          squashReference: mapping.squashReference,
+          assetId: mapping.assetId,
+        });
+        continue;
+      }
+      if (asset.status !== 'approved') {
+        notAutomated.push({
+          squashCaseId,
+          reason: 'mapping-unapproved',
+          squashReference: mapping.squashReference,
+          assetId: asset.id,
+          status: asset.status,
+        });
+        continue;
+      }
+      resolved.push({
+        squashCaseId: mapping.squashCaseId,
+        squashReference: mapping.squashReference,
+        assetId: asset.id,
+        assetKey: asset.key,
+        assetName: asset.name,
+        scriptPath: asset.scriptPath,
+        status: 'approved',
+      });
+    }
+
+    return { resolved, notAutomated };
   }
 
   async register(

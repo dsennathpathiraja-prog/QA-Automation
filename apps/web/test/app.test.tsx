@@ -59,7 +59,7 @@ describe('route guard', () => {
     expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeTruthy();
   });
 
-  it('Automation Mapping lists Squash↔script rows and can resolve a case id', async () => {
+  it('Automation Mapping lists Squash↔script rows, resolves a case id, and previews Regression Not Automated', async () => {
     renderApp('/automation', {
       me: { status: 200, body: meFor('qa_lead') },
       routes: {
@@ -92,6 +92,21 @@ describe('route guard', () => {
             approved: false,
           },
         },
+        '/api/v1/automation/resolve-regression': {
+          status: 200,
+          body: {
+            resolved: [{
+              squashCaseId: '238',
+              squashReference: 'QAP-7259-1',
+              assetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+              assetKey: 'QAP-7259-1',
+              assetName: 'Positive: checkout',
+              scriptPath: 'tests/app/7259.spec.js',
+              status: 'approved',
+            }],
+            notAutomated: [{ squashCaseId: '239', reason: 'mapping-unapproved', status: 'draft' }],
+          },
+        },
       },
     });
     expect(await screen.findByRole('heading', { name: 'Automation Mapping' })).toBeTruthy();
@@ -101,6 +116,10 @@ describe('route guard', () => {
     await userEvent.type(screen.getByLabelText('Squash case id'), '238');
     await userEvent.click(screen.getByRole('button', { name: 'Resolve' }));
     expect(await screen.findByText(/Squash 238 → asset/)).toBeTruthy();
+    await userEvent.type(screen.getByLabelText(/Squash case ids/i), '238, 239');
+    await userEvent.click(screen.getByRole('button', { name: 'Preview Regression resolve' }));
+    expect(await screen.findByText(/1 approved · 1 Not Automated/)).toBeTruthy();
+    expect(screen.getByText(/239 — Draft \(not approved\)/)).toBeTruthy();
   });
 
   it('Evidence placeholder still names Phase 8', async () => {
@@ -134,7 +153,7 @@ describe('route guard', () => {
           body: {
             workItems: [{ workItem: 'QA-1', caseCount: 2 }],
             environments: [{ id: '33333333-3333-4333-8333-333333333333', name: 'QA', kind: 'qa' }],
-            items: [{ id: '44444444-4444-4444-8444-444444444444', workItem: 'QA-1', environmentId: '33333333-3333-4333-8333-333333333333', environmentName: 'QA', caseCount: 2, status: 'prepared', createdAt: '2026-11-19T12:00:00.000Z' }],
+            items: [{ id: '44444444-4444-4444-8444-444444444444', workItem: 'QA-1', environmentId: '33333333-3333-4333-8333-333333333333', environmentName: 'QA', caseCount: 2, status: 'prepared', createdAt: new Date(Date.now() - 60 * 60 * 1000).toISOString() }],
           },
         },
         '/api/v1/executions': { status: 200, body: { items: [{ id: '1436518e-0000-4000-8000-000000000001', workflowId: '11111111-1111-4111-8111-111111111111', workflowName: 'Checkout', status: 'succeeded', stepIndex: 10, createdAt: '2026-11-18T10:00:00.000Z', updatedAt: '2026-11-18T10:05:00.000Z' }] } },

@@ -208,7 +208,7 @@ Optional browser MCP (Explore UI / connector Test connection) still uses `--prof
 
 ## Automation Mapping (Phase 8 E6 Regression seed)
 
-After cases are published to Squash, the worker seeds a **draft** automation asset and Squash↔script mapping. Open **Automation Mapping** (QA Lead / Engineer), **Approve** a draft, then **Resolve** a Squash case id — or call `GET /api/v1/automation/resolve?squashCaseId=<id>`. Details: [`docs/phase8-e6-regression-seed.md`](../../../docs/phase8-e6-regression-seed.md).
+After cases are published to Squash, the worker seeds a **draft** automation asset and Squash↔script mapping. Open **Automation Mapping** (QA Lead / Engineer), **Approve** a draft, then **Resolve** a Squash case id — or call `GET /api/v1/automation/resolve?squashCaseId=<id>`. For Regression prep (approved-only vs Not Automated), use **Preview Regression resolve** or `POST /api/v1/automation/resolve-regression`. Details: [`docs/phase8-e6-regression-seed.md`](../../../docs/phase8-e6-regression-seed.md), [`docs/phase9-e1-approved-resolve.md`](../../../docs/phase9-e1-approved-resolve.md).
 
 PowerShell-safe check:
 

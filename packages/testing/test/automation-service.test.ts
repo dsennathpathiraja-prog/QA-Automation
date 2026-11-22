@@ -98,4 +98,48 @@ describe('AutomationService (Phase 8 E6)', () => {
     ]);
     await expect(s.service.resolveBySquashCaseId('missing')).rejects.toMatchObject({ errorClass: 'not-found' });
   });
+
+  it('resolveForRegression keeps only approved assets and marks the rest Not Automated', async () => {
+    const s = setup();
+    const approved = await s.service.register(actor, {
+      key: 'QAP-ok',
+      name: 'Approved case',
+      scriptPath: 'tests/ok.spec.js',
+      squashCaseId: '10',
+    });
+    await s.service.approve(actor, approved.id);
+    await s.service.register(actor, {
+      key: 'QAP-draft',
+      name: 'Draft sibling',
+      scriptPath: 'tests/draft.spec.js',
+      squashCaseId: '11',
+    });
+    // Mapping whose asset row was removed → asset-missing
+    await s.automation.upsertMapping({
+      id: 'orphan-map',
+      squashCaseId: '12',
+      squashReference: 'gone',
+      assetId: '00000000-0000-4000-8000-000000000099',
+    });
+
+    const result = await s.service.resolveForRegression(['10', '11', '12', '99', '10']);
+    expect(result.resolved).toEqual([
+      expect.objectContaining({
+        squashCaseId: '10',
+        assetId: approved.id,
+        assetKey: 'QAP-ok',
+        status: 'approved',
+      }),
+    ]);
+    expect(result.notAutomated).toEqual([
+      expect.objectContaining({ squashCaseId: '11', reason: 'mapping-unapproved', status: 'draft' }),
+      expect.objectContaining({ squashCaseId: '12', reason: 'asset-missing' }),
+      expect.objectContaining({ squashCaseId: '99', reason: 'no-mapping' }),
+    ]);
+  });
+
+  it('resolveForRegression requires at least one Squash case id', async () => {
+    const s = setup();
+    await expect(s.service.resolveForRegression(['  ', ''])).rejects.toMatchObject({ errorClass: 'validation' });
+  });
 });
