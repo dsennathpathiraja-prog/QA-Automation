@@ -447,7 +447,15 @@ const loop = new WorkerLoop({
       syncSquash: squash && conn
         ? async (results, workItem) => {
             const connectors = new PgConnectorRepository(conn.db);
-            const squashInstance = (await connectors.list()).find((c) => c.category === 'test-management' && c.enabled && c.accessMode === 'read_write');
+            const candidates = (await connectors.list()).filter((c) => c.category === 'test-management' && c.enabled && c.accessMode === 'read_write');
+            let squashInstance = candidates[0];
+            for (const candidate of candidates) {
+              const states = await connectors.capabilityStates(candidate.id);
+              if (states.some((s) => s.capability === 'tm.execution.upsert' && s.granted)) {
+                squashInstance = candidate;
+                break;
+              }
+            }
             if (!squashInstance) {
               return { results, summary: `Cases ran for ${workItem}. No writable Squash connector is switched on.` };
             }

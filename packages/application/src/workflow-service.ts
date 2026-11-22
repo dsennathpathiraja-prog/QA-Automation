@@ -390,6 +390,12 @@ export class WorkflowService {
       const health = row.status === 'connected' ? 'healthy' : row.status === 'degraded' ? 'degraded' : 'unhealthy';
       const capabilities = states.filter((s) => s.granted).map((s) => s.capability);
       if (row.category === 'test-management' && capabilities.includes('tm.testcase.list') && !capabilities.includes('tm.testcase.read')) capabilities.push('tm.testcase.read');
+      // Match CEM: a writable Squash instance can create executions, PATCH status, and upload attachments.
+      if (row.category === 'test-management' && row.accessMode === 'read_write') {
+        for (const cap of ['tm.testcase.upsert', 'tm.execution.upsert', 'tm.execution.status.update', 'tm.attachment.upload'] as const) {
+          if (!capabilities.includes(cap)) capabilities.push(cap);
+        }
+      }
       out.push({ role: c.role, category: row.category, enabled: row.enabled, health, accessMode: row.accessMode, capabilities });
     }
     return out;

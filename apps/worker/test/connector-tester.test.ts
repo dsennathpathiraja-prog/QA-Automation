@@ -187,7 +187,7 @@ describe('Squash through Test Connection (documentation-based mock)', () => {
     expect(JSON.stringify(d)).not.toContain(token);
   });
 
-  it('accepts a read-write token so generated cases can be stored', async () => {
+  it('accepts a read-write token so generated cases and execution status can be stored', async () => {
     const token = makeSquashToken({ permissions: 'READ_WRITE', expiresAt: new Date(Date.now() + 100 * 86_400_000) });
     mock = await startSquashMock({ token, permissions: 'READ_WRITE' });
     const s = setup({ hosts: [{ hostPattern: '127.0.0.1', purpose: 'connector', internal: true, allowHttp: true, allowLoopback: true }] });
@@ -199,6 +199,10 @@ describe('Squash through Test Connection (documentation-based mock)', () => {
     expect(d.permissionReport?.writePermissionsDetected).toEqual(['token:READ_WRITE']);
     expect(d.latestTest?.result?.message).toMatch(/Connected to SquashTM/);
     expect(d.canEnable).toBe(true);
+    const byCap = Object.fromEntries(d.capabilities.map((x) => [x.capability, x]));
+    expect(byCap['tm.testcase.upsert']).toMatchObject({ support: 'supported', granted: true });
+    expect(byCap['tm.execution.upsert']).toMatchObject({ support: 'supported', granted: true });
+    expect(byCap['tm.execution.status.update']).toMatchObject({ support: 'supported', granted: true });
   });
 
   it('shows a wrong token as a failed test without echoing the token', async () => {
