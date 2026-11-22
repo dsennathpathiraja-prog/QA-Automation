@@ -14,4 +14,4 @@ Regression stays out of scope. Automation Mapping remains a later screen (nav pl
 4. **Squash sync.** `tm.execution.upsert` + `tm.execution.status.update` on the writable Squash connector. Failures leave screenshots on Executions and say why Squash was not updated.
 
 ## Not in this phase
-Regression workflow. Healer. Full Evidence library screen. Kubernetes. Uploading screenshot attachments into Squash (status sync only).
+Regression workflow. Healer. Full Evidence library screen. Kubernetes. (Screenshot attachments into Squash: Phase 8 E4.)

@@ -443,6 +443,50 @@ describe('Squash execution sync', () => {
     });
     expect(out.results[0]?.squashExecutionId).toBe('77');
     expect(out.summary).toMatch(/Squash recorded 1/);
+    expect(out.summary).not.toMatch(/attachment/i);
+  });
+
+  it('uploads screenshots when uploadAttachment is provided', async () => {
+    const uploaded: { executionId: string; name: string; sha256: string }[] = [];
+    const out = await syncCaseResultsToSquash({
+      workItem: 'QA-1',
+      results: [{ testCaseId: 'a', name: 'Login', status: 'Passed', message: 'ok', screenshotPng: shot }],
+      squashIdForCase: async () => '238',
+      upsert: async () => ({ id: '77', created: true }),
+      updateStatus: async () => undefined,
+      uploadAttachment: async (input) => {
+        uploaded.push({ executionId: input.executionId, name: input.name, sha256: input.sha256 });
+        return { id: '9001' };
+      },
+    });
+    expect(out.results[0]?.squashExecutionId).toBe('77');
+    expect(out.results[0]?.screenshotPng).toBe(shot);
+    expect(uploaded).toHaveLength(1);
+    expect(uploaded[0]).toMatchObject({ executionId: '77', name: expect.stringMatching(/Login.*screenshot\.jpg/) });
+    expect(uploaded[0]!.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(out.summary).toMatch(/uploaded 1 screenshot attachment/);
+  });
+
+  it('keeps platform screenshots and status sync when attachment upload fails', async () => {
+    const { PlatformError } = await import('@qa/domain');
+    const out = await syncCaseResultsToSquash({
+      workItem: 'QA-1',
+      results: [
+        { testCaseId: 'a', name: 'Login', status: 'Passed', message: 'ok', screenshotPng: shot },
+        { testCaseId: 'b', name: 'Logout', status: 'Passed', message: 'ok', screenshotPng: shot },
+      ],
+      squashIdForCase: async () => '238',
+      upsert: async () => ({ id: '88', created: true }),
+      updateStatus: async () => undefined,
+      uploadAttachment: async () => {
+        throw new PlatformError('denied', 'The token cannot change /executions/88/attachments');
+      },
+    });
+    expect(out.results.every((r) => r.squashExecutionId === '88')).toBe(true);
+    expect(out.results.every((r) => r.screenshotPng === shot)).toBe(true);
+    expect(out.summary).toMatch(/Squash recorded 2/);
+    expect(out.summary).toMatch(/Screenshot attachments were not uploaded/);
+    expect(out.summary).toMatch(/Platform evidence is unchanged/);
   });
 
   it('clarifies Squash token rejection with Bearer lease repair steps', async () => {
@@ -458,5 +502,6 @@ describe('Squash execution sync', () => {
     });
     expect(out.summary).toMatch(/Squash was not updated/);
     expect(out.summary).toMatch(/Bearer|READ_WRITE|restart the worker|secret lease/i);
+    expect(out.results[0]?.screenshotPng).toBe(shot);
   });
 });
