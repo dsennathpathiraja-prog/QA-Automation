@@ -4,6 +4,9 @@ import type { NewProject, ProjectPatch, ProjectRecord, ProjectRepository, Projec
 import type { Db } from './db';
 import { project } from './schema';
 
+/** Stable id for the Default project created by migration 0019 (backfill target). */
+export const DEFAULT_PROJECT_ID = '01900000-0000-7000-8000-000000000001';
+
 type Row = typeof project.$inferSelect;
 
 const isUniqueViolation = (e: unknown): boolean => {

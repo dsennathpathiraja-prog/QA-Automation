@@ -28,10 +28,10 @@ describe('migrations', () => {
     const client = new PGlite();
     const db = drizzle(client, { schema }) as unknown as Db;
     const first = await migrate(db);
-    expect(first.applied).toEqual(['0000_baseline', '0001_append_only_guards', '0002_llm_call_log', '0003_llm_call_log_append_only', '0004_connector_management', '0005_workflow_draft', '0006_workflow_engine', '0007_environment_reachability', '0008_test_case_library', '0009_test_case_work_item', '0010_squash_read_write', '0011_work_item_execution', '0012_work_item_run_results', '0013_test_case_kind_priority', '0014_work_item_live_progress', '0015_work_item_cancelled', '0016_template_preview_url', '0017_automation_assets', '0018_regression_collections']);
+    expect(first.applied).toEqual(['0000_baseline', '0001_append_only_guards', '0002_llm_call_log', '0003_llm_call_log_append_only', '0004_connector_management', '0005_workflow_draft', '0006_workflow_engine', '0007_environment_reachability', '0008_test_case_library', '0009_test_case_work_item', '0010_squash_read_write', '0011_work_item_execution', '0012_work_item_run_results', '0013_test_case_kind_priority', '0014_work_item_live_progress', '0015_work_item_cancelled', '0016_template_preview_url', '0017_automation_assets', '0018_regression_collections', '0019_project_surface']);
     const second = await migrate(db);
     expect(second.applied).toEqual([]);
-    expect(second.alreadyApplied).toHaveLength(19);
+    expect(second.alreadyApplied).toHaveLength(20);
 
     const tmp = mkdtempSync(join(tmpdir(), 'mig-'));
     cpSync(DEFAULT_MIGRATIONS_DIR, tmp, { recursive: true });
@@ -45,6 +45,7 @@ describe('migrations', () => {
     const actual = new Set(dbCols.map((r) => `${r.table_name}.${r.column_name}`));
     const expected = new Set<string>();
     for (const t of Object.values(schema)) {
+      if (!t || typeof t !== 'object' || !('getSQL' in (t as object))) continue;
       const cfg = getTableConfig(t as PgTable);
       for (const c of cfg.columns) expected.add(`${getTableName(t as PgTable)}.${c.name}`);
     }

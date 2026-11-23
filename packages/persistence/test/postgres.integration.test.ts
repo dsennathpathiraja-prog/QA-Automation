@@ -34,7 +34,7 @@ d('PostgreSQL (real server)', () => {
 
   it('serialises concurrent migrators from separate connections', async () => {
     const results = await Promise.all(Array.from({ length: 5 }, () => migrate(conn.db)));
-    expect(results.flatMap((r) => r.applied).sort()).toEqual(['0000_baseline', '0001_append_only_guards', '0002_llm_call_log', '0003_llm_call_log_append_only', '0004_connector_management', '0005_workflow_draft', '0006_workflow_engine', '0007_environment_reachability', '0008_test_case_library', '0009_test_case_work_item', '0010_squash_read_write', '0011_work_item_execution', '0012_work_item_run_results', '0013_test_case_kind_priority', '0014_work_item_live_progress', '0015_work_item_cancelled', '0016_template_preview_url', '0017_automation_assets', '0018_regression_collections']);
+    expect(results.flatMap((r) => r.applied).sort()).toEqual(['0000_baseline', '0001_append_only_guards', '0002_llm_call_log', '0003_llm_call_log_append_only', '0004_connector_management', '0005_workflow_draft', '0006_workflow_engine', '0007_environment_reachability', '0008_test_case_library', '0009_test_case_work_item', '0010_squash_read_write', '0011_work_item_execution', '0012_work_item_run_results', '0013_test_case_kind_priority', '0014_work_item_live_progress', '0015_work_item_cancelled', '0016_template_preview_url', '0017_automation_assets', '0018_regression_collections', '0019_project_surface']);
     await seedRoles(conn.db);
     await seedDefaultGroupMappings(conn.db);
     expect(await pingDb(conn.db)).toBe(true);
