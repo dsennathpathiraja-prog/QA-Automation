@@ -65,7 +65,7 @@ const STEP_LABEL: Record<string, string> = {
 
 const STEP_HELP: Record<string, string> = {
   'rv.read-user-story': 'Loads title, description, and acceptance criteria from the work item.',
-  'rv.explore-ui': 'Opens the environment, crawls in-app links/buttons within scope, and records multi-page UI findings for the planner.',
+  'rv.explore-ui': 'Opens the environment start URL, crawls in-app links/buttons/tabs within allowlist scope (any app), and records multi-page UI findings for the planner.',
   'rv.explore-code': 'Reads matching source files from the bound Azure DevOps Repos (preferred) or GitHub connector.',
   'rv.consolidate-findings': 'Merges UI and code notes into one findings blob.',
   'rv.generate-test-plan': 'Writes the Markdown test plan artifact with many scenarios and AC coverage gaps.',

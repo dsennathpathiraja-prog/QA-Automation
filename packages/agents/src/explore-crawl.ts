@@ -1,7 +1,7 @@
 /**
- * Bounded multi-page UI explore crawl helpers.
- * Discovers in-app links/buttons, ranks by story relevance, skips destructive actions.
- * Keeps SPA hash routes (e.g. `#order-summary`) and same-URL view changes as distinct views.
+ * Bounded multi-page UI explore crawl helpers (app-agnostic).
+ * From any allowlisted start URL: discover in-app links/buttons/tabs/menus, optionally
+ * boost by story/AC keywords, skip destructive actions, keep SPA hash + same-URL views.
  */
 
 export const DEFAULT_EXPLORE_MAX_PAGES = 5;
@@ -42,10 +42,11 @@ export interface CrawlKeywords {
 /** Labels that must not be clicked during observe-only Explore UI. */
 const DESTRUCTIVE_LABEL = /\b(delete|destroy|remove all|wipe|purge|logout|log\s*out|sign\s*out|unsubscribe|reset\s+password|change\s+password|pay\s+now|submit\s+payment|confirm\s+purchase|place\s+order|buy\s+now|complete\s+purchase|cancel\s+subscription|close\s+account|erase)\b/i;
 
-/** Non-navigational schemes (bare `#` is skip; `#order-summary` is in-app nav). */
+/** Non-navigational schemes (bare `#` is skip; `#section` hash routes are in-app nav). */
 const SKIP_SCHEME = /^(mailto:|tel:|sms:|javascript:|data:)/i;
 
-const NAV_HINT = /\b(nav|menu|home|cart|checkout|shop|catalog|order|account|settings|profile|dashboard|template|email|preview|notification|product|category|kitchen|travel|help|about|search|summary)\b/i;
+/** Generic nav vocabulary — not product-specific. Story/AC terms are an optional boost. */
+const NAV_HINT = /\b(nav|menu|home|back|next|continue|account|settings|profile|dashboard|admin|help|about|search|filter|tab|sidebar|overview|details|list|create|edit|view|reports?|users?|projects?|inbox|messages?|notifications?|templates?|preview|catalog|products?|orders?|cart|checkout|summary)\b/i;
 
 export function createCrawlBounds(input?: {
   maxPages?: number;
@@ -149,7 +150,10 @@ export function isSkippableHref(href: string | undefined): boolean {
   return false;
 }
 
-/** Score a click/nav target higher when it matches AC / story terms / nav hints. */
+/**
+ * Score a click/nav target for crawl order.
+ * Baseline discovery works with empty keywords (any app); story/AC terms are an optional boost.
+ */
 export function scoreCrawlTarget(
   label: string,
   href: string | undefined,
@@ -162,7 +166,8 @@ export function scoreCrawlTarget(
   if (isDestructiveNavLabel(labelL)) return -100;
   if (isSkippableHref(href)) return -100;
 
-  let score = 1;
+  // Positive baseline so unlabeled product UIs still get crawled within bounds.
+  let score = 2;
   if (NAV_HINT.test(blob)) score += 4;
   if (hrefHasNavigationalHash(href)) score += 3;
 
@@ -177,11 +182,20 @@ export function scoreCrawlTarget(
     if (blob.includes(term)) score += term.length >= 6 ? 6 : 3;
   }
 
-  // Prefer path-ish hrefs over empty/#.
+  // Prefer real same-host hrefs / non-root paths (generic — not product route names).
   if (href && /^https?:\/\//i.test(href)) score += 2;
-  if (href && /\/(cart|checkout|shop|order|email|template|preview|notif)|#order/i.test(href)) score += 5;
+  try {
+    if (href) {
+      const path = new URL(href, 'http://explore.invalid').pathname;
+      const segments = path.split('/').filter(Boolean);
+      if (segments.length >= 1) score += 2;
+      if (segments.length >= 2) score += 1;
+    }
+  } catch {
+    /* ignore */
+  }
 
-  // Mild preference for short nav labels (menus / category chips) over long body CTAs.
+  // Mild preference for short nav labels (menus / tabs / chips) over long body CTAs.
   if (labelL.length > 0 && labelL.length <= 24) score += 1;
   if (labelL.length > 48) score -= 2;
 
@@ -190,7 +204,7 @@ export function scoreCrawlTarget(
 
 /**
  * View fingerprint for visited tracking.
- * Includes hash so `#order-summary` ≠ shop root; optional cue/click keys for same-URL SPA filters.
+ * Includes hash so `#section` ≠ base path; optional cue/click keys for same-URL SPA views.
  */
 export function exploreViewKey(input: {
   url: string;
@@ -214,7 +228,7 @@ export function cuesMeaningfullyChanged(before?: string, after?: string): boolea
   const headingA = /heading\s*=\s*"((?:\\.|[^"\\])*)"/i.exec(a)?.[1]?.toLowerCase() || '';
   const headingB = /heading\s*=\s*"((?:\\.|[^"\\])*)"/i.exec(b)?.[1]?.toLowerCase() || '';
   if (headingA && headingB && headingA !== headingB) return true;
-  // Distinct enough when cue blob differs substantially (category filters, cart drawer, …).
+  // Distinct enough when cue blob differs substantially (filters, tabs, drawers, …).
   if (a.slice(0, 120) !== b.slice(0, 120)) return true;
   return a !== b;
 }
@@ -280,8 +294,8 @@ export function collectCrawlTargets(input: {
 }
 
 /**
- * Playwright MCP `browser_evaluate` body: discover links (text+href) and button labels
- * for story-scoped crawl. Self-contained — runs in the page.
+ * Playwright MCP `browser_evaluate` body: discover links (text+href) and
+ * button/tab/menuitem labels for app-agnostic crawl. Self-contained — runs in the page.
  */
 export const CRAWL_LINK_DISCOVERY_SCRIPT = `() => {
   const textOf = (el) => {
@@ -290,7 +304,7 @@ export const CRAWL_LINK_DISCOVERY_SCRIPT = `() => {
   };
   const links = [];
   const seen = new Set();
-  for (const a of Array.from(document.querySelectorAll('a[href]'))) {
+  for (const a of Array.from(document.querySelectorAll('a[href], [role="link"][href], nav a[href]'))) {
     if (links.length >= 40) break;
     const href = a.href || a.getAttribute('href') || '';
     const label = textOf(a) || href;
@@ -300,8 +314,9 @@ export const CRAWL_LINK_DISCOVERY_SCRIPT = `() => {
     links.push({ label, href });
   }
   const buttons = [];
-  for (const el of Array.from(document.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"],[role="tab"]'))) {
-    if (buttons.length >= 30) break;
+  const clickable = 'button,[role="button"],[role="tab"],[role="menuitem"],[role="option"],input[type="button"],input[type="submit"]';
+  for (const el of Array.from(document.querySelectorAll(clickable))) {
+    if (buttons.length >= 40) break;
     const label = textOf(el) || (el.value || '');
     if (label && !buttons.includes(label)) buttons.push(label);
   }

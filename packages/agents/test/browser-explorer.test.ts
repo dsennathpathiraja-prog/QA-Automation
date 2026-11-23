@@ -82,6 +82,83 @@ describe('browser explorer', () => {
     expect(calls).toEqual(['open', 'nav:https://shop.example.com/pay', 'close']);
   });
 
+  it('crawls any allowlisted app start URL without product-specific heuristics', async () => {
+    const clicked: string[] = [];
+    const navigated: string[] = [];
+    const root = 'https://portal.example.com/app';
+    const treeFor = (url: string, heading: string, extra = '') => `
+### Page state
+- Page URL: ${url}
+- Page Title: Portal
+- Page Snapshot:
+\`\`\`yaml
+- heading "${heading}" [ref=e1]
+- link "Users" [ref=e2]
+- link "Reports" [ref=e3]
+- button "Settings" [ref=e4]
+${extra}
+\`\`\`
+`;
+    let current = root;
+    let heading = 'Overview';
+    const browser: BrowserAutomationPort = {
+      async openSession() {},
+      async navigate(url) {
+        navigated.push(url);
+        current = url;
+        if (url.includes('/users')) heading = 'Users';
+        else if (url.includes('/reports')) heading = 'Reports';
+        else if (url.includes('#settings')) heading = 'Settings';
+        else heading = 'Overview';
+        return { finalUrl: url, accessibilityTree: treeFor(url, heading), title: 'Portal' };
+      },
+      async waitFor() {},
+      async snapshot() {
+        return { accessibilityTree: treeFor(current, heading), url: current, title: 'Portal' };
+      },
+      async evaluate({ script }) {
+        if (script.includes('a[href]')) {
+          return {
+            resultText: JSON.stringify({
+              url: current,
+              links: [
+                { label: 'Users', href: `${root}/users` },
+                { label: 'Reports', href: `${root}/reports` },
+              ],
+              buttons: ['Settings'],
+            }),
+          };
+        }
+        return { resultText: '{}' };
+      },
+      async interact({ target }) {
+        clicked.push(target);
+        if (/settings/i.test(target)) {
+          current = `${root}#settings`;
+          heading = 'Settings';
+        }
+      },
+      async screenshot() { return { artifactBase64: '' }; },
+      async closeSession() {},
+    };
+    // No story/AC keywords — discovery must still multi-page crawl.
+    const out = await createBrowserExplorer(browser).explore({
+      application: 'GenericPortal',
+      url: root,
+      scenarios: [],
+      maxPages: 4,
+      maxDepth: 2,
+      maxCrawlMs: 30_000,
+    });
+    expect(out.pagesVisited).toBeGreaterThanOrEqual(2);
+    expect(
+      navigated.some((u) => /\/users|\/reports|#settings/i.test(u))
+      || clicked.some((c) => /settings|users|reports/i.test(c)),
+    ).toBe(true);
+    expect(out.summary).toMatch(/Explored \d+ pages:/);
+    expect(out.exploredUrls?.some((u) => u.includes('portal.example.com'))).toBe(true);
+  });
+
   it('clicks SPA category buttons and hash cart links (PayNSure shop style)', async () => {
     const clicked: string[] = [];
     const navigated: string[] = [];
@@ -447,7 +524,8 @@ ${extra}
       scenarios: [],
     });
     expect(navigates).toBeGreaterThanOrEqual(2);
-    expect(evaluates).toBe(2);
+    // Probe may run twice (lost tab + retry); crawl may add one discovery evaluate per page.
+    expect(evaluates).toBeGreaterThanOrEqual(2);
     expect(out.findings).toMatch(/Add to cart/);
   });
 

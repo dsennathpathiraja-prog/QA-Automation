@@ -122,7 +122,7 @@ function throwIfNavigationFailed(input: {
 
 /**
  * Capture a snapshot useful for planning: SPA settle, aria retries, then DOM/iframe
- * evaluate when the accessibility tree is empty (PayNSure shop / SDK shells).
+ * evaluate when the accessibility tree is empty (shell / iframe apps).
  */
 async function captureActionableSnapshot(
   browser: BrowserAutomationPort,
@@ -207,8 +207,10 @@ async function captureActionableSnapshot(
 /**
  * In-repo explorer that drives the managed Playwright MCP connector
  * (same role as Cursor's playwright-browser MCP). Runs BEFORE the planner so
- * findings can feed the Markdown test plan. Failures throw — Explore UI must
- * succeed with a real session + navigate + non-empty snapshot before planning.
+ * findings can feed the Markdown test plan. App-agnostic: starts at the WI /
+ * environment URL (any allowlisted host), then bounded-crawls in-app
+ * links/buttons/tabs. Failures throw — Explore UI must succeed with a real
+ * session + navigate + non-empty snapshot before planning.
  */
 export function createBrowserExplorer(browser: BrowserAutomationPort | undefined): BrowserExplorerPort {
   return {
@@ -281,8 +283,9 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         probeErrors.push(probeError);
       };
 
-      // Hash-aware view keys so `#order-summary` and category filter views are distinct.
+      // Hash-aware view keys so `#section` routes and same-URL SPA views are distinct.
       const visited = new Set<string>();
+      const discoveryDone = new Set<string>();
       const markVisited = (url: string, opts?: { cuesSummary?: string; clickLabel?: string }) => {
         const urlOnly = normalizeExploreUrl(url, undefined, { keepHash: true });
         if (urlOnly) visited.add(urlOnly.toLowerCase());
@@ -486,7 +489,7 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         const triedTargets = new Set<string>();
 
         const discoverTargets = async (pageUrl: string, depth: number, cuesSummary?: string): Promise<CrawlTarget[]> => {
-          // Prefer cues already on the snapshot — enrich with hrefs (incl. hash routes) via one evaluate.
+          // Snapshot cues + one DOM discovery evaluate per page (app-agnostic: links, buttons, tabs, menus).
           let links: Array<{ label: string; href?: string }> = [];
           let buttons: string[] = [];
           if (cuesSummary) {
@@ -494,9 +497,9 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
             links = (cues.links || []).map((label) => ({ label }));
             buttons = cues.buttons || [];
           }
-          const needsHrefEnrichment = links.length > 0 && links.every((l) => !l.href);
-          const needsButtonDiscover = buttons.length === 0 && links.length === 0;
-          if (browser.evaluate && (needsHrefEnrichment || needsButtonDiscover)) {
+          const pageKey = normalizeExploreUrl(pageUrl, undefined, { keepHash: true })?.toLowerCase() || pageUrl.toLowerCase();
+          if (browser.evaluate && !discoveryDone.has(pageKey)) {
+            discoveryDone.add(pageKey);
             try {
               const out = await browser.evaluate({ script: CRAWL_LINK_DISCOVERY_SCRIPT });
               const discovered = parseCrawlDiscovery(out.resultText || out.accessibilityTree || '');
@@ -509,7 +512,7 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
                     ...l,
                     href: l.href || byLabel.get(l.label.toLowerCase()),
                   }))
-                  : discovered.links;
+                  : [...discovered.links];
                 for (const extra of discovered.links) {
                   if (!links.some((l) => l.label.toLowerCase() === extra.label.toLowerCase())) {
                     links.push(extra);
@@ -522,11 +525,10 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
                 }
               }
             } catch {
-              // Discovery evaluate is best-effort.
+              // Discovery evaluate is best-effort (avoid circuit-breaker storms).
             }
           }
-          // Only follow controls present on the page (plus hrefs from evaluate).
-          // Template candidate routes are probed separately above — do not invent shop paths here.
+          // Follow controls present on the page only — no product-specific invented routes.
           return collectCrawlTargets({
             links,
             buttons,
@@ -564,7 +566,9 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
             continue;
           }
 
-          for (const target of targets.slice(0, 8)) {
+          // Visit as many in-scope targets as page/depth/time bounds allow (no artificial tiny cap).
+          const targetBudget = Math.max(pageCap * 3, 12);
+          for (const target of targets.slice(0, targetBudget)) {
             if (!crawlBudgetOpen({ ...bounds, maxPages: pageCap }, details.length)) break;
             const targetKey = `${target.kind}|${target.label.toLowerCase()}|${(target.href || '').toLowerCase()}`;
             if (triedTargets.has(targetKey)) continue;

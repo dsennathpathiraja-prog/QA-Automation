@@ -23,10 +23,13 @@ describe('explore-crawl', () => {
     surfaces: ['checkout order trigger'],
   };
 
-  it('scores story-relevant nav higher than unrelated labels', () => {
+  it('scores story-relevant nav higher than unrelated labels; baseline works with empty keywords', () => {
     const checkout = scoreCrawlTarget('Checkout', 'https://shop.example/checkout', keywords);
     const random = scoreCrawlTarget('Cookie settings', 'https://shop.example/cookies', keywords);
     expect(checkout).toBeGreaterThan(random);
+    const empty = { terms: [], criteria: [], surfaces: [] };
+    expect(scoreCrawlTarget('Users', 'https://portal.example.com/app/users', empty)).toBeGreaterThan(0);
+    expect(scoreCrawlTarget('Settings', undefined, empty)).toBeGreaterThan(0);
   });
 
   it('rejects destructive labels and mailto; keeps navigational hash hrefs', () => {
