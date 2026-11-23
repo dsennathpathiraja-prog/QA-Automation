@@ -15,5 +15,6 @@ export * from './planner';
 export * from './generator';
 export * from './healer';
 export * from './browser-explorer';
+export * from './explore-crawl';
 export * from './code-explorer';
 export * from './mcp-adapters';

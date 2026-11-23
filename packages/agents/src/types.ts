@@ -139,8 +139,12 @@ export interface ExploreRequest {
   /** Optional criteria / path labels when exploring before the plan exists. */
   criteria?: string[];
   scenarios: PlannerScenario[];
-  /** Cap pages / screenshots for a single run. */
+  /** Cap pages / screenshots for a single run (bounded crawl). */
   maxPages?: number;
+  /** Max click/nav depth from the start page (default 2). */
+  maxDepth?: number;
+  /** Soft wall-clock budget for multi-page crawl in ms (default 45s). */
+  maxCrawlMs?: number;
   executionId?: string;
   stepId?: string;
 }
@@ -158,6 +162,30 @@ export interface ExploreFinding {
   /** Compact cues (links / buttons / fields / headings) for findings. */
   cuesSummary?: string;
   screenshotBase64?: string;
+  /** Optional click that produced this page/view (when from crawl). */
+  viaClick?: string;
+}
+
+/** One explore click/nav attempt with before→after UI observations for the MD findings. */
+export interface ExploreClickOutcome {
+  control: string;
+  kind: 'link' | 'button' | 'route';
+  urlBefore: string;
+  urlAfter: string;
+  headingBefore?: string;
+  headingAfter?: string;
+  cuesBefore?: string;
+  cuesAfter?: string;
+  /** Human summary of what changed (or that catalog looked the same). */
+  changeSummary: string;
+  changed: boolean;
+  /** Controls observed disabled before the click. */
+  disabledBefore?: string[];
+  /** Controls observed disabled after the click. */
+  disabledAfter?: string[];
+  /** Controls that became enabled after the click. */
+  newlyEnabled?: string[];
+  result: 'captured' | 'documented' | 'no-op' | 'skipped-disabled' | 'error';
 }
 
 export interface ExploreResult {
@@ -178,6 +206,12 @@ export interface ExploreResult {
   templatePreviewUrl?: string;
   /** Candidate routes tried / suggested beyond the environment root. */
   candidateRoutes?: string[];
+  /** Distinct pages captured during multi-page explore (operator progress). */
+  pagesVisited?: number;
+  /** Ordered unique URLs visited during explore. */
+  exploredUrls?: string[];
+  /** Per-click before→after observations (systematic crawl findings). */
+  clickOutcomes?: ExploreClickOutcome[];
 }
 
 export interface CodeExploreRequest {

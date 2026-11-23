@@ -170,6 +170,9 @@ export async function performRequirementStep(
       primarySurfaceUrl: explored.primarySurfaceUrl,
       blockingGap: explored.blockingGap,
       candidateRoutes: explored.candidateRoutes,
+      pagesVisited: explored.pagesVisited,
+      exploredUrls: explored.exploredUrls,
+      clickOutcomes: explored.clickOutcomes,
     });
     return {
       summary: explored.summary,
@@ -184,6 +187,9 @@ export async function performRequirementStep(
         primarySurfaceUrl: explored.primarySurfaceUrl,
         ...(explored.templatePreviewUrl ? { templatePreviewUrl: explored.templatePreviewUrl } : {}),
         candidateRoutes: explored.candidateRoutes,
+        pagesVisited: explored.pagesVisited ?? details.length,
+        exploredUrls: explored.exploredUrls ?? [...new Set(details.map((d) => d.url).filter(Boolean))],
+        clickOutcomes: explored.clickOutcomes ?? [],
         artifactMarkdown,
         artifactPath: exploreUiArtifactPath(workItem, application),
       },

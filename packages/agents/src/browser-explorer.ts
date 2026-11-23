@@ -11,6 +11,25 @@ import {
   type DomProbeResult,
 } from './dom-probe';
 import {
+  CRAWL_LINK_DISCOVERY_SCRIPT,
+  collectCrawlTargets,
+  createCrawlBounds,
+  crawlBudgetOpen,
+  cuesMeaningfullyChanged,
+  exploreViewKey,
+  formatClickFindings,
+  formatExplorePageProgress,
+  headingFromCues,
+  isHashOnlyNavigation,
+  normalizeExploreUrl,
+  parseCrawlDiscovery,
+  resolveExploreHref,
+  sameExploreHost,
+  summarizeClickChange,
+  type CrawlKeywords,
+  type CrawlTarget,
+} from './explore-crawl';
+import {
   parseMcpPageSnapshot,
   snapshotArtifactBody,
   snapshotIsActionable,
@@ -23,7 +42,14 @@ import {
   resolvePrimarySurfaceUrl,
 } from './surface-binding';
 import { hasNearDuplicateExploreFindings, looksLikeShopSurface, parseExplorationCues } from './playwright-source';
-import type { BrowserAutomationPort, BrowserExplorerPort, ExploreFinding, ExploreRequest, ExploreResult } from './types';
+import type {
+  BrowserAutomationPort,
+  BrowserExplorerPort,
+  ExploreClickOutcome,
+  ExploreFinding,
+  ExploreRequest,
+  ExploreResult,
+} from './types';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -106,7 +132,7 @@ function throwIfNavigationFailed(input: {
 
 /**
  * Capture a snapshot useful for planning: SPA settle, aria retries, then DOM/iframe
- * evaluate when the accessibility tree is empty (PayNSure shop / SDK shells).
+ * evaluate when the accessibility tree is empty (shell / iframe apps).
  */
 async function captureActionableSnapshot(
   browser: BrowserAutomationPort,
@@ -191,8 +217,10 @@ async function captureActionableSnapshot(
 /**
  * In-repo explorer that drives the managed Playwright MCP connector
  * (same role as Cursor's playwright-browser MCP). Runs BEFORE the planner so
- * findings can feed the Markdown test plan. Failures throw — Explore UI must
- * succeed with a real session + navigate + non-empty snapshot before planning.
+ * findings can feed the Markdown test plan. App-agnostic: starts at the WI /
+ * environment URL (any allowlisted host), then bounded-crawls in-app
+ * links/buttons/tabs. Failures throw — Explore UI must succeed with a real
+ * session + navigate + non-empty snapshot before planning.
  */
 export function createBrowserExplorer(browser: BrowserAutomationPort | undefined): BrowserExplorerPort {
   return {
@@ -230,27 +258,51 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
       const templateStory = analysis.notificationTemplate
         || isNotificationTemplateStory(input.story || '', input.criteria ?? [])
         || binding.surfaceKind === 'template';
-      // Story-driven labels: for template WIs prefer template surfaces, not every AC as a fake page.
-      const labels = input.scenarios.length > 0
-        ? input.scenarios.map((s) => s.name)
-        : templateStory
-          ? [
-            binding.primarySurfaceUrl
-              ? 'Explore: escrow notification template / email preview (configured)'
-              : 'Explore: escrow notification template / email preview',
-            ...(analysis.surfaces.some((s) => /checkout|order placement/i.test(s))
-              ? ['Explore: checkout order trigger (secondary)']
-              : []),
-          ]
-          : (input.criteria?.length ? input.criteria : [input.application]).map((c) => `Explore: ${c}`);
+      // Story-driven primary label; additional pages come from bounded link/button crawl.
+      const primaryLabel = input.scenarios[0]?.name
+        || (templateStory
+          ? (binding.primarySurfaceUrl
+            ? 'Explore: escrow notification template / email preview (configured)'
+            : 'Explore: escrow notification template / email preview')
+          : `Explore: ${(input.criteria?.[0] || input.application)}`);
       const details: ExploreFinding[] = [];
       const probes: Array<DomProbeResult | undefined> = [];
       const probeErrors: Array<string | undefined> = [];
       // Prefer WI / configured template preview primary; otherwise the environment app root.
       const startUrl = binding.primarySurfaceUrl || input.url;
-      // One primary capture is enough when we only have a single environment URL; avoid
-      // repeating identical snapshots once per AC label on the same shop page.
-      const limit = Math.min(input.maxPages ?? (templateStory ? 2 : 5), Math.max(1, labels.length), templateStory ? 2 : 8);
+      const bounds = createCrawlBounds({
+        maxPages: input.maxPages ?? (templateStory ? 3 : 5),
+        maxDepth: input.maxDepth ?? (templateStory ? 1 : 2),
+        maxMs: input.maxCrawlMs,
+      });
+      // Template stories keep a tighter page cap so shop crawl does not drown email evidence.
+      const pageCap = templateStory ? Math.min(bounds.maxPages, 3) : bounds.maxPages;
+      const crawlKeywords: CrawlKeywords = {
+        terms: analysis.searchTerms,
+        criteria: input.criteria ?? [],
+        surfaces: analysis.surfaces,
+      };
+
+      const pushFinding = (
+        finding: ExploreFinding,
+        probe?: DomProbeResult,
+        probeError?: string,
+      ) => {
+        details.push(finding);
+        probes.push(probe);
+        probeErrors.push(probeError);
+      };
+
+      // Hash-aware view keys so `#section` routes and same-URL SPA views are distinct.
+      const visited = new Set<string>();
+      const discoveryDone = new Set<string>();
+      const clickOutcomes: ExploreClickOutcome[] = [];
+      const markVisited = (url: string, opts?: { cuesSummary?: string; clickLabel?: string }) => {
+        const urlOnly = normalizeExploreUrl(url, undefined, { keepHash: true });
+        if (urlOnly) visited.add(urlOnly.toLowerCase());
+        visited.add(exploreViewKey({ url, cuesSummary: opts?.cuesSummary, clickLabel: opts?.clickLabel }));
+      };
+
       try {
         await browser.openSession();
         let nav: Awaited<ReturnType<BrowserAutomationPort['navigate']>>;
@@ -285,28 +337,32 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
           raw: nav.accessibilityTree,
         });
 
+        let earlyProbe: { probe?: DomProbeResult; error?: string } | undefined;
+        let currentUrl = nav.finalUrl || startUrl;
+
         // Prefer a snapshot already attached to navigate when the tree is rich enough.
         if (nav.accessibilityTree) {
           const fromNav = parseMcpPageSnapshot(nav.accessibilityTree);
           if (!fromNav.url) fromNav.url = nav.finalUrl || startUrl;
           if (!fromNav.title && nav.title) fromNav.title = nav.title;
-          if (snapshotIsActionable(fromNav) && labels.length === 1) {
+          if (snapshotIsActionable(fromNav)) {
             const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
-            details.push({
-              scenarioName: labels[0]!,
-              url: fromNav.url || nav.finalUrl || startUrl,
+            const url = fromNav.url || nav.finalUrl || startUrl;
+            const cuesSummary = summarizeSnapshotForFindings(fromNav);
+            pushFinding({
+              scenarioName: primaryLabel,
+              url,
               title: fromNav.title || undefined,
               snapshotExcerpt: snapshotArtifactBody(fromNav),
-              cuesSummary: summarizeSnapshotForFindings(fromNav),
+              cuesSummary,
               screenshotBase64: shot.artifactBase64 || undefined,
             });
-            probes.push(undefined);
-            probeErrors.push(undefined);
+            markVisited(url, { cuesSummary });
+            currentUrl = url;
           }
         }
 
         // One early DOM probe when navigate aria is empty — reused by capture (no evaluate spam).
-        let earlyProbe: { probe?: DomProbeResult; error?: string } | undefined;
         if (details.length === 0 && browser.evaluate) {
           earlyProbe = await probeDom(browser, { reNavigateUrl: startUrl });
           throwIfNavigationFailed({
@@ -315,24 +371,25 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
             raw: nav.accessibilityTree,
             probe: earlyProbe.probe,
           });
-          if (domProbeIsActionable(earlyProbe.probe) && labels.length === 1) {
+          if (domProbeIsActionable(earlyProbe.probe)) {
             const fromDom = parsedSnapshotFromDomProbe(earlyProbe.probe!);
             const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
-            details.push({
-              scenarioName: labels[0]!,
-              url: fromDom.url || nav.finalUrl || startUrl,
+            const url = fromDom.url || nav.finalUrl || startUrl;
+            const cuesSummary = summarizeSnapshotForFindings(fromDom);
+            pushFinding({
+              scenarioName: primaryLabel,
+              url,
               title: fromDom.title || undefined,
               snapshotExcerpt: snapshotArtifactBody(fromDom),
-              cuesSummary: summarizeSnapshotForFindings(fromDom),
+              cuesSummary,
               screenshotBase64: shot.artifactBase64 || undefined,
-            });
-            probes.push(earlyProbe.probe);
-            probeErrors.push(undefined);
+            }, earlyProbe.probe);
+            markVisited(url, { cuesSummary });
+            currentUrl = url;
           }
         }
 
-        for (let i = details.length; i < limit; i += 1) {
-          const label = labels[i] ?? `page-${i + 1}`;
+        if (details.length === 0) {
           const { parsed, accessibilityTree, probe, probeError } = await captureActionableSnapshot(
             browser,
             nav.finalUrl || startUrl,
@@ -340,16 +397,18 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
             earlyProbe,
           );
           const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
-          details.push({
-            scenarioName: label,
-            url: parsed.url || nav.finalUrl || startUrl,
+          const url = parsed.url || nav.finalUrl || startUrl;
+          const cuesSummary = summarizeSnapshotForFindings(parsed);
+          pushFinding({
+            scenarioName: primaryLabel,
+            url,
             title: parsed.title || undefined,
             snapshotExcerpt: accessibilityTree,
-            cuesSummary: summarizeSnapshotForFindings(parsed),
+            cuesSummary,
             screenshotBase64: shot.artifactBase64 || undefined,
-          });
-          probes.push(probe);
-          probeErrors.push(probeError);
+          }, probe, probeError);
+          markVisited(url, { cuesSummary });
+          currentUrl = url;
         }
 
         // Template WI + shop-only root: quick-probe a few candidate routes (no long SPA settle).
@@ -361,12 +420,16 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
           && looksLikeShopSurface(rootCues)
           && !exploredSurfaceMatchesKind('template', rootCues)
           && binding.candidateUrls.length > 0
+          && crawlBudgetOpen({ ...bounds, maxPages: pageCap }, details.length)
         ) {
-          const tried = new Set(details.map((d) => (d.url || '').toLowerCase()));
           const toTry = binding.candidateUrls
-            .filter((u) => u !== startUrl && u !== input.url && !tried.has(u.toLowerCase()))
+            .filter((u) => {
+              const n = normalizeExploreUrl(u)?.toLowerCase();
+              return Boolean(n) && !visited.has(n!);
+            })
             .slice(0, 2);
           for (const candidate of toTry) {
+            if (!crawlBudgetOpen({ ...bounds, maxPages: pageCap }, details.length)) break;
             try {
               const candNav = await browser.navigate(candidate);
               throwIfNavigationFailed({
@@ -391,18 +454,20 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
               if (!snapshotIsActionable(parsed)) continue;
               const body = snapshotArtifactBody(parsed) || tree;
               const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
-              details.push({
+              const url = parsed.url || pageUrl;
+              const cuesSummary = summarizeSnapshotForFindings(parsed);
+              pushFinding({
                 scenarioName: `Explore candidate: ${candidate}`,
-                url: parsed.url || pageUrl,
+                url,
                 title: parsed.title || undefined,
                 snapshotExcerpt: body,
-                cuesSummary: summarizeSnapshotForFindings(parsed),
+                cuesSummary,
                 screenshotBase64: shot.artifactBase64 || undefined,
               });
-              probes.push(undefined);
-              probeErrors.push(undefined);
+              markVisited(url, { cuesSummary });
+              currentUrl = url;
               if (exploredSurfaceMatchesKind('template', {
-                url: parsed.url || pageUrl,
+                url,
                 title: parsed.title,
                 headings: [],
                 buttons: [],
@@ -413,6 +478,355 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
             } catch {
               // Candidate miss is expected on shop-only hosts — continue; gap recorded below.
             }
+          }
+        }
+
+        // Multi-page crawl: systematically click in-app links/buttons/tabs within host scope.
+        // Restore the frontier page before each click so one hash hop does not strand later filters.
+        // Record before→after click findings even when the catalog dump looks similar.
+        const landingActionable = details.some((d) => {
+          const parsed = parseMcpPageSnapshot(d.snapshotExcerpt);
+          if (!parsed.url) parsed.url = d.url;
+          if (!parsed.title && d.title) parsed.title = d.title;
+          return snapshotIsActionable(parsed);
+        });
+        const crawlFrontier: Array<{ url: string; depth: number; cuesSummary?: string }> = landingActionable
+          ? [{
+            url: currentUrl,
+            depth: 0,
+            cuesSummary: details[details.length - 1]?.cuesSummary,
+          }]
+          : [];
+        const triedTargets = new Set<string>();
+        const maxClicks = Math.max(pageCap * 4, 16);
+        let clicksDone = 0;
+        let landingRetryQueued = false;
+        // Disabled controls noted on a page — retry after another click enables them.
+        const deferredDisabled = new Map<string, CrawlTarget>();
+
+        const discoverOnPage = async (pageUrl: string, depth: number, cuesSummary?: string): Promise<{
+          targets: CrawlTarget[];
+          disabled: string[];
+        }> => {
+          let links: Array<{ label: string; href?: string }> = [];
+          let buttons: string[] = [];
+          let disabled: string[] = [];
+          if (cuesSummary) {
+            const cues = parseExplorationCues(`- page @ ${pageUrl}\n  ${cuesSummary}`);
+            links = (cues.links || []).map((label) => ({ label }));
+            buttons = cues.buttons || [];
+          }
+          const pageKey = normalizeExploreUrl(pageUrl, undefined, { keepHash: true })?.toLowerCase() || pageUrl.toLowerCase();
+          // Re-run discovery when we need fresh disabled/enabled state (keyed per visit attempt via force below).
+          if (browser.evaluate) {
+            try {
+              const out = await browser.evaluate({ script: CRAWL_LINK_DISCOVERY_SCRIPT });
+              const discovered = parseCrawlDiscovery(out.resultText || out.accessibilityTree || '');
+              if (discovered) {
+                discoveryDone.add(pageKey);
+                disabled = discovered.disabled;
+                if (discovered.links.length) {
+                  const byLabel = new Map(
+                    discovered.links.map((l) => [l.label.toLowerCase(), l] as const),
+                  );
+                  links = links.length > 0
+                    ? links.map((l) => {
+                      const hit = byLabel.get(l.label.toLowerCase());
+                      return { ...l, href: l.href || hit?.href };
+                    })
+                    : discovered.links.map((l) => ({ label: l.label, href: l.href }));
+                  for (const extra of discovered.links) {
+                    if (!links.some((l) => l.label.toLowerCase() === extra.label.toLowerCase())) {
+                      links.push({ label: extra.label, href: extra.href });
+                    }
+                  }
+                }
+                for (const b of discovered.buttons) {
+                  if (!buttons.some((x) => x.toLowerCase() === b.toLowerCase())) buttons.push(b);
+                }
+              }
+            } catch {
+              // Discovery evaluate is best-effort.
+            }
+          }
+          const targets = collectCrawlTargets({
+            links: links.filter((l) => !disabled.some((d) => d.toLowerCase() === l.label.toLowerCase())),
+            buttons: buttons.filter((b) => !disabled.some((d) => d.toLowerCase() === b.toLowerCase())),
+            pageUrl,
+            depth,
+            keywords: crawlKeywords,
+            visited,
+          });
+          return { targets, disabled };
+        };
+
+        const ensureOn = async (url: string): Promise<void> => {
+          const want = normalizeExploreUrl(url, undefined, { keepHash: true })?.toLowerCase();
+          const have = normalizeExploreUrl(currentUrl, undefined, { keepHash: true })?.toLowerCase();
+          if (want && have && want === have) return;
+          const back = await browser.navigate(url);
+          currentUrl = back.finalUrl || url;
+          await settleForStorefront(browser, 1.0);
+        };
+
+        while (
+          crawlBudgetOpen({ ...bounds, maxPages: Math.max(pageCap, 1) }, 0)
+          && clicksDone < maxClicks
+          && crawlFrontier.length > 0
+        ) {
+          // Time budget only for the outer loop (page count gated when capturing).
+          if (Date.now() - bounds.startedAt >= bounds.maxMs) break;
+          const node = crawlFrontier.shift()!;
+          if (node.depth >= bounds.maxDepth) continue;
+
+          try {
+            await ensureOn(node.url);
+          } catch {
+            continue;
+          }
+
+          let targets: CrawlTarget[] = [];
+          let pageDisabled: string[] = [];
+          try {
+            const discovered = await discoverOnPage(currentUrl, node.depth + 1, node.cuesSummary);
+            targets = discovered.targets;
+            pageDisabled = discovered.disabled;
+          } catch {
+            continue;
+          }
+
+          for (const d of pageDisabled) {
+            const key = `disabled|${d.toLowerCase()}`;
+            if (!triedTargets.has(key) && !deferredDisabled.has(key)) {
+              deferredDisabled.set(key, {
+                kind: 'button',
+                label: d,
+                score: 1,
+                depth: node.depth + 1,
+              });
+              clickOutcomes.push({
+                control: d,
+                kind: 'button',
+                urlBefore: currentUrl,
+                urlAfter: currentUrl,
+                headingBefore: headingFromCues(node.cuesSummary),
+                cuesBefore: node.cuesSummary,
+                changeSummary: `observed disabled — will retry if enabled later`,
+                changed: false,
+                disabledBefore: pageDisabled,
+                result: 'skipped-disabled',
+              });
+            }
+          }
+
+          // Prefer filters/nav/hash over long CTAs; still try many within click budget.
+          const queue = [...targets];
+          for (const [key, deferred] of deferredDisabled) {
+            if (pageDisabled.some((d) => d.toLowerCase() === deferred.label.toLowerCase())) continue;
+            if (!queue.some((t) => t.label.toLowerCase() === deferred.label.toLowerCase())) {
+              queue.push(deferred);
+            }
+            deferredDisabled.delete(key);
+          }
+
+          for (const target of queue.slice(0, Math.max(pageCap * 4, 16))) {
+            if (clicksDone >= maxClicks) break;
+            if (Date.now() - bounds.startedAt >= bounds.maxMs) break;
+            const targetKey = `${target.kind}|${target.label.toLowerCase()}|${(target.href || '').toLowerCase()}`;
+            if (triedTargets.has(targetKey)) continue;
+            triedTargets.add(targetKey);
+
+            // Always return to the frontier page so hash/cart hops do not skip sibling filters.
+            try {
+              await ensureOn(node.url);
+            } catch {
+              break;
+            }
+
+            const priorCues = node.cuesSummary;
+            const urlBefore = currentUrl;
+            const disabledBefore = pageDisabled;
+            clicksDone += 1;
+
+            try {
+              const preferClick = Boolean(browser.interact) && (
+                target.kind === 'button'
+                || target.hashNav
+                || !target.href
+                || (target.href ? isHashOnlyNavigation(currentUrl, target.href) : false)
+              );
+
+              if (preferClick && browser.interact) {
+                await browser.interact({ action: 'click', target: target.label });
+                await settleForStorefront(browser, 1.2);
+                const after = await browser.snapshot().catch(() => undefined);
+                currentUrl = after?.url || currentUrl;
+                if (
+                  target.href
+                  && sameExploreHost(startUrl, target.href)
+                  && isHashOnlyNavigation(node.url, target.href)
+                ) {
+                  const afterNorm = normalizeExploreUrl(currentUrl, undefined, { keepHash: true })?.toLowerCase();
+                  const wantNorm = normalizeExploreUrl(target.href, undefined, { keepHash: true })?.toLowerCase();
+                  if (wantNorm && afterNorm !== wantNorm) {
+                    const hop = await browser.navigate(target.href);
+                    currentUrl = hop.finalUrl || target.href;
+                  }
+                }
+              } else if (target.href && sameExploreHost(startUrl, target.href)) {
+                const resolved = resolveExploreHref(target.href, currentUrl) || target.href;
+                const hop = await browser.navigate(resolved);
+                currentUrl = hop.finalUrl || resolved;
+              } else if (browser.interact) {
+                await browser.interact({ action: 'click', target: target.label });
+                await settleForStorefront(browser, 1.2);
+                const after = await browser.snapshot().catch(() => undefined);
+                currentUrl = after?.url || currentUrl;
+              } else {
+                continue;
+              }
+
+              if (!sameExploreHost(startUrl, currentUrl) && !sameExploreHost(input.url, currentUrl)) {
+                clickOutcomes.push({
+                  control: target.label,
+                  kind: target.kind,
+                  urlBefore,
+                  urlAfter: currentUrl,
+                  changeSummary: 'left allowlisted host — abandoned hop',
+                  changed: false,
+                  result: 'error',
+                });
+                await ensureOn(node.url).catch(() => undefined);
+                continue;
+              }
+
+              const { parsed, accessibilityTree, probe, probeError } = await captureActionableSnapshot(
+                browser,
+                currentUrl,
+                currentUrl,
+              );
+              const pageUrl = parsed.url || currentUrl;
+              const cuesSummary = snapshotIsActionable(parsed) || domProbeIsActionable(probe)
+                ? summarizeSnapshotForFindings(parsed)
+                : priorCues;
+              let disabledAfter: string[] = [];
+              if (browser.evaluate) {
+                try {
+                  const out = await browser.evaluate({ script: CRAWL_LINK_DISCOVERY_SCRIPT });
+                  disabledAfter = parseCrawlDiscovery(out.resultText || '')?.disabled ?? [];
+                } catch {
+                  disabledAfter = [];
+                }
+              }
+              const diff = summarizeClickChange({
+                urlBefore,
+                urlAfter: pageUrl,
+                cuesBefore: priorCues,
+                cuesAfter: cuesSummary,
+                disabledBefore,
+                disabledAfter,
+              });
+              const urlWithHash = normalizeExploreUrl(pageUrl, undefined, { keepHash: true })?.toLowerCase()
+                || pageUrl.toLowerCase();
+              const viewKey = exploreViewKey({ url: pageUrl, cuesSummary, clickLabel: target.label });
+              const urlChanged = urlWithHash !== (normalizeExploreUrl(node.url, undefined, { keepHash: true })?.toLowerCase() || '');
+              const cueChanged = cuesMeaningfullyChanged(priorCues, cuesSummary);
+              const shouldCapture = (urlChanged || cueChanged || diff.newlyEnabled.length > 0)
+                && !visited.has(viewKey)
+                && details.length < pageCap
+                && (snapshotIsActionable(parsed) || domProbeIsActionable(probe));
+
+              const outcome: ExploreClickOutcome = {
+                control: target.label,
+                kind: target.kind,
+                urlBefore,
+                urlAfter: pageUrl,
+                headingBefore: headingFromCues(priorCues),
+                headingAfter: headingFromCues(cuesSummary),
+                cuesBefore: priorCues,
+                cuesAfter: cuesSummary,
+                changeSummary: diff.changeSummary,
+                changed: diff.changed,
+                disabledBefore: disabledBefore.length ? disabledBefore : undefined,
+                disabledAfter: disabledAfter.length ? disabledAfter : undefined,
+                newlyEnabled: diff.newlyEnabled.length ? diff.newlyEnabled : undefined,
+                result: shouldCapture ? 'captured' : (diff.changed ? 'documented' : 'no-op'),
+              };
+              clickOutcomes.push(outcome);
+
+              // Newly enabled controls become candidates on a follow-up pass of this page.
+              for (const label of diff.newlyEnabled) {
+                const key = `enabled|${label.toLowerCase()}`;
+                if (!triedTargets.has(`button|${label.toLowerCase()}|`)) {
+                  deferredDisabled.set(key, {
+                    kind: 'button',
+                    label,
+                    score: 8,
+                    depth: node.depth + 1,
+                  });
+                }
+              }
+
+              if (shouldCapture) {
+                const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
+                pushFinding({
+                  scenarioName: `Explore via ${target.kind}: ${target.label}`.slice(0, 120),
+                  url: pageUrl,
+                  title: parsed.title || undefined,
+                  snapshotExcerpt: accessibilityTree,
+                  cuesSummary,
+                  screenshotBase64: shot.artifactBase64 || undefined,
+                  viaClick: target.label,
+                }, probe, probeError);
+                markVisited(pageUrl, { cuesSummary, clickLabel: target.label });
+                if (urlChanged && node.depth + 1 < bounds.maxDepth) {
+                  crawlFrontier.push({
+                    url: pageUrl,
+                    depth: node.depth + 1,
+                    cuesSummary,
+                  });
+                }
+              }
+
+              // Return to frontier page for the next sibling control.
+              await ensureOn(node.url).catch(() => undefined);
+              // Refresh disabled list for subsequent siblings on this page.
+              if (browser.evaluate) {
+                try {
+                  const out = await browser.evaluate({ script: CRAWL_LINK_DISCOVERY_SCRIPT });
+                  pageDisabled = parseCrawlDiscovery(out.resultText || '')?.disabled ?? pageDisabled;
+                } catch {
+                  /* keep prior */
+                }
+              }
+            } catch {
+              clickOutcomes.push({
+                control: target.label,
+                kind: target.kind,
+                urlBefore,
+                urlAfter: currentUrl,
+                changeSummary: 'click/nav error — soft-failed',
+                changed: false,
+                result: 'error',
+              });
+              await ensureOn(node.url).catch(() => undefined);
+            }
+          }
+
+          // Re-queue landing once if deferred controls became enabled.
+          if (
+            !landingRetryQueued
+            && deferredDisabled.size > 0
+            && node.depth === 0
+            && clicksDone < maxClicks
+            && Date.now() - bounds.startedAt < bounds.maxMs
+          ) {
+            landingRetryQueued = true;
+            crawlFrontier.push({
+              url: node.url,
+              depth: 0,
+              cuesSummary: node.cuesSummary,
+            });
           }
         }
       } finally {
@@ -463,7 +877,8 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         })
         .join('\n');
 
-      const findingsText = findingsBody;
+      const clickFindings = formatClickFindings(clickOutcomes);
+      const findingsText = [findingsBody, clickFindings].filter(Boolean).join('\n\n');
       const cues = parseExplorationCues(findingsText);
       const shopOnly = looksLikeShopSurface(cues, findingsText);
       const duplicate = hasNearDuplicateExploreFindings(findingsText) || actionable.length > unique.length;
@@ -496,14 +911,19 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
       const visitedUrls = [...new Set(unique.map((d) => d.url).filter(Boolean))];
       const primarySurfaceUrl = resolvePrimarySurfaceUrl(binding, visitedUrls)
         || (templateMatch ? visitedUrls.find((u) => exploredSurfaceMatchesKind('template', { url: u })) : undefined);
+      const pageProgress = formatExplorePageProgress(visitedUrls.length > 0 ? visitedUrls : [input.url]);
+      const clickCount = clickOutcomes.filter((o) => o.result !== 'skipped-disabled').length;
       const findings = [
+        pageProgress,
         findingsBody,
+        clickFindings,
         `\n- Story surface binding: kind=${binding.surfaceKind}`
           + (primarySurfaceUrl ? `; primary=${primarySurfaceUrl}` : '; primary=(unbound)')
           + (binding.templatePreviewUrl ? `; templatePreview=${binding.templatePreviewUrl}` : '')
           + (binding.candidateRoutes.length
             ? `; candidates=${binding.candidateRoutes.slice(0, 6).join(',')}`
             : ''),
+        `\n- Multi-page explore: ${unique.length} distinct page snapshot${unique.length === 1 ? '' : 's'} (cap ${pageCap}, depth ≤ ${bounds.maxDepth}); ${clickCount} control click${clickCount === 1 ? '' : 's'} recorded`,
         warning ? `\n- Explore coverage warning: ${warning}` : '',
         blockingGap ? '\n- Blocking explore gap: true (fail closed — no Passed on mismatched surface)' : '',
         !blockingGap && templateMatch
@@ -512,14 +932,14 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         templateStory && analysis.searchTerms.length
           ? `\n- Story search terms (for template surfaces): ${analysis.searchTerms.slice(0, 8).join(', ')}`
           : '',
-      ].filter(Boolean).join('');
+      ].filter(Boolean).join('\n');
 
       const urlList = (visitedUrls.length > 0 ? visitedUrls : [input.url]).join(', ');
       const summary = warning
-        ? `Visited ${urlList} (${unique.length} distinct surface${unique.length === 1 ? '' : 's'}) for ${input.application} before planning. ${warning}`
+        ? `${pageProgress} (${clickCount} clicks) for ${input.application} before planning (${unique.length} distinct surface${unique.length === 1 ? '' : 's'}: ${urlList}). ${warning}`
         : templateMatch
-          ? `Visited ${urlList} (${unique.length} page snapshot${unique.length === 1 ? '' : 's'}) for ${input.application} — notification/template preview surface reached.`
-          : `Visited ${urlList} (${unique.length} page snapshot${unique.length === 1 ? '' : 's'}) for ${input.application} before planning.`;
+          ? `${pageProgress} (${clickCount} clicks) for ${input.application} — notification/template preview surface reached.`
+          : `${pageProgress} (${clickCount} clicks) for ${input.application} before planning.`;
       return {
         summary,
         findings,
@@ -532,6 +952,9 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         primarySurfaceUrl,
         ...(binding.templatePreviewUrl ? { templatePreviewUrl: binding.templatePreviewUrl } : {}),
         candidateRoutes: binding.candidateRoutes,
+        pagesVisited: unique.length,
+        exploredUrls: visitedUrls.length > 0 ? visitedUrls : [input.url],
+        clickOutcomes,
       };
     },
   };
