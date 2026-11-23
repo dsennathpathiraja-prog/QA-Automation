@@ -1,4 +1,5 @@
 export * from './ports';
+export * from './project-service';
 export * from './connector-service';
 export * from './environment-service';
 export * from './environment-config';

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useApi } from '../../api/context';
+import { useProject } from '../../project/ProjectContext';
 import { Card, ErrorNotice, PageHeader } from '../common';
 import { TestPanel } from './TestPanel';
 import { DescriptorFields, Field, buttonClass, connectorKey, connectorsKey, errorText, fieldClass, primaryButtonClass, useProviders } from './shared';
@@ -15,6 +16,7 @@ export function ConnectorWizard() {
   const api = useApi();
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const { selectedId, selected } = useProject();
   const providers = useProviders();
   const [step, setStep] = useState<Step>('choose');
   const [providerKey, setProviderKey] = useState<string | undefined>();
@@ -25,11 +27,16 @@ export function ConnectorWizard() {
 
   const create = useMutation({
     mutationFn: () => {
+      if (!selectedId) throw new Error('Select a project before adding a connector.');
       const config: Record<string, unknown> = {};
       for (const f of provider!.configFields) if (values[f.name] !== undefined && values[f.name] !== '') config[f.name] = values[f.name];
       const secrets: Record<string, unknown> = {};
       for (const m of provider!.authMethods.slice(0, 1)) for (const f of m.fields) secrets[f.name] = values[f.name] ?? '';
-      return api.post('/api/v1/connectors', { providerKey: provider!.providerKey, name, config, secrets: provider!.authMethods.length > 0 ? secrets : undefined }, ConnectorDetailSchema);
+      return api.post(
+        '/api/v1/connectors',
+        { projectId: selectedId, providerKey: provider!.providerKey, name, config, secrets: provider!.authMethods.length > 0 ? secrets : undefined },
+        ConnectorDetailSchema,
+      );
     },
     onSuccess: async (d) => {
       setCreatedId(d.id);
@@ -58,7 +65,10 @@ export function ConnectorWizard() {
 
   return (
     <>
-      <PageHeader title="Add connector" description="Pick a system, enter its details, and check the connection before anything is switched on." />
+      <PageHeader
+        title="Add connector"
+        description={selected ? `Add a connection to project ${selected.name}.` : 'Pick a system, enter its details, and check the connection before anything is switched on.'}
+      />
       <ol className="mb-4 flex flex-wrap gap-2 text-sm" aria-label="Steps">
         {ORDER.map((s, i) => (
           <li key={s} aria-current={s === step ? 'step' : undefined} className={`rounded px-3 py-1 ${s === step ? 'bg-blue-100 font-medium text-blue-900 dark:bg-blue-950 dark:text-blue-100' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200'}`}>

@@ -40,6 +40,7 @@ const RestrictionsSchema = z
 
 export interface EnvironmentSummary {
   id: string;
+  projectId: string;
   name: string;
   kind: EnvironmentKind;
   applicationUrl: string;
@@ -62,6 +63,7 @@ export interface EnvironmentDetail extends EnvironmentSummary {
 }
 
 export interface CreateEnvironmentInput {
+  projectId: string;
   name: string;
   kind: EnvironmentKind;
   applicationUrl: string;
@@ -100,8 +102,8 @@ export class EnvironmentService {
     this.config = new EnvironmentConfig(d, this.clock);
   }
 
-  async list(): Promise<EnvironmentSummary[]> {
-    const rows = await this.d.environments.list();
+  async list(filter?: { projectId?: string }): Promise<EnvironmentSummary[]> {
+    const rows = await this.d.environments.list(filter);
     const out: EnvironmentSummary[] = [];
     for (const row of rows) out.push(await this.summary(row));
     return out;
@@ -123,6 +125,8 @@ export class EnvironmentService {
   }
 
   async create(actor: ActorRef, input: CreateEnvironmentInput): Promise<EnvironmentDetail> {
+    const projectId = (input.projectId ?? '').trim();
+    if (!projectId) throw new PlatformError('validation', 'A project is required to create an environment.');
     const kind = this.kind(input.kind);
     const hosts = await this.d.hosts.list('application');
     const applicationUrl = this.applicationUrl(input.applicationUrl, hosts);
@@ -131,6 +135,7 @@ export class EnvironmentService {
     const restrictions = this.restrictions(kind, input.restrictions);
     const rec = await this.d.environments.insert({
       id: randomUUID(),
+      projectId,
       name: this.name(input.name),
       kind,
       applicationUrl,
@@ -140,7 +145,13 @@ export class EnvironmentService {
       enabled: input.enabled !== false,
       createdBy: actor.id,
     });
-    await this.d.audit.append({ actorId: actor.id, action: 'environment.create', subjectType: 'environment', subjectId: rec.id, detail: { name: rec.name, kind: rec.kind } });
+    await this.d.audit.append({
+      actorId: actor.id,
+      action: 'environment.create',
+      subjectType: 'environment',
+      subjectId: rec.id,
+      detail: { projectId, name: rec.name, kind: rec.kind },
+    });
     return this.get(rec.id);
   }
 
@@ -202,6 +213,7 @@ export class EnvironmentService {
     const selectable = row.enabled && (row.kind !== 'production' || this.authorizationHolds(auth));
     return {
       id: row.id,
+      projectId: row.projectId,
       name: row.name,
       kind: row.kind,
       applicationUrl: row.applicationUrl,

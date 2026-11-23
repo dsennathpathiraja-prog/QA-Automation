@@ -22,8 +22,10 @@ export class InMemoryConnectorRepository implements ConnectorRepository {
   readonly health: { id: string; result: string; detail?: Record<string, unknown>; latencyMs?: number }[] = [];
   private readonly deleted = new Set<string>();
 
-  async list() {
-    return [...this.rows.values()].filter((r) => !this.deleted.has(r.id)).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  async list(filter?: { projectId?: string }) {
+    return [...this.rows.values()]
+      .filter((r) => !this.deleted.has(r.id) && (!filter?.projectId || r.projectId === filter.projectId))
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }
 
   async get(id: string) {
@@ -31,8 +33,8 @@ export class InMemoryConnectorRepository implements ConnectorRepository {
   }
 
   async insert(n: NewConnector) {
-    if ([...this.rows.values()].some((r) => !this.deleted.has(r.id) && r.providerKey === n.providerKey && r.name === n.name)) {
-      throw new PlatformError('conflict', `A connector named "${n.name}" already exists for this provider.`);
+    if ([...this.rows.values()].some((r) => !this.deleted.has(r.id) && r.projectId === n.projectId && r.providerKey === n.providerKey && r.name === n.name)) {
+      throw new PlatformError('conflict', `A connector named "${n.name}" already exists for this provider in this project.`);
     }
     const now = new Date();
     const rec: ConnectorRecord = { ...n, status: 'draft', enabled: false, configVersion: 1, createdAt: now, updatedAt: now };
@@ -43,8 +45,8 @@ export class InMemoryConnectorRepository implements ConnectorRepository {
   async update(id: string, patch: ConnectorPatch) {
     const rec = this.rows.get(id);
     if (!rec || this.deleted.has(id)) throw new PlatformError('not-found', 'Connector not found');
-    if (patch.name && patch.name !== rec.name && [...this.rows.values()].some((r) => r.id !== id && !this.deleted.has(r.id) && r.providerKey === rec.providerKey && r.name === patch.name)) {
-      throw new PlatformError('conflict', `A connector named "${patch.name}" already exists for this provider.`);
+    if (patch.name && patch.name !== rec.name && [...this.rows.values()].some((r) => r.id !== id && !this.deleted.has(r.id) && r.projectId === rec.projectId && r.providerKey === rec.providerKey && r.name === patch.name)) {
+      throw new PlatformError('conflict', `A connector named "${patch.name}" already exists for this provider in this project.`);
     }
     const { permissionReport, discoveredInfo, ...rest } = patch;
     Object.assign(rec, rest, { updatedAt: new Date() });

@@ -71,7 +71,7 @@ describe('seed', () => {
 });
 
 describe('database-enforced invariants', () => {
-  const connector = (over: Record<string, unknown> = {}) => ({ providerKey: 'github', category: 'source-repo', name: 'repo-a', accessMode: 'read_only', ...over });
+  const connector = (over: Record<string, unknown> = {}) => ({ projectId: '01900000-0000-7000-8000-000000000001', providerKey: 'github', category: 'source-repo', name: 'repo-a', accessMode: 'read_only', ...over });
 
   it('a source repository connector can never be read_write', async () => {
     const { db } = await freshDb();
@@ -84,7 +84,7 @@ describe('database-enforced invariants', () => {
   it('connector names are unique among non-deleted rows; provider and category are immutable', async () => {
     const { db } = await freshDb();
     const [a] = await db.insert(schema.connectorInstance).values(connector() as never).returning({ id: schema.connectorInstance.id });
-    expect(await failure(db.insert(schema.connectorInstance).values(connector() as never))).toMatch(/connector_instance_name_uq/);
+    expect(await failure(db.insert(schema.connectorInstance).values(connector() as never))).toMatch(/connector_instance_project_name_uq/);
     await db.execute(sql`update connector_instance set deleted_at = now() where id = ${a!.id}`);
     await db.insert(schema.connectorInstance).values(connector() as never);
     expect(await failure(db.execute(sql`update connector_instance set category = 'work-item' where id = ${a!.id}`))).toMatch(/immutable/);
@@ -93,7 +93,7 @@ describe('database-enforced invariants', () => {
   it('allows only one active production authorization per environment', async () => {
     const { db } = await freshDb();
     const [u] = await db.insert(schema.appUser).values({ externalSubject: 's1', displayName: 'A' }).returning({ id: schema.appUser.id });
-    const [env] = await db.insert(schema.environment).values({ name: 'prod', kind: 'production', applicationUrl: 'https://app.example' }).returning({ id: schema.environment.id });
+    const [env] = await db.insert(schema.environment).values({ projectId: '01900000-0000-7000-8000-000000000001', name: 'prod', kind: 'production', applicationUrl: 'https://app.example' }).returning({ id: schema.environment.id });
     const auth = { environmentId: env!.id, grantedBy: u!.id, justification: 'release', validFrom: new Date('2026-01-01'), validUntil: new Date('2026-01-02') };
     await db.insert(schema.environmentAuthorization).values(auth);
     expect(await failure(db.insert(schema.environmentAuthorization).values(auth))).toMatch(/env_auth_one_active_uq/);

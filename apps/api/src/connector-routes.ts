@@ -41,7 +41,11 @@ export function registerConnectorRoutes(app: FastifyInstance, deps: ConnectorRou
 
   app.get('/api/v1/connector-providers', { config: { access: requires('connector.view_status') } }, async () => ProviderListResponse.parse({ items: svc.providers() }));
 
-  app.get('/api/v1/connectors', { config: { access: requires('connector.view_status') } }, async () => ConnectorListResponse.parse({ items: await svc.list() }));
+  app.get('/api/v1/connectors', { config: { access: requires('connector.view_status') } }, async (req) => {
+    const projectId = typeof (req.query as { projectId?: string }).projectId === 'string' ? (req.query as { projectId: string }).projectId.trim() : '';
+    if (!projectId || !UUID.test(projectId)) throw new PlatformError('validation', 'Query projectId is required.');
+    return ConnectorListResponse.parse({ items: await svc.list({ projectId }) });
+  });
 
   app.post('/api/v1/connectors', { config: { access: requires('connector.manage') } }, async (req, reply) => {
     const input = body(CreateConnectorRequest, req.body, 'create connector');

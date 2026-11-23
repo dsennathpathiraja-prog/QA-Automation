@@ -20,6 +20,7 @@ describe('PgRunPolicyStore browser allowlist', () => {
     const envId = uuidv7();
     await db.insert(schema.environment).values({
       id: envId,
+      projectId: '01900000-0000-7000-8000-000000000001',
       name: 'Paynsure QA',
       kind: 'qa',
       applicationUrl: 'https://sdk.paynsure.internal/portal',

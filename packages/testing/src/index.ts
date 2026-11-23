@@ -6,6 +6,7 @@ export * from './fake-container-engine';
 export * from './runner-launcher-contract';
 export * from './in-memory-connectors';
 export * from './in-memory-environments';
+export * from './in-memory-projects';
 export * from './in-memory-workflows';
 export * from './in-memory-executions';
 export * from './in-memory-test-cases';

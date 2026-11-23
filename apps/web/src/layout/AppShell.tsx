@@ -2,6 +2,7 @@ import { Link, Outlet } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useSession } from '../auth/session';
 import { GROUP_LABEL, visibleNav, type NavGroup } from '../nav';
+import { useProject } from '../project/ProjectContext';
 
 const ROLE_LABEL: Record<string, string> = {
   administrator: 'Administrator',
@@ -12,6 +13,7 @@ const ROLE_LABEL: Record<string, string> = {
 
 export function AppShell() {
   const session = useSession();
+  const project = useProject();
   const items = visibleNav(session.canAny);
   const groups = (['main', 'config', 'admin'] as NavGroup[]).map((g) => ({ g, items: items.filter((i) => i.group === g) })).filter((x) => x.items.length > 0);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -27,6 +29,31 @@ export function AppShell() {
           <button type="button" className="rounded px-2 py-1 text-sm md:hidden" aria-expanded={menuOpen} aria-controls="primary-nav" onClick={() => setMenuOpen((o) => !o)}>
             Menu
           </button>
+        </div>
+        <div className="border-b border-slate-100 px-4 pb-3 dark:border-slate-800">
+          <label htmlFor="project-select" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            Project
+          </label>
+          {project.loading && <p className="text-xs text-slate-500">Loading…</p>}
+          {!project.loading && project.projects.length === 0 && (
+            <Link to="/projects" className="text-sm text-blue-700 underline dark:text-blue-300">
+              Set up a project
+            </Link>
+          )}
+          {project.projects.length > 0 && (
+            <select
+              id="project-select"
+              className="w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950"
+              value={project.selectedId ?? ''}
+              onChange={(e) => project.select(e.target.value || undefined)}
+            >
+              {project.projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
         <nav id="primary-nav" aria-label="Primary" className={`${menuOpen ? 'block' : 'hidden'} px-2 pb-4 md:block`}>
           {groups.map(({ g, items: list }) => (

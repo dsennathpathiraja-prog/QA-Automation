@@ -15,6 +15,7 @@ const live = (id: string) => and(eq(environment.id, id), isNull(environment.dele
 
 const toRecord = (r: Row): EnvironmentRecord => ({
   id: r.id,
+  projectId: r.projectId,
   name: r.name,
   kind: r.kind as EnvironmentKind,
   applicationUrl: r.applicationUrl,
@@ -32,8 +33,11 @@ const toRecord = (r: Row): EnvironmentRecord => ({
 export class PgEnvironmentRepository implements EnvironmentRepository {
   constructor(private readonly db: Db) {}
 
-  async list(): Promise<EnvironmentRecord[]> {
-    const rows = await this.db.select().from(environment).where(isNull(environment.deletedAt)).orderBy(environment.name);
+  async list(filter?: { projectId?: string }): Promise<EnvironmentRecord[]> {
+    const cond = filter?.projectId
+      ? and(isNull(environment.deletedAt), eq(environment.projectId, filter.projectId))
+      : isNull(environment.deletedAt);
+    const rows = await this.db.select().from(environment).where(cond).orderBy(environment.name);
     return rows.map(toRecord);
   }
 
@@ -48,6 +52,7 @@ export class PgEnvironmentRepository implements EnvironmentRepository {
         .insert(environment)
         .values({
           id: n.id,
+          projectId: n.projectId,
           name: n.name,
           kind: n.kind,
           applicationUrl: n.applicationUrl,
@@ -59,7 +64,7 @@ export class PgEnvironmentRepository implements EnvironmentRepository {
         .returning();
       return toRecord(row!);
     } catch (e) {
-      if (isUniqueViolation(e)) throw new PlatformError('conflict', `An environment named "${n.name}" already exists.`);
+      if (isUniqueViolation(e)) throw new PlatformError('conflict', `An environment named "${n.name}" already exists in this project.`);
       throw e;
     }
   }

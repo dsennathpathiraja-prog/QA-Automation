@@ -4,6 +4,7 @@ import { Link, useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useApi } from '../api/context';
 import { useSession } from '../auth/session';
+import { useProject } from '../project/ProjectContext';
 import { Card, ErrorNotice, PageHeader } from './common';
 import { Field, errorText, fieldClass, primaryButtonClass } from './connectors/shared';
 
@@ -23,17 +24,25 @@ export const kindLabel = (kind: string) => KINDS.find((k) => k.value === kind)?.
 export function Environments() {
   const api = useApi();
   const session = useSession();
+  const { selectedId, selected } = useProject();
   const manage = session.can('environment.manage');
-  const q = useQuery({ queryKey: environmentsKey, queryFn: () => api.get('/api/v1/environments', EnvironmentListResponse) });
+  const q = useQuery({
+    queryKey: [...environmentsKey, selectedId],
+    enabled: !!selectedId,
+    queryFn: () => api.get(`/api/v1/environments?projectId=${encodeURIComponent(selectedId!)}`, EnvironmentListResponse),
+  });
 
   return (
     <>
-      <PageHeader title="Environments" description="Where a workflow runs: the application address, browser, sign-in, test data and which connectors it may use." />
+      <PageHeader
+        title="Environments"
+        description={selected ? `Where workflows run for project ${selected.name}.` : 'Where a workflow runs: the application address, browser, sign-in, test data and which connectors it may use.'}
+      />
       <div className="space-y-4">
-        {manage && <NewEnvironment />}
+        {manage && selectedId && <NewEnvironment projectId={selectedId} />}
         <Card label="Configured environments">
           {q.isError && <ErrorNotice message="The environments could not be loaded." onRetry={() => void q.refetch()} />}
-          {q.data && q.data.items.length === 0 && <p>No environments have been configured yet.</p>}
+          {q.data && q.data.items.length === 0 && <p>No environments have been configured for this project yet.</p>}
           {q.data && q.data.items.length > 0 && (
             <table className="w-full text-left text-sm">
               <caption className="sr-only">Environments</caption>
@@ -63,7 +72,7 @@ export function Environments() {
   );
 }
 
-function NewEnvironment() {
+function NewEnvironment({ projectId }: { projectId: string }) {
   const api = useApi();
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -71,7 +80,8 @@ function NewEnvironment() {
   const [kind, setKind] = useState<Kind>('qa');
   const [applicationUrl, setApplicationUrl] = useState('');
   const add = useMutation({
-    mutationFn: (body: { name: string; kind: Kind; applicationUrl: string; restrictions?: { prodSafeOnly: boolean; maxParallelism: number } }) => api.post('/api/v1/environments', body, EnvironmentDetailSchema),
+    mutationFn: (body: { projectId: string; name: string; kind: Kind; applicationUrl: string; restrictions?: { prodSafeOnly: boolean; maxParallelism: number } }) =>
+      api.post('/api/v1/environments', body, EnvironmentDetailSchema),
     onSuccess: async (created) => {
       await qc.invalidateQueries({ queryKey: environmentsKey });
       await navigate({ to: '/environments/$id', params: { id: created.id } });
@@ -79,7 +89,7 @@ function NewEnvironment() {
   });
   return (
     <Card label="New environment">
-      <form onSubmit={(e) => { e.preventDefault(); add.mutate({ name, kind, applicationUrl, restrictions: kind === 'production' ? { prodSafeOnly: true, maxParallelism: 1 } : undefined }); }}>
+      <form onSubmit={(e) => { e.preventDefault(); add.mutate({ projectId, name, kind, applicationUrl, restrictions: kind === 'production' ? { prodSafeOnly: true, maxParallelism: 1 } : undefined }); }}>
         <Field id="env-name" label="Name"><input id="env-name" required className={fieldClass} value={name} onChange={(e) => setName(e.target.value)} /></Field>
         <Field id="env-kind" label="Kind">
           <select id="env-kind" className={fieldClass} value={kind} onChange={(e) => setKind(e.target.value as Kind)}>

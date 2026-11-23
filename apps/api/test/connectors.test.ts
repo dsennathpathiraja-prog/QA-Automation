@@ -41,17 +41,17 @@ afterEach(() => {
 
 const call = (method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, headers: Record<string, string> = {}, payload?: unknown) => app.inject({ method, url, headers, payload: payload as object | undefined });
 const create = (over: Record<string, unknown> = {}) =>
-  call('POST', '/api/v1/connectors', admin, { providerKey: 'sample-work-items', name: 'Demo source', config: { projectName: 'Retail Web' }, secrets: { demoKey: CANARY }, ...over });
+  call('POST', '/api/v1/connectors', admin, { projectId: '01900000-0000-7000-8000-000000000001', providerKey: 'sample-work-items', name: 'Demo source', config: { projectName: 'Retail Web' }, secrets: { demoKey: CANARY }, ...over });
 
 describe('connector API access', () => {
   it('lets every status viewer list providers and connectors, but only managers change anything', async () => {
     const made = (await create()).json();
     for (const who of [engineer, lead, admin]) {
-      expect((await call('GET', '/api/v1/connectors', who)).statusCode).toBe(200);
+      expect((await call('GET', '/api/v1/connectors?projectId=01900000-0000-7000-8000-000000000001', who)).statusCode).toBe(200);
       expect((await call('GET', '/api/v1/connector-providers', who)).statusCode).toBe(200);
       expect((await call('GET', `/api/v1/connectors/${made.id}`, who)).statusCode).toBe(200);
     }
-    expect((await call('GET', '/api/v1/connectors', business)).statusCode).toBe(403);
+    expect((await call('GET', '/api/v1/connectors?projectId=01900000-0000-7000-8000-000000000001', business)).statusCode).toBe(403);
     expect((await call('GET', '/api/v1/connectors')).statusCode).toBe(401);
     for (const who of [engineer, lead, business]) {
       expect((await call('POST', '/api/v1/connectors', who, {})).statusCode, 'create').toBe(403);
@@ -94,7 +94,7 @@ describe('connector API behaviour', () => {
     const c = res.json();
     expect(c).toMatchObject({ status: 'draft', enabled: false, accessMode: 'read_only', hasCredentials: true });
 
-    expect((await create()).json()).toEqual({ error: { class: 'conflict', message: 'A connector named "Demo source" already exists for this provider.' } });
+    expect((await create()).json()).toEqual({ error: { class: 'conflict', message: 'A connector named "Demo source" already exists for this provider in this project.' } });
     expect((await call('POST', `/api/v1/connectors/${c.id}/enable`, admin)).statusCode).toBe(409);
     const t = await call('POST', `/api/v1/connectors/${c.id}/test`, admin);
     expect(t.statusCode).toBe(202);

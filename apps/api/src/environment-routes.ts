@@ -39,7 +39,11 @@ const idOf = (raw: unknown): string => {
 };
 
 export function registerEnvironmentRoutes(app: FastifyInstance, environments: EnvironmentService) {
-  app.get('/api/v1/environments', { config: { access: requires('environment.view') } }, async () => EnvironmentListResponse.parse({ items: await environments.list() }));
+  app.get('/api/v1/environments', { config: { access: requires('environment.view') } }, async (req) => {
+    const projectId = typeof (req.query as { projectId?: string }).projectId === 'string' ? (req.query as { projectId: string }).projectId.trim() : '';
+    if (!projectId || !UUID.test(projectId)) throw new PlatformError('validation', 'Query projectId is required.');
+    return EnvironmentListResponse.parse({ items: await environments.list({ projectId }) });
+  });
 
   app.post('/api/v1/environments', { config: { access: requires('environment.manage') } }, async (req, reply) => {
     const input = body(CreateEnvironmentRequest, req.body, 'create environment');

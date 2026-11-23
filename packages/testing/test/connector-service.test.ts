@@ -22,7 +22,7 @@ function setup() {
 }
 
 const sample = (s: ReturnType<typeof setup>, over: Record<string, unknown> = {}) =>
-  s.service.create(actor, { providerKey: 'sample-work-items', name: 'Demo source', config: { projectName: 'Retail Web' }, secrets: { demoKey: CANARY }, ...over });
+  s.service.create(actor, { projectId: '01900000-0000-7000-8000-000000000001', providerKey: 'sample-work-items', name: 'Demo source', config: { projectName: 'Retail Web' }, secrets: { demoKey: CANARY }, ...over });
 
 describe('provider descriptors drive the wizard', () => {
   it('lists providers with config fields, credential fields, steps and capability access', () => {
@@ -159,7 +159,7 @@ describe('approved hosts', () => {
   it('suggests an approval for an unapproved internal host and flags plain http on an https-only rule', async () => {
     const s = setup();
     const token = 'a'.repeat(30);
-    const c = await s.service.create(actor, { providerKey: 'squash-tm', name: 'Squash QA', config: { baseUrl: 'http://squash.corp.local/squash' }, secrets: { token } });
+    const c = await s.service.create(actor, { projectId: '01900000-0000-7000-8000-000000000001', providerKey: 'squash-tm', name: 'Squash QA', config: { baseUrl: 'http://squash.corp.local/squash' }, secrets: { token } });
     expect(c.hostIssues).toEqual([{ host: 'squash.corp.local', reason: 'not-approved', suggestion: { hostPattern: 'squash.corp.local', internal: true, allowHttp: true } }]);
     await s.service.approveHost(actor, { hostPattern: '*.corp.local', internal: true, allowHttp: false });
     expect((await s.service.get(c.id, { includeConfig: true })).hostIssues).toEqual([{ host: 'squash.corp.local', reason: 'http-not-allowed', suggestion: { hostPattern: '*.corp.local', internal: true, allowHttp: true } }]);
@@ -169,6 +169,7 @@ describe('approved hosts', () => {
     const s = setup();
     const token = `${'b'.repeat(30)}`;
     const c = await s.service.create(actor, {
+      projectId: '01900000-0000-7000-8000-000000000001',
       providerKey: 'squash-tm',
       name: 'Squash trim',
       config: { baseUrl: 'http://squash.corp.local/squash' },
@@ -177,6 +178,7 @@ describe('approved hosts', () => {
     expect((await s.secrets.lease(connectorSecretLocator(c.id))).value.token).toBe(token);
     await expect(
       s.service.create(actor, {
+        projectId: '01900000-0000-7000-8000-000000000001',
         providerKey: 'squash-tm',
         name: 'Squash blank',
         config: { baseUrl: 'http://squash.corp.local/squash' },
@@ -189,6 +191,7 @@ describe('approved hosts', () => {
     const s = setup();
     await expect(
       s.service.create(actor, {
+        projectId: '01900000-0000-7000-8000-000000000001',
         providerKey: 'squash-tm',
         name: 'Squash password only',
         config: { baseUrl: 'http://squash.corp.local/squash' },
@@ -200,6 +203,7 @@ describe('approved hosts', () => {
     });
     const token = `${'c'.repeat(30)}`;
     const c = await s.service.create(actor, {
+      projectId: '01900000-0000-7000-8000-000000000001',
       providerKey: 'squash-tm',
       name: 'Squash token wins',
       config: { baseUrl: 'http://user:pass@squash.corp.local/squash' },

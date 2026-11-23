@@ -24,7 +24,7 @@ describe('environment configuration', () => {
   it('stores an authentication password and never returns it', async () => {
     const s = setup();
     await s.hosts.add({ hostPattern: 'qa.shop.example', purpose: 'application', internal: false, allowHttp: false });
-    const env = await s.service.create(actor, { name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' });
+    const env = await s.service.create(actor, { projectId: '01900000-0000-7000-8000-000000000001', name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' });
     const profile = await s.service.createAuthProfile(actor, env.id, { name: 'qa-user', type: 'form-login', config: { username: 'qa.bot', loginUrl: 'https://qa.shop.example/login' }, secrets: { password: 'pw-not-shown' } });
     expect(profile).toMatchObject({ name: 'qa-user', type: 'form-login', hasSecret: true, config: { username: 'qa.bot' } });
     expect(JSON.stringify(profile)).not.toContain('pw-not-shown');
@@ -40,7 +40,7 @@ describe('environment configuration', () => {
   it('attaches only an enabled connector of the matching kind', async () => {
     const s = setup();
     await s.hosts.add({ hostPattern: 'qa.shop.example', purpose: 'application', internal: false, allowHttp: false });
-    const env = await s.service.create(actor, { name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' });
+    const env = await s.service.create(actor, { projectId: '01900000-0000-7000-8000-000000000001', name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' });
     s.connectors.set('c1', { id: 'c1', name: 'GitHub', category: 'source-repo', enabled: false });
     await expect(s.service.setConnectorRef(actor, env.id, { role: 'source-repo', connectorId: 'c1' })).rejects.toThrow(/Enable "GitHub"/);
     s.connectors.set('c1', { id: 'c1', name: 'GitHub', category: 'source-repo', enabled: true });
@@ -52,7 +52,7 @@ describe('environment configuration', () => {
   it('makes production selectable only inside an authorization window', async () => {
     const s = setup();
     await s.hosts.add({ hostPattern: 'shop.example', purpose: 'application', internal: false, allowHttp: false });
-    const env = await s.service.create(actor, { name: 'Prod', kind: 'production', applicationUrl: 'https://shop.example', restrictions: { prodSafeOnly: true, maxParallelism: 1 } });
+    const env = await s.service.create(actor, { projectId: '01900000-0000-7000-8000-000000000001', name: 'Prod', kind: 'production', applicationUrl: 'https://shop.example', restrictions: { prodSafeOnly: true, maxParallelism: 1 } });
     expect(env.selectable).toBe(false);
     const grant = await s.service.grantAuthorization(actor, env.id, { justification: 'Release check on the shop', validFrom: '2026-06-01T00:00:00Z', validUntil: '2026-12-01T00:00:00Z' });
     expect(grant).toMatchObject({ active: true, grantedByName: 'Ada' });
@@ -69,7 +69,7 @@ describe('environment configuration', () => {
   it('names a switched-off connector when validating a run', async () => {
     const s = setup();
     await s.hosts.add({ hostPattern: 'qa.shop.example', purpose: 'application', internal: false, allowHttp: false });
-    const env = await s.service.create(actor, { name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example', restrictions: { workflowTypes: ['regression-testing'], maxParallelism: 1, prodSafeOnly: false } });
+    const env = await s.service.create(actor, { projectId: '01900000-0000-7000-8000-000000000001', name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example', restrictions: { workflowTypes: ['regression-testing'], maxParallelism: 1, prodSafeOnly: false } });
     s.connectors.set('c1', { id: 'c1', name: 'GitHub', category: 'source-repo', enabled: true });
     await s.service.setConnectorRef(actor, env.id, { role: 'source-repo', connectorId: 'c1' });
     s.connectors.set('c1', { id: 'c1', name: 'GitHub', category: 'source-repo', enabled: false });
@@ -85,7 +85,7 @@ describe('environment configuration', () => {
   it('queues a reachability check and clears it when the address changes', async () => {
     const s = setup();
     await s.hosts.add({ hostPattern: 'qa.shop.example', purpose: 'application', internal: false, allowHttp: false });
-    const env = await s.service.create(actor, { name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' });
+    const env = await s.service.create(actor, { projectId: '01900000-0000-7000-8000-000000000001', name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' });
     expect(env.reachability).toBe('not-run');
     expect((await s.service.requestReachability(actor, env.id)).reachability).toBe('queued');
     expect((await s.service.requestReachability(actor, env.id)).reachability).toBe('queued');

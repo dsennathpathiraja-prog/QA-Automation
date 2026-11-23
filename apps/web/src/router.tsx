@@ -16,9 +16,12 @@ import { TestCasePage, TestCases, TestCollectionPage } from './pages/TestCases';
 import { Workflows } from './pages/Workflows';
 import { WorkflowPage } from './pages/workflows/WorkflowPage';
 import { IdentityMapping } from './pages/IdentityMapping';
+import { Projects } from './pages/Projects';
+import { RequireProject } from './pages/RequireProject';
 import { ReportEvidence } from './pages/ReportEvidence';
 import { RunDetailPage } from './pages/RunDetailPage';
 import { SignInError } from './pages/SignInError';
+import { ProjectProvider } from './project/ProjectContext';
 
 function Guarded({ item, children }: { item: NavItem; children?: ReactNode }) {
   const s = useSession();
@@ -45,13 +48,34 @@ const NotFound = () => (
 
 const real: Record<string, () => ReactNode> = {
   dashboard: () => <Dashboard />,
-  workflows: () => <Workflows />,
-  executions: () => <Executions />,
-  'test-cases': () => <TestCases />,
+  workflows: () => (
+    <RequireProject title="Workflows">
+      <Workflows />
+    </RequireProject>
+  ),
+  executions: () => (
+    <RequireProject title="Executions">
+      <Executions />
+    </RequireProject>
+  ),
+  'test-cases': () => (
+    <RequireProject title="Test Cases">
+      <TestCases />
+    </RequireProject>
+  ),
   evidence: () => <ReportEvidence mode="evidence" />,
   reports: () => <ReportEvidence mode="report" />,
-  connectors: () => <Connectors />,
-  environments: () => <Environments />,
+  projects: () => <Projects />,
+  connectors: () => (
+    <RequireProject title="Connectors">
+      <Connectors />
+    </RequireProject>
+  ),
+  environments: () => (
+    <RequireProject title="Environments">
+      <Environments />
+    </RequireProject>
+  ),
   identity: () => <IdentityMapping />,
   hosts: () => <ApprovedHosts />,
 };
@@ -78,7 +102,9 @@ export function buildRouter(opts: RouterOptions = {}): AnyRouter {
     id: 'shell',
     component: () => (
       <SessionGate navigator={opts.navigator}>
-        <AppShell />
+        <ProjectProvider>
+          <AppShell />
+        </ProjectProvider>
       </SessionGate>
     ),
     notFoundComponent: NotFound,
@@ -99,7 +125,13 @@ export function buildRouter(opts: RouterOptions = {}): AnyRouter {
       tab: s.tab === 'history' || s.tab === 'prepared' ? (s.tab as 'history' | 'prepared') : undefined,
       ...reportEvidenceSearch(s),
     }),
-    component: () => <Guarded item={executionsItem}><Executions /></Guarded>,
+    component: () => (
+      <Guarded item={executionsItem}>
+        <RequireProject title="Executions">
+          <Executions />
+        </RequireProject>
+      </Guarded>
+    ),
   });
   const evidenceItem = NAV_ITEMS.find((item) => item.id === 'evidence')!;
   const evidence = createRoute({
@@ -128,15 +160,55 @@ export function buildRouter(opts: RouterOptions = {}): AnyRouter {
 
   const connectorItem = NAV_ITEMS.find((i) => i.id === 'connectors')!;
   const manageItem: NavItem = { ...connectorItem, anyOf: ['connector.manage'] };
-  const connectorNew = createRoute({ getParentRoute: () => shell, path: '/connectors/new', component: () => <Guarded item={manageItem}><ConnectorWizard /></Guarded> });
+  const connectorNew = createRoute({
+    getParentRoute: () => shell,
+    path: '/connectors/new',
+    component: () => (
+      <Guarded item={manageItem}>
+        <RequireProject title="Add connector">
+          <ConnectorWizard />
+        </RequireProject>
+      </Guarded>
+    ),
+  });
   const connectorDetail = createRoute({ getParentRoute: () => shell, path: '/connectors/$id', component: () => <Guarded item={connectorItem}><ConnectorDetailPage /></Guarded> });
   const environmentItem = NAV_ITEMS.find((i) => i.id === 'environments')!;
   const environmentDetail = createRoute({ getParentRoute: () => shell, path: '/environments/$id', component: () => <Guarded item={environmentItem}><EnvironmentPage /></Guarded> });
   const workflowItem = NAV_ITEMS.find((i) => i.id === 'workflows')!;
-  const workflowDetail = createRoute({ getParentRoute: () => shell, path: '/workflows/$id', component: () => <Guarded item={workflowItem}><WorkflowPage /></Guarded> });
+  const workflowDetail = createRoute({
+    getParentRoute: () => shell,
+    path: '/workflows/$id',
+    component: () => (
+      <Guarded item={workflowItem}>
+        <RequireProject title="Workflow">
+          <WorkflowPage />
+        </RequireProject>
+      </Guarded>
+    ),
+  });
   const testCaseItem = NAV_ITEMS.find((i) => i.id === 'test-cases')!;
-  const testCaseDetail = createRoute({ getParentRoute: () => shell, path: '/test-cases/$id', component: () => <Guarded item={testCaseItem}><TestCasePage /></Guarded> });
-  const testCollectionDetail = createRoute({ getParentRoute: () => shell, path: '/test-collections/$id', component: () => <Guarded item={testCaseItem}><TestCollectionPage /></Guarded> });
+  const testCaseDetail = createRoute({
+    getParentRoute: () => shell,
+    path: '/test-cases/$id',
+    component: () => (
+      <Guarded item={testCaseItem}>
+        <RequireProject title="Test case">
+          <TestCasePage />
+        </RequireProject>
+      </Guarded>
+    ),
+  });
+  const testCollectionDetail = createRoute({
+    getParentRoute: () => shell,
+    path: '/test-collections/$id',
+    component: () => (
+      <Guarded item={testCaseItem}>
+        <RequireProject title="Test collection">
+          <TestCollectionPage />
+        </RequireProject>
+      </Guarded>
+    ),
+  });
 
   return createRouter({ routeTree: root.addChildren([signInError, shell.addChildren([...pages, executions, evidence, reports, runDetail, connectorNew, connectorDetail, environmentDetail, workflowDetail, testCaseDetail, testCollectionDetail])]), history: opts.history, defaultPreload: false });
 }

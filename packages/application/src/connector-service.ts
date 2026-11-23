@@ -59,6 +59,7 @@ export interface ReadOnlyLayer {
 
 export interface ConnectorSummary {
   id: string;
+  projectId: string;
   name: string;
   providerKey: string;
   providerName: string;
@@ -93,6 +94,7 @@ export interface ConnectorDetail extends ConnectorSummary {
 }
 
 export interface CreateConnectorInput {
+  projectId: string;
   providerKey: string;
   name: string;
   config?: Record<string, unknown>;
@@ -116,8 +118,8 @@ export class ConnectorService {
     return this.d.providers.all().map((p) => this.providerView(p));
   }
 
-  async list(): Promise<ConnectorSummary[]> {
-    return (await this.d.connectors.list()).map((c) => this.summary(c));
+  async list(filter?: { projectId?: string }): Promise<ConnectorSummary[]> {
+    return (await this.d.connectors.list(filter)).map((c) => this.summary(c));
   }
 
   async get(id: string, opts: { includeConfig: boolean }): Promise<ConnectorDetail> {
@@ -156,7 +158,17 @@ export class ConnectorService {
     const id = randomUUID();
     if (secrets) await this.d.secrets.put(connectorSecretLocator(id), secrets);
     try {
-      await this.d.connectors.insert({ id, providerKey: provider.manifest.providerKey, category: provider.manifest.category, name, config, accessMode: this.accessModeFor(provider) });
+      const projectId = (input.projectId ?? '').trim();
+      if (!projectId) throw new PlatformError('validation', 'A project is required to create a connector.');
+      await this.d.connectors.insert({
+        id,
+        projectId,
+        providerKey: provider.manifest.providerKey,
+        category: provider.manifest.category,
+        name,
+        config,
+        accessMode: this.accessModeFor(provider),
+      });
     } catch (e) {
       if (secrets) await this.d.secrets.delete(connectorSecretLocator(id)).catch(() => undefined);
       throw e;
@@ -166,7 +178,7 @@ export class ConnectorService {
       action: 'connector.create',
       subjectType: 'connector',
       subjectId: id,
-      detail: { providerKey: provider.manifest.providerKey, name, accessMode: 'read_only', credentialsStored: !!secrets },
+      detail: { projectId: input.projectId, providerKey: provider.manifest.providerKey, name, accessMode: 'read_only', credentialsStored: !!secrets },
     });
     return this.get(id, { includeConfig: true });
   }
@@ -290,6 +302,7 @@ export class ConnectorService {
     const p = this.providerOf(c);
     return {
       id: c.id,
+      projectId: c.projectId,
       name: c.name,
       providerKey: c.providerKey,
       providerName: p?.manifest.displayName ?? c.providerKey,

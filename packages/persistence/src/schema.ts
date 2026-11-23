@@ -130,12 +130,37 @@ export const appSession = pgTable(
   (t) => [index('app_session_idp_idx').on(t.idpSessionId), index('app_session_user_idx').on(t.userId), index('app_session_expiry_idx').on(t.expiresAt)],
 );
 
+/* ---------- projects ---------- */
+
+/** Platform Project — scopes connectors, environments, workflows, cases, and executions. Not Azure/Squash config "project". */
+export const project = pgTable(
+  'project',
+  {
+    id: id(),
+    key: text('key').notNull(),
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    status: text('status').notNull().default('active'),
+    deletedAt: ts('deleted_at'),
+    ...audit(),
+  },
+  (t) => [
+    uniqueIndex('project_key_uq').on(t.key).where(sql`${t.deletedAt} is null`),
+    uniqueIndex('project_name_uq').on(sql`lower(${t.name})`).where(sql`${t.deletedAt} is null`),
+    check('project_status_ck', sql`${t.status} in ('active','archived')`),
+  ],
+);
+
+/** Stable id for the Default project created by migration 0019 (backfill target). */
+export const DEFAULT_PROJECT_ID = '01900000-0000-7000-8000-000000000001';
+
 /* ---------- connectors ---------- */
 
 export const connectorInstance = pgTable(
   'connector_instance',
   {
     id: id(),
+    projectId: uuid('project_id').notNull().references(() => project.id),
     providerKey: text('provider_key').notNull(),
     category: text('category').notNull(),
     name: text('name').notNull(),
@@ -153,7 +178,8 @@ export const connectorInstance = pgTable(
     ...audit(),
   },
   (t) => [
-    uniqueIndex('connector_instance_name_uq').on(t.providerKey, t.name).where(sql`${t.deletedAt} is null`),
+    uniqueIndex('connector_instance_project_name_uq').on(t.projectId, t.providerKey, t.name).where(sql`${t.deletedAt} is null`),
+    index('connector_instance_project_idx').on(t.projectId),
     check('connector_category_ck', sql`${t.category} in ('work-item','source-repo','browser-automation','test-management','test-runner')`),
     check('connector_status_ck', sql`${t.status} in ('draft','connected','degraded','error','disconnected')`),
     check('connector_access_ck', sql`${t.accessMode} in ('read_only','read_write')`),
@@ -282,6 +308,7 @@ export const environment = pgTable(
   'environment',
   {
     id: id(),
+    projectId: uuid('project_id').notNull().references(() => project.id),
     name: text('name').notNull(),
     kind: text('kind').notNull(),
     applicationUrl: text('application_url').notNull(),
@@ -297,7 +324,8 @@ export const environment = pgTable(
     ...audit(),
   },
   (t) => [
-    uniqueIndex('environment_name_uq').on(t.name).where(sql`${t.deletedAt} is null`),
+    uniqueIndex('environment_project_name_uq').on(t.projectId, t.name).where(sql`${t.deletedAt} is null`),
+    index('environment_project_idx').on(t.projectId),
     check('environment_kind_ck', sql`${t.kind} in ('development','qa','staging','uat','production')`),
     check('environment_reachability_ck', sql`${t.reachability} in ('not-run','queued','checking','reachable','unreachable')`),
   ],
@@ -364,6 +392,8 @@ export const workflow = pgTable(
   'workflow',
   {
     id: id(),
+    /** Set by migration backfill; required for publish/run in a follow-up slice. */
+    projectId: uuid('project_id').references(() => project.id),
     key: text('key').notNull(),
     name: text('name').notNull(),
     description: text('description').notNull().default(''),
@@ -376,6 +406,7 @@ export const workflow = pgTable(
   },
   (t) => [
     uniqueIndex('workflow_key_uq').on(t.key).where(sql`${t.deletedAt} is null`),
+    index('workflow_project_idx').on(t.projectId),
     check('workflow_type_ck', sql`${t.type} in ('requirement-validation','regression-testing')`),
     check('workflow_status_ck', sql`${t.status} in ('draft','in_review','published','disabled')`),
   ],
@@ -445,6 +476,8 @@ export const testCase = pgTable(
   'test_case',
   {
     id: id(),
+    /** Set by migration backfill; required for generation/library in a follow-up slice. */
+    projectId: uuid('project_id').references(() => project.id),
     key: text('key').notNull(),
     name: text('name').notNull(),
     summary: text('summary').notNull().default(''),
@@ -458,6 +491,7 @@ export const testCase = pgTable(
   },
   (t) => [
     uniqueIndex('test_case_key_uq').on(t.key).where(sql`${t.deletedAt} is null`),
+    index('test_case_project_idx').on(t.projectId),
     check('test_case_kind_ck', sql`${t.kind} in ('positive','negative','edge')`),
     check('test_case_priority_ck', sql`${t.priority} in ('high','medium','low')`),
   ],
@@ -480,13 +514,17 @@ export const testCollection = pgTable(
   'test_collection',
   {
     id: id(),
+    projectId: uuid('project_id').references(() => project.id),
     name: text('name').notNull(),
     description: text('description').notNull().default(''),
     deletedAt: ts('deleted_at'),
     createdAt: ts('created_at').notNull().defaultNow(),
     updatedAt: ts('updated_at').notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('test_collection_name_uq').on(t.name).where(sql`${t.deletedAt} is null`)],
+  (t) => [
+    uniqueIndex('test_collection_name_uq').on(t.name).where(sql`${t.deletedAt} is null`),
+    index('test_collection_project_idx').on(t.projectId),
+  ],
 );
 
 export const workItemExecution = pgTable(

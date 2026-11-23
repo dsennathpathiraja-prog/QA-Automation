@@ -2,6 +2,8 @@ export const ROLES = ['administrator', 'qa_lead', 'qa_engineer', 'business_user'
 export type Role = (typeof ROLES)[number];
 
 export const PERMISSIONS = [
+  'project.view',
+  'project.manage',
   'connector.manage',
   'connector.view_status',
   'environment.manage',
@@ -42,6 +44,8 @@ const ALL: readonly Permission[] = PERMISSIONS;
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   administrator: ALL,
   qa_lead: [
+    'project.view',
+    'project.manage',
     'connector.view_status',
     'environment.view',
     'environment.pick',
@@ -68,6 +72,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'audit.read',
   ],
   qa_engineer: [
+    'project.view',
     'connector.view_status',
     'environment.view',
     'environment.pick',
@@ -83,6 +88,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'report.view',
   ],
   business_user: [
+    'project.view',
     'environment.pick',
     'workflow.view_published',
     'execution.start',

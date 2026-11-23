@@ -59,7 +59,7 @@ d('PostgreSQL (real server)', () => {
     const ids = await Promise.all(
       Array.from({ length: 12 }, async (_, i) => {
         const id = crypto.randomUUID();
-        await connectors.insert({ id, providerKey: 'sample-work-items', category: 'work-item', name: `Concurrent ${i}`, config: {}, accessMode: 'read_only' });
+        await connectors.insert({ id, projectId: '01900000-0000-7000-8000-000000000001', providerKey: 'sample-work-items', category: 'work-item', name: `Concurrent ${i}`, config: {}, accessMode: 'read_only' });
         await tests.enqueue(id, 1, 'u');
         return id;
       }),

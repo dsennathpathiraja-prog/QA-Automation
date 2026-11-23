@@ -29,7 +29,7 @@ async function withGitHub(scopes: string | null) {
   const service = new ConnectorService({ connectors, tests, secrets, providers, capabilities, hosts, audit: new InMemoryAuditSink() });
   const http = new HardenedHttpClient({ egress: new EgressPolicy({ rules: [{ hostPattern: '127.0.0.1', purpose: 'connector', internal: true, allowHttp: true, allowLoopback: true }], profile: 'standard', platformEnv: 'development' }), allowedMethods: ['GET', 'HEAD'] });
   const tester = new ConnectorTester({ connectors, tests, secrets, providers, capabilities, http: async () => http });
-  const created = await service.create({ id: 'admin' }, { providerKey: 'github', name: 'GitHub shop', config: { baseUrl: `http://127.0.0.1:${port}`, org: 'acme', repo: 'shop' }, secrets: { token: TOKEN } });
+  const created = await service.create({ id: 'admin' }, { projectId: '01900000-0000-7000-8000-000000000001', providerKey: 'github', name: 'GitHub shop', config: { baseUrl: `http://127.0.0.1:${port}`, org: 'acme', repo: 'shop' }, secrets: { token: TOKEN } });
   await service.approveHost({ id: 'admin' }, { hostPattern: '127.0.0.1', internal: true, allowHttp: true });
   await service.requestTest({ id: 'admin' }, created.id);
   await tester.runOnce();

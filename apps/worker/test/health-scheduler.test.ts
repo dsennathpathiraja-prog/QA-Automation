@@ -5,7 +5,7 @@ import { ConnectorHealthScheduler } from '../src';
 const at = new Date('2026-11-18T10:00:00Z');
 
 async function connector(repo: InMemoryConnectorRepository, over: { enabled?: boolean; status?: 'connected' | 'draft'; tested?: Date } = {}) {
-  const rec = await repo.insert({ id: crypto.randomUUID(), providerKey: 'github', category: 'source-repo', name: `Repo ${repo.rows.size}`, config: {}, accessMode: 'read_only' });
+  const rec = await repo.insert({ id: crypto.randomUUID(), projectId: '01900000-0000-7000-8000-000000000001', providerKey: 'github', category: 'source-repo', name: `Repo ${repo.rows.size}`, config: {}, accessMode: 'read_only' });
   await repo.update(rec.id, { enabled: over.enabled ?? false, status: over.status ?? 'draft', ...(over.tested ? { lastTestedAt: over.tested } : {}) });
   return rec.id;
 }

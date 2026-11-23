@@ -10,6 +10,7 @@ export interface ConnectorStorageUnderTest {
 
 const newConnector = (over: Partial<NewConnector> = {}): NewConnector => ({
   id: randomUUID(),
+  projectId: '01900000-0000-7000-8000-000000000001',
   providerKey: 'squash-tm',
   category: 'test-management',
   name: 'Squash QA',
