@@ -30,6 +30,7 @@ function parseStepsJson(raw: string | null): CaseStepProgress[] | undefined {
 
 const caseOf = (r: typeof testCase.$inferSelect): TestCaseRecord => ({
   id: r.id,
+  projectId: r.projectId,
   key: r.key,
   name: r.name,
   summary: r.summary,
@@ -55,8 +56,10 @@ const unique = (e: unknown) => {
 export class PgTestCaseRepository implements TestCaseRepository {
   constructor(private readonly db: Db) {}
 
-  async list() {
-    const rows = await this.db.select().from(testCase).where(sql`${testCase.deletedAt} is null`).orderBy(desc(testCase.updatedAt));
+  async list(filter?: { projectId?: string }) {
+    const rows = filter?.projectId
+      ? await this.db.select().from(testCase).where(and(eq(testCase.projectId, filter.projectId), sql`${testCase.deletedAt} is null`)).orderBy(desc(testCase.updatedAt))
+      : await this.db.select().from(testCase).where(sql`${testCase.deletedAt} is null`).orderBy(desc(testCase.updatedAt));
     return rows.map(caseOf);
   }
 
@@ -65,8 +68,8 @@ export class PgTestCaseRepository implements TestCaseRepository {
     return row && caseOf(row);
   }
 
-  async findKey(key: string) {
-    const [row] = await this.db.select().from(testCase).where(and(eq(testCase.key, key), sql`${testCase.deletedAt} is null`)).limit(1);
+  async findKey(key: string, projectId: string) {
+    const [row] = await this.db.select().from(testCase).where(and(eq(testCase.projectId, projectId), eq(testCase.key, key), sql`${testCase.deletedAt} is null`)).limit(1);
     return row && caseOf(row);
   }
 
@@ -75,7 +78,7 @@ export class PgTestCaseRepository implements TestCaseRepository {
       return await this.db.transaction(async (tx) => {
         const [saved] = await tx.insert(testCase).values({
           id: row.id,
-          projectId: (row as { projectId?: string }).projectId ?? DEFAULT_PROJECT_ID,
+          projectId: row.projectId,
           key: row.key,
           name: row.name,
           summary: row.summary,
@@ -87,7 +90,7 @@ export class PgTestCaseRepository implements TestCaseRepository {
         return caseOf(saved!);
       });
     } catch (e) {
-      if (unique(e)) throw new PlatformError('conflict', 'A test case with that name already exists.');
+      if (unique(e)) throw new PlatformError('conflict', 'A test case with that name already exists in this project.');
       throw e;
     }
   }
@@ -129,7 +132,7 @@ export class PgTestCaseRepository implements TestCaseRepository {
       if (!saved) throw new PlatformError('not-found', 'Test case not found');
       return caseOf(saved);
     } catch (e) {
-      if (unique(e)) throw new PlatformError('conflict', 'A test case with that name already exists.');
+      if (unique(e)) throw new PlatformError('conflict', 'A test case with that name already exists in this project.');
       throw e;
     }
   }
@@ -146,26 +149,37 @@ export class PgTestCaseRepository implements TestCaseRepository {
     });
   }
 
-  async softDeleteAllPlatform() {
+  async softDeleteForProject(projectId: string) {
     return this.db.transaction(async (tx) => {
       const now = new Date();
-      await tx.delete(testCollectionCase);
+      const liveCases = await tx
+        .select({ id: testCase.id })
+        .from(testCase)
+        .where(and(eq(testCase.projectId, projectId), sql`${testCase.deletedAt} is null`));
+      const caseIds = liveCases.map((c) => c.id);
+      if (caseIds.length > 0) {
+        for (const id of caseIds) {
+          await tx.delete(testCollectionCase).where(eq(testCollectionCase.testCaseId, id));
+        }
+      }
       const cases = await tx
         .update(testCase)
         .set({ deletedAt: now, updatedAt: now })
-        .where(sql`${testCase.deletedAt} is null`)
+        .where(and(eq(testCase.projectId, projectId), sql`${testCase.deletedAt} is null`))
         .returning({ id: testCase.id });
       const collections = await tx
         .update(testCollection)
         .set({ deletedAt: now, updatedAt: now })
-        .where(sql`${testCollection.deletedAt} is null`)
+        .where(and(eq(testCollection.projectId, projectId), sql`${testCollection.deletedAt} is null`))
         .returning({ id: testCollection.id });
       return { cases: cases.length, collections: collections.length };
     });
   }
 
-  async listCollections() {
-    const rows = await this.db.select().from(testCollection).where(sql`${testCollection.deletedAt} is null`).orderBy(desc(testCollection.updatedAt));
+  async listCollections(filter?: { projectId?: string }) {
+    const rows = filter?.projectId
+      ? await this.db.select().from(testCollection).where(and(eq(testCollection.projectId, filter.projectId), sql`${testCollection.deletedAt} is null`)).orderBy(desc(testCollection.updatedAt))
+      : await this.db.select().from(testCollection).where(sql`${testCollection.deletedAt} is null`).orderBy(desc(testCollection.updatedAt));
     // Count only live (non soft-deleted) members so size matches the collection detail and execution board.
     const counts = await this.db
       .select({ collectionId: testCollectionCase.collectionId, n: sql<number>`count(*)::int` })
@@ -174,7 +188,7 @@ export class PgTestCaseRepository implements TestCaseRepository {
       .where(sql`${testCase.deletedAt} is null`)
       .groupBy(testCollectionCase.collectionId);
     const size = new Map(counts.map((c) => [c.collectionId, Number(c.n)]));
-    return rows.map((r): TestCollectionRecord => ({ id: r.id, name: r.name, description: r.description, size: size.get(r.id) ?? 0 }));
+    return rows.map((r): TestCollectionRecord => ({ id: r.id, projectId: r.projectId, name: r.name, description: r.description, size: size.get(r.id) ?? 0 }));
   }
 
   async getCollection(id: string) {
@@ -201,18 +215,18 @@ export class PgTestCaseRepository implements TestCaseRepository {
       kind: asKind(c.kind),
       priority: asPriority(c.priority),
     }));
-    return { id: row.id, name: row.name, description: row.description, cases: mapped };
+    return { id: row.id, projectId: row.projectId, name: row.name, description: row.description, cases: mapped };
   }
 
-  async insertCollection(row: { id: string; name: string; description: string; projectId?: string }) {
+  async insertCollection(row: { id: string; projectId: string; name: string; description: string }) {
     try {
       const [saved] = await this.db
         .insert(testCollection)
-        .values({ id: row.id, projectId: row.projectId ?? DEFAULT_PROJECT_ID, name: row.name, description: row.description })
+        .values({ id: row.id, projectId: row.projectId, name: row.name, description: row.description })
         .returning();
-      return { id: saved!.id, name: saved!.name, description: saved!.description, size: 0 };
+      return { id: saved!.id, projectId: saved!.projectId, name: saved!.name, description: saved!.description, size: 0 };
     } catch (e) {
-      if (unique(e)) throw new PlatformError('conflict', 'A collection with that name already exists.');
+      if (unique(e)) throw new PlatformError('conflict', 'A collection with that name already exists in this project.');
       throw e;
     }
   }
@@ -255,8 +269,10 @@ export class PgTestCaseRepository implements TestCaseRepository {
     });
   }
 
-  async listWorkItemRuns() {
-    const rows = await this.db.select().from(workItemExecution).orderBy(desc(workItemExecution.createdAt));
+  async listWorkItemRuns(filter?: { projectId?: string }) {
+    const rows = filter?.projectId
+      ? await this.db.select().from(workItemExecution).where(eq(workItemExecution.projectId, filter.projectId)).orderBy(desc(workItemExecution.createdAt))
+      : await this.db.select().from(workItemExecution).orderBy(desc(workItemExecution.createdAt));
     return rows.map((r) => this.runOf(r));
   }
 

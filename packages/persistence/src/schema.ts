@@ -487,7 +487,7 @@ export const testCase = pgTable(
     updatedAt: ts('updated_at').notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex('test_case_key_uq').on(t.key).where(sql`${t.deletedAt} is null`),
+    uniqueIndex('test_case_project_key_uq').on(t.projectId, t.key).where(sql`${t.deletedAt} is null`),
     index('test_case_project_idx').on(t.projectId),
     check('test_case_kind_ck', sql`${t.kind} in ('positive','negative','edge')`),
     check('test_case_priority_ck', sql`${t.priority} in ('high','medium','low')`),
@@ -519,7 +519,7 @@ export const testCollection = pgTable(
     updatedAt: ts('updated_at').notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex('test_collection_name_uq').on(t.name).where(sql`${t.deletedAt} is null`),
+    uniqueIndex('test_collection_project_name_uq').on(t.projectId, t.name).where(sql`${t.deletedAt} is null`),
     index('test_collection_project_idx').on(t.projectId),
   ],
 );

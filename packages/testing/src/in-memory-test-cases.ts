@@ -16,16 +16,18 @@ import type {
 export class InMemoryTestCaseRepository implements TestCaseRepository {
   readonly cases = new Map<string, TestCaseRecord>();
   readonly versionRows = new Map<string, TestCaseVersionRecord[]>();
-  readonly collections = new Map<string, { id: string; name: string; description: string }>();
+  readonly collections = new Map<string, { id: string; projectId: string; name: string; description: string }>();
   readonly members = new Map<string, { testCaseId: string; position: number }[]>();
   readonly deletedCaseIds = new Set<string>();
   readonly deletedCollectionIds = new Set<string>();
   readonly workItemRuns: WorkItemRunRecord[] = [];
   readonly caseResults = new Map<string, WorkItemCaseResultRecord[]>();
+  /** Optional projectId on work-item runs for list filtering (Slice D hook). */
+  readonly workItemRunProjects = new Map<string, string>();
 
-  async list() {
+  async list(filter?: { projectId?: string }) {
     return [...this.cases.values()]
-      .filter((r) => !this.deletedCaseIds.has(r.id))
+      .filter((r) => !this.deletedCaseIds.has(r.id) && (!filter?.projectId || r.projectId === filter.projectId))
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
       .map((r) => structuredClone(r));
   }
@@ -36,18 +38,19 @@ export class InMemoryTestCaseRepository implements TestCaseRepository {
     return row ? structuredClone(row) : undefined;
   }
 
-  async findKey(key: string) {
-    const row = [...this.cases.values()].find((r) => r.key === key && !this.deletedCaseIds.has(r.id));
+  async findKey(key: string, projectId: string) {
+    const row = [...this.cases.values()].find((r) => r.key === key && r.projectId === projectId && !this.deletedCaseIds.has(r.id));
     return row ? structuredClone(row) : undefined;
   }
 
   async insert(row: TestCaseInsert) {
-    if ([...this.cases.values()].some((r) => r.key === row.key && !this.deletedCaseIds.has(r.id))) {
-      throw new PlatformError('conflict', 'A test case with that name already exists.');
+    if ([...this.cases.values()].some((r) => r.projectId === row.projectId && r.key === row.key && !this.deletedCaseIds.has(r.id))) {
+      throw new PlatformError('conflict', 'A test case with that name already exists in this project.');
     }
     const now = new Date();
     const saved: TestCaseRecord = {
       id: row.id,
+      projectId: row.projectId,
       key: row.key,
       name: row.name,
       summary: row.summary,
@@ -95,8 +98,8 @@ export class InMemoryTestCaseRepository implements TestCaseRepository {
   async saveIdentity(id: string, patch: { name?: string; key?: string; kind?: TestCaseKind; priority?: TestCasePriority }) {
     const row = this.cases.get(id);
     if (!row || this.deletedCaseIds.has(id)) throw new PlatformError('not-found', 'Test case not found');
-    if (patch.key !== undefined && [...this.cases.values()].some((r) => r.key === patch.key && r.id !== id && !this.deletedCaseIds.has(r.id))) {
-      throw new PlatformError('conflict', 'A test case with that name already exists.');
+    if (patch.key !== undefined && [...this.cases.values()].some((r) => r.projectId === row.projectId && r.key === patch.key && r.id !== id && !this.deletedCaseIds.has(r.id))) {
+      throw new PlatformError('conflict', 'A test case with that name already exists in this project.');
     }
     if (patch.name !== undefined) row.name = patch.name;
     if (patch.key !== undefined) row.key = patch.key;
@@ -115,27 +118,41 @@ export class InMemoryTestCaseRepository implements TestCaseRepository {
     return true;
   }
 
-  async softDeleteAllPlatform() {
+  async softDeleteForProject(projectId: string) {
     let cases = 0;
     let collections = 0;
-    for (const id of this.cases.keys()) {
-      if (this.deletedCaseIds.has(id)) continue;
-      this.deletedCaseIds.add(id);
+    for (const row of this.cases.values()) {
+      if (row.projectId !== projectId || this.deletedCaseIds.has(row.id)) continue;
+      this.deletedCaseIds.add(row.id);
       cases += 1;
     }
-    for (const id of this.collections.keys()) {
-      if (this.deletedCollectionIds.has(id)) continue;
-      this.deletedCollectionIds.add(id);
+    for (const row of this.collections.values()) {
+      if (row.projectId !== projectId || this.deletedCollectionIds.has(row.id)) continue;
+      this.deletedCollectionIds.add(row.id);
+      this.members.set(row.id, []);
       collections += 1;
     }
-    for (const collectionId of this.members.keys()) this.members.set(collectionId, []);
+    for (const [collectionId, members] of this.members) {
+      const collection = this.collections.get(collectionId);
+      if (!collection || collection.projectId !== projectId) continue;
+      this.members.set(collectionId, members.filter((m) => {
+        const c = this.cases.get(m.testCaseId);
+        return c && c.projectId === projectId && !this.deletedCaseIds.has(m.testCaseId);
+      }));
+    }
     return { cases, collections };
   }
 
-  async listCollections() {
+  async listCollections(filter?: { projectId?: string }) {
     return [...this.collections.values()]
-      .filter((c) => !this.deletedCollectionIds.has(c.id))
-      .map((c) => ({ ...c, size: this.members.get(c.id)?.length ?? 0 }));
+      .filter((c) => !this.deletedCollectionIds.has(c.id) && (!filter?.projectId || c.projectId === filter.projectId))
+      .map((c) => ({
+        id: c.id,
+        projectId: c.projectId,
+        name: c.name,
+        description: c.description,
+        size: (this.members.get(c.id) ?? []).filter((m) => !this.deletedCaseIds.has(m.testCaseId)).length,
+      }));
   }
 
   async getCollection(id: string) {
@@ -152,9 +169,9 @@ export class InMemoryTestCaseRepository implements TestCaseRepository {
     return { ...row, cases };
   }
 
-  async insertCollection(row: { id: string; name: string; description: string }) {
-    if ([...this.collections.values()].some((c) => !this.deletedCollectionIds.has(c.id) && c.name.toLowerCase() === row.name.toLowerCase())) {
-      throw new PlatformError('conflict', 'A collection with that name already exists.');
+  async insertCollection(row: { id: string; projectId: string; name: string; description: string }) {
+    if ([...this.collections.values()].some((c) => !this.deletedCollectionIds.has(c.id) && c.projectId === row.projectId && c.name.toLowerCase() === row.name.toLowerCase())) {
+      throw new PlatformError('conflict', 'A collection with that name already exists in this project.');
     }
     this.collections.set(row.id, row);
     this.members.set(row.id, []);
@@ -192,8 +209,10 @@ export class InMemoryTestCaseRepository implements TestCaseRepository {
     return true;
   }
 
-  async listWorkItemRuns() {
-    return this.workItemRuns.map((r) => structuredClone(r));
+  async listWorkItemRuns(filter?: { projectId?: string }) {
+    return this.workItemRuns
+      .filter((r) => !filter?.projectId || this.workItemRunProjects.get(r.id) === filter.projectId)
+      .map((r) => structuredClone(r));
   }
 
   async getWorkItemRun(id: string) {
@@ -201,9 +220,10 @@ export class InMemoryTestCaseRepository implements TestCaseRepository {
     return row ? structuredClone(row) : undefined;
   }
 
-  async insertWorkItemRun(row: { id: string; workItem: string; environmentId: string; environmentName: string; caseCount: number }) {
-    const saved: WorkItemRunRecord = { ...row, status: 'prepared', createdAt: new Date() };
+  async insertWorkItemRun(row: { id: string; workItem: string; environmentId: string; environmentName: string; caseCount: number; projectId?: string }) {
+    const saved: WorkItemRunRecord = { id: row.id, workItem: row.workItem, environmentId: row.environmentId, environmentName: row.environmentName, caseCount: row.caseCount, status: 'prepared', createdAt: new Date() };
     this.workItemRuns.unshift(saved);
+    if (row.projectId) this.workItemRunProjects.set(saved.id, row.projectId);
     return structuredClone(saved);
   }
 

@@ -46,6 +46,8 @@ export async function publishGeneratedCases(input: {
   workItem: string;
   cases: GeneratedCase[];
   testCases: TestCaseService;
+  /** Platform project that owns generated cases (not Squash's project id). */
+  platformProjectId: string;
   squash?: (item: GeneratedCase, upsert: ReturnType<typeof toSquashUpsertInput>) => Promise<SquashResult>;
   /** When set, each Squash-stored case seeds a draft automation asset + Squash↔script mapping (Phase 8 E6). */
   automation?: AutomationService;
@@ -66,7 +68,7 @@ export async function publishGeneratedCases(input: {
   });
   const squashIds: string[] = [];
   const references: string[] = [];
-  let projectId = '';
+  let squashProjectId = '';
   let squashError = '';
   let needsSurfaceCount = 0;
   let mapped = 0;
@@ -93,7 +95,7 @@ export async function publishGeneratedCases(input: {
         squashId = saved.id;
         squashIds.push(saved.id);
         references.push(item.reference);
-        if (!projectId && saved.projectId) projectId = saved.projectId;
+        if (!squashProjectId && saved.projectId) squashProjectId = saved.projectId;
       } catch (e) {
         squashError = e instanceof PlatformError ? e.message : 'Squash did not accept the test case.';
         if (/not bound/i.test(squashError)) {
@@ -110,6 +112,7 @@ export async function publishGeneratedCases(input: {
     const filed = await input.testCases.fileUnderWorkItem(
       { id: 'worker' },
       {
+        projectId: input.platformProjectId,
         name: upsert.name,
         steps: item.steps,
         expected: item.expected,
@@ -154,7 +157,7 @@ export async function publishGeneratedCases(input: {
   if (!input.squash) return { summary: `${kept} in Test Cases. No Squash connector is selected on this workflow.`, quality };
   if (squashError && squashIds.length === 0) return { summary: `${kept} in Test Cases. Squash did not store them: ${squashError}`, quality };
   if (squashError) return { summary: `${kept} in Test Cases. Squash stored ${squashIds.length} and then stopped: ${squashError}`, quality };
-  const where = projectId ? `Squash project ${projectId}` : 'Squash';
+  const where = squashProjectId ? `Squash project ${squashProjectId}` : 'Squash';
   const refs = references.length > 0 ? ` References: ${references.join(', ')}. Squash ids: ${squashIds.join(', ')}.` : '';
   return { summary: `${kept} in Test Cases and in ${where}.${refs}`, quality };
 }

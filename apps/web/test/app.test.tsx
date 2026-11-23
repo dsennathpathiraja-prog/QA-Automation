@@ -260,16 +260,16 @@ describe('route guard', () => {
     renderApp('/test-cases', {
       me: { status: 200, body: meFor('business_user') },
       routes: {
-        '/api/v1/test-collections': {
+        '/api/v1/test-collections?projectId=01900000-0000-7000-8000-000000000001': {
           status: 200,
-          body: { items: [{ id: '33333333-3333-4333-8333-333333333333', name: 'QA-1', description: 'Cases generated for QA-1', size: 1 }] },
+          body: { items: [{ id: '33333333-3333-4333-8333-333333333333', projectId: '01900000-0000-7000-8000-000000000001', name: 'QA-1', description: 'Cases generated for QA-1', size: 1 }] },
         },
       },
     });
     expect(await screen.findByRole('link', { name: 'QA-1' })).toBeTruthy();
     expect(screen.getByText(/1 case/)).toBeTruthy();
-    expect(screen.getByText(/Open a collection to see positive, negative, and edge cases/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Clear platform test cases' })).toBeNull();
+    expect(screen.getByText(/Generated cases from requirement-validation runs in this project/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Clear project test cases' })).toBeNull();
   });
 
   it('lists work-item runs on Executions and workflow history on the History tab', async () => {

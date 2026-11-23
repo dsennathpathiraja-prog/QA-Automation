@@ -377,7 +377,7 @@ describe('work-item Playwright run', () => {
   it('cancelWorkItemExecution marks queued runs cancelled without claiming', async () => {
     const repo = new InMemoryTestCaseRepository();
     const cases = new TestCaseService({ cases: repo, audit: new InMemoryAuditSink() });
-    await cases.fileUnderWorkItem({ id: 'worker' }, { name: 'Login', steps: 'Open', expected: 'Form', workItem: 'QA-9', summary: 'Squash 1' });
+    await cases.fileUnderWorkItem({ id: 'worker' }, { projectId: '01900000-0000-7000-8000-000000000001', name: 'Login', steps: 'Open', expected: 'Form', workItem: 'QA-9', summary: 'Squash 1' });
     const prepared = await cases.startWorkItemExecution({ id: 'eng' }, { workItem: 'QA-9', environmentId: '22222222-2222-4222-8222-222222222222', environmentName: 'QA' });
     await cases.queueWorkItemExecution({ id: 'eng' }, prepared.id);
     const cancelled = await cases.cancelWorkItemExecution({ id: 'eng' }, prepared.id);
@@ -393,7 +393,7 @@ describe('work-item Playwright run', () => {
   it('queues, claims, completes a prepared work item with per-case status', async () => {
     const repo = new InMemoryTestCaseRepository();
     const cases = new TestCaseService({ cases: repo, audit: new InMemoryAuditSink() });
-    await cases.fileUnderWorkItem({ id: 'worker' }, { name: 'Login', steps: 'Open', expected: 'Form', workItem: 'QA-1', summary: 'Squash 42' });
+    await cases.fileUnderWorkItem({ id: 'worker' }, { projectId: '01900000-0000-7000-8000-000000000001', name: 'Login', steps: 'Open', expected: 'Form', workItem: 'QA-1', summary: 'Squash 42' });
     const prepared = await cases.startWorkItemExecution({ id: 'eng' }, { workItem: 'QA-1', environmentId: '22222222-2222-4222-8222-222222222222', environmentName: 'QA' });
     const queued = await cases.queueWorkItemExecution({ id: 'eng' }, prepared.id);
     expect(queued.results?.[0]).toMatchObject({ status: 'Queued' });
