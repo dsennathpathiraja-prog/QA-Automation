@@ -15,9 +15,13 @@ import {
   collectCrawlTargets,
   createCrawlBounds,
   crawlBudgetOpen,
+  cuesMeaningfullyChanged,
+  exploreViewKey,
   formatExplorePageProgress,
+  isHashOnlyNavigation,
   normalizeExploreUrl,
   parseCrawlDiscovery,
+  resolveExploreHref,
   sameExploreHost,
   type CrawlKeywords,
   type CrawlTarget,
@@ -277,10 +281,12 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         probeErrors.push(probeError);
       };
 
+      // Hash-aware view keys so `#order-summary` and category filter views are distinct.
       const visited = new Set<string>();
-      const markVisited = (url: string) => {
-        const n = normalizeExploreUrl(url);
-        if (n) visited.add(n.toLowerCase());
+      const markVisited = (url: string, opts?: { cuesSummary?: string; clickLabel?: string }) => {
+        const urlOnly = normalizeExploreUrl(url, undefined, { keepHash: true });
+        if (urlOnly) visited.add(urlOnly.toLowerCase());
+        visited.add(exploreViewKey({ url, cuesSummary: opts?.cuesSummary, clickLabel: opts?.clickLabel }));
       };
 
       try {
@@ -328,15 +334,16 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
           if (snapshotIsActionable(fromNav)) {
             const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
             const url = fromNav.url || nav.finalUrl || startUrl;
+            const cuesSummary = summarizeSnapshotForFindings(fromNav);
             pushFinding({
               scenarioName: primaryLabel,
               url,
               title: fromNav.title || undefined,
               snapshotExcerpt: snapshotArtifactBody(fromNav),
-              cuesSummary: summarizeSnapshotForFindings(fromNav),
+              cuesSummary,
               screenshotBase64: shot.artifactBase64 || undefined,
             });
-            markVisited(url);
+            markVisited(url, { cuesSummary });
             currentUrl = url;
           }
         }
@@ -354,15 +361,16 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
             const fromDom = parsedSnapshotFromDomProbe(earlyProbe.probe!);
             const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
             const url = fromDom.url || nav.finalUrl || startUrl;
+            const cuesSummary = summarizeSnapshotForFindings(fromDom);
             pushFinding({
               scenarioName: primaryLabel,
               url,
               title: fromDom.title || undefined,
               snapshotExcerpt: snapshotArtifactBody(fromDom),
-              cuesSummary: summarizeSnapshotForFindings(fromDom),
+              cuesSummary,
               screenshotBase64: shot.artifactBase64 || undefined,
             }, earlyProbe.probe);
-            markVisited(url);
+            markVisited(url, { cuesSummary });
             currentUrl = url;
           }
         }
@@ -376,15 +384,16 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
           );
           const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
           const url = parsed.url || nav.finalUrl || startUrl;
+          const cuesSummary = summarizeSnapshotForFindings(parsed);
           pushFinding({
             scenarioName: primaryLabel,
             url,
             title: parsed.title || undefined,
             snapshotExcerpt: accessibilityTree,
-            cuesSummary: summarizeSnapshotForFindings(parsed),
+            cuesSummary,
             screenshotBase64: shot.artifactBase64 || undefined,
           }, probe, probeError);
-          markVisited(url);
+          markVisited(url, { cuesSummary });
           currentUrl = url;
         }
 
@@ -432,15 +441,16 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
               const body = snapshotArtifactBody(parsed) || tree;
               const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
               const url = parsed.url || pageUrl;
+              const cuesSummary = summarizeSnapshotForFindings(parsed);
               pushFinding({
                 scenarioName: `Explore candidate: ${candidate}`,
                 url,
                 title: parsed.title || undefined,
                 snapshotExcerpt: body,
-                cuesSummary: summarizeSnapshotForFindings(parsed),
+                cuesSummary,
                 screenshotBase64: shot.artifactBase64 || undefined,
               });
-              markVisited(url);
+              markVisited(url, { cuesSummary });
               currentUrl = url;
               if (exploredSurfaceMatchesKind('template', {
                 url,
@@ -476,7 +486,7 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         const triedTargets = new Set<string>();
 
         const discoverTargets = async (pageUrl: string, depth: number, cuesSummary?: string): Promise<CrawlTarget[]> => {
-          // Prefer cues already on the snapshot — avoid extra evaluate (circuit breaker).
+          // Prefer cues already on the snapshot — enrich with hrefs (incl. hash routes) via one evaluate.
           let links: Array<{ label: string; href?: string }> = [];
           let buttons: string[] = [];
           if (cuesSummary) {
@@ -484,8 +494,9 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
             links = (cues.links || []).map((label) => ({ label }));
             buttons = cues.buttons || [];
           }
-          // Enrich with hrefs once when we have labeled links but no URLs (same-host filter needs href).
-          if (browser.evaluate && links.length > 0 && links.every((l) => !l.href)) {
+          const needsHrefEnrichment = links.length > 0 && links.every((l) => !l.href);
+          const needsButtonDiscover = buttons.length === 0 && links.length === 0;
+          if (browser.evaluate && (needsHrefEnrichment || needsButtonDiscover)) {
             try {
               const out = await browser.evaluate({ script: CRAWL_LINK_DISCOVERY_SCRIPT });
               const discovered = parseCrawlDiscovery(out.resultText || out.accessibilityTree || '');
@@ -493,18 +504,21 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
                 const byLabel = new Map(
                   discovered.links.map((l) => [l.label.toLowerCase(), l.href] as const),
                 );
-                links = links.map((l) => ({
-                  ...l,
-                  href: l.href || byLabel.get(l.label.toLowerCase()),
-                }));
-                // Also accept discovery links not listed in aria cues (same host only).
+                links = links.length > 0
+                  ? links.map((l) => ({
+                    ...l,
+                    href: l.href || byLabel.get(l.label.toLowerCase()),
+                  }))
+                  : discovered.links;
                 for (const extra of discovered.links) {
                   if (!links.some((l) => l.label.toLowerCase() === extra.label.toLowerCase())) {
                     links.push(extra);
                   }
                 }
-                if (discovered.buttons.length && buttons.length === 0) {
-                  buttons = discovered.buttons;
+              }
+              if (discovered?.buttons?.length) {
+                for (const b of discovered.buttons) {
+                  if (!buttons.some((x) => x.toLowerCase() === b.toLowerCase())) buttons.push(b);
                 }
               }
             } catch {
@@ -530,9 +544,9 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
           const node = crawlFrontier.shift()!;
           if (node.depth >= bounds.maxDepth) continue;
 
-          // Ensure browser is on the frontier page before discovering / clicking.
-          const nodeNorm = normalizeExploreUrl(node.url)?.toLowerCase();
-          const curNorm = normalizeExploreUrl(currentUrl)?.toLowerCase();
+          // Ensure browser is on the frontier page before discovering / clicking (hash-aware).
+          const nodeNorm = normalizeExploreUrl(node.url, undefined, { keepHash: true })?.toLowerCase();
+          const curNorm = normalizeExploreUrl(currentUrl, undefined, { keepHash: true })?.toLowerCase();
           if (nodeNorm && curNorm && nodeNorm !== curNorm) {
             try {
               const back = await browser.navigate(node.url);
@@ -556,12 +570,40 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
             if (triedTargets.has(targetKey)) continue;
             triedTargets.add(targetKey);
 
+            const priorCues = node.cuesSummary;
             try {
-              if (target.href && sameExploreHost(startUrl, target.href)) {
-                const hrefNorm = normalizeExploreUrl(target.href)?.toLowerCase();
-                if (hrefNorm && visited.has(hrefNorm)) continue;
-                const hop = await browser.navigate(target.href);
-                currentUrl = hop.finalUrl || target.href;
+              // Prefer real clicks for buttons + SPA hash routes; navigate for distinct paths.
+              const preferClick = Boolean(browser.interact) && (
+                target.kind === 'button'
+                || target.hashNav
+                || !target.href
+                || (target.href ? isHashOnlyNavigation(currentUrl, target.href) : false)
+              );
+
+              if (preferClick && browser.interact) {
+                await browser.interact({ action: 'click', target: target.label });
+                await settleForStorefront(browser, 1.5);
+                const after = await browser.snapshot().catch(() => undefined);
+                currentUrl = after?.url || currentUrl;
+                // If click did not move hash/path but href is a hash route, navigate as fallback.
+                if (
+                  target.href
+                  && sameExploreHost(startUrl, target.href)
+                  && isHashOnlyNavigation(node.url, target.href)
+                ) {
+                  const afterNorm = normalizeExploreUrl(currentUrl, undefined, { keepHash: true })?.toLowerCase();
+                  const wantNorm = normalizeExploreUrl(target.href, undefined, { keepHash: true })?.toLowerCase();
+                  if (wantNorm && afterNorm !== wantNorm) {
+                    const hop = await browser.navigate(target.href);
+                    currentUrl = hop.finalUrl || target.href;
+                  }
+                }
+              } else if (target.href && sameExploreHost(startUrl, target.href)) {
+                const resolved = resolveExploreHref(target.href, currentUrl) || target.href;
+                const wantNorm = normalizeExploreUrl(resolved, undefined, { keepHash: true })?.toLowerCase();
+                if (wantNorm && visited.has(wantNorm) && !target.hashNav) continue;
+                const hop = await browser.navigate(resolved);
+                currentUrl = hop.finalUrl || resolved;
               } else if (browser.interact) {
                 await browser.interact({ action: 'click', target: target.label });
                 await settleForStorefront(browser, 1.5);
@@ -578,12 +620,6 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
                 continue;
               }
 
-              const urlNorm = normalizeExploreUrl(currentUrl)?.toLowerCase();
-              if (urlNorm && visited.has(urlNorm) && details.some((d) => normalizeExploreUrl(d.url)?.toLowerCase() === urlNorm)) {
-                // Same URL as an existing page — skip duplicate snapshot.
-                continue;
-              }
-
               const { parsed, accessibilityTree, probe, probeError } = await captureActionableSnapshot(
                 browser,
                 currentUrl,
@@ -593,22 +629,32 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
                 continue;
               }
               const pageUrl = parsed.url || currentUrl;
-              const pageNorm = normalizeExploreUrl(pageUrl)?.toLowerCase();
-              if (pageNorm && visited.has(pageNorm)) {
-                // Content may differ on same URL (modal) — still skip near-dup URL for crawl breadth.
+              const cuesSummary = summarizeSnapshotForFindings(parsed);
+              const urlWithHash = normalizeExploreUrl(pageUrl, undefined, { keepHash: true })?.toLowerCase()
+                || pageUrl.toLowerCase();
+              const viewKey = exploreViewKey({ url: pageUrl, cuesSummary, clickLabel: target.label });
+              const urlChanged = urlWithHash !== (normalizeExploreUrl(node.url, undefined, { keepHash: true })?.toLowerCase() || '');
+              const cueChanged = cuesMeaningfullyChanged(priorCues, cuesSummary);
+
+              // Accept: new URL/hash, or same-URL SPA view change after a click (category filter, etc.).
+              if (visited.has(viewKey)) continue;
+              if (!urlChanged && !cueChanged && visited.has(urlWithHash)) continue;
+              if (!urlChanged && !cueChanged) {
+                // Click was a no-op — do not burn a page slot.
                 continue;
               }
+
               const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
               const finding: ExploreFinding = {
                 scenarioName: `Explore via ${target.kind}: ${target.label}`.slice(0, 120),
                 url: pageUrl,
                 title: parsed.title || undefined,
                 snapshotExcerpt: accessibilityTree,
-                cuesSummary: summarizeSnapshotForFindings(parsed),
+                cuesSummary,
                 screenshotBase64: shot.artifactBase64 || undefined,
               };
               pushFinding(finding, probe, probeError);
-              markVisited(pageUrl);
+              markVisited(pageUrl, { cuesSummary, clickLabel: target.label });
               currentUrl = pageUrl;
               crawlFrontier.push({
                 url: pageUrl,

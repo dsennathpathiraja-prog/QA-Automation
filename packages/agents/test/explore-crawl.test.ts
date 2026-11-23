@@ -3,10 +3,15 @@ import {
   collectCrawlTargets,
   createCrawlBounds,
   crawlBudgetOpen,
+  cuesMeaningfullyChanged,
+  exploreViewKey,
   formatExplorePageProgress,
   isDestructiveNavLabel,
+  isHashOnlyNavigation,
+  isSkippableHref,
   normalizeExploreUrl,
   parseCrawlDiscovery,
+  resolveExploreHref,
   sameExploreHost,
   scoreCrawlTarget,
 } from '../src/explore-crawl';
@@ -24,15 +29,18 @@ describe('explore-crawl', () => {
     expect(checkout).toBeGreaterThan(random);
   });
 
-  it('rejects destructive labels and mailto/hash hrefs', () => {
+  it('rejects destructive labels and mailto; keeps navigational hash hrefs', () => {
     expect(isDestructiveNavLabel('Delete account')).toBe(true);
     expect(isDestructiveNavLabel('Pay now')).toBe(true);
     expect(isDestructiveNavLabel('Cart')).toBe(false);
     expect(scoreCrawlTarget('Delete order', 'https://shop.example/x', keywords)).toBeLessThan(0);
     expect(scoreCrawlTarget('Email us', 'mailto:a@b.com', keywords)).toBeLessThan(0);
+    expect(isSkippableHref('#')).toBe(true);
+    expect(isSkippableHref('#order-summary')).toBe(false);
+    expect(scoreCrawlTarget('Cart', '#order-summary', keywords)).toBeGreaterThan(0);
   });
 
-  it('keeps crawl targets on the same host and skips visited URLs', () => {
+  it('keeps crawl targets on the same host and skips visited path URLs', () => {
     const visited = new Set(['https://shop.example/cart']);
     const targets = collectCrawlTargets({
       links: [
@@ -51,6 +59,50 @@ describe('explore-crawl', () => {
     expect(targets.some((t) => /checkout/i.test(t.label))).toBe(true);
     expect(targets.some((t) => /delete/i.test(t.label))).toBe(false);
     expect(targets.some((t) => t.href?.includes('/cart'))).toBe(false);
+  });
+
+  it('treats #order-summary as a distinct in-app target (not skipped as visited shop)', () => {
+    const shop = 'http://sdk.paynsure.internal/shop';
+    const visited = new Set([shop.toLowerCase()]);
+    const targets = collectCrawlTargets({
+      links: [
+        { label: '0 items in cart — go to order summary', href: '#order-summary' },
+        { label: 'Kitchen', href: undefined },
+      ],
+      buttons: ['Kitchen', 'Travel', 'Add to cart'],
+      pageUrl: shop,
+      depth: 1,
+      keywords: {
+        terms: ['order', 'cart', 'kitchen'],
+        criteria: ['Filter by category', 'Open order summary'],
+        surfaces: ['shop catalog'],
+      },
+      visited,
+    });
+    const cart = targets.find((t) => /order summary|cart/i.test(t.label));
+    expect(cart?.href).toMatch(/#order-summary/i);
+    expect(cart?.hashNav).toBe(true);
+    expect(targets.some((t) => t.label === 'Kitchen')).toBe(true);
+    expect(targets.some((t) => t.label === 'Travel')).toBe(true);
+    expect(resolveExploreHref('#order-summary', shop)).toBe(`${shop}#order-summary`);
+    expect(isHashOnlyNavigation(shop, `${shop}#order-summary`)).toBe(true);
+    expect(normalizeExploreUrl(`${shop}#order-summary`, undefined, { keepHash: true })).toBe(`${shop}#order-summary`);
+    expect(normalizeExploreUrl(`${shop}#order-summary`)).toBe(shop);
+  });
+
+  it('detects meaningful same-URL cue changes for SPA filters', () => {
+    expect(cuesMeaningfullyChanged(
+      'heading="All items"; buttons="Kitchen","Travel"',
+      'heading="Kitchen"; buttons="Kitchen","Travel"',
+    )).toBe(true);
+    expect(cuesMeaningfullyChanged(
+      'heading="All items"; buttons="Kitchen"',
+      'heading="All items"; buttons="Kitchen"',
+    )).toBe(false);
+    expect(exploreViewKey({
+      url: 'http://sdk.paynsure.internal/shop',
+      clickLabel: 'Kitchen',
+    })).toMatch(/click:kitchen/);
   });
 
   it('enforces page and time budgets', () => {

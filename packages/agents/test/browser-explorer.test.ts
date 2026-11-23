@@ -82,6 +82,93 @@ describe('browser explorer', () => {
     expect(calls).toEqual(['open', 'nav:https://shop.example.com/pay', 'close']);
   });
 
+  it('clicks SPA category buttons and hash cart links (PayNSure shop style)', async () => {
+    const clicked: string[] = [];
+    const navigated: string[] = [];
+    const shop = 'http://sdk.paynsure.internal/shop';
+    const treeFor = (url: string, heading: string) => `
+### Page state
+- Page URL: ${url}
+- Page Title: PayNSure Host App Simulator
+- Page Snapshot:
+\`\`\`yaml
+- heading "${heading}" [ref=e1]
+- button "Kitchen" [ref=e2]
+- button "Travel" [ref=e3]
+- button "Add to cart" [ref=e4]
+- link "0 items in cart — go to order summary" [ref=e5]
+\`\`\`
+`;
+    let current = shop;
+    let heading = 'All items';
+    const browser: BrowserAutomationPort = {
+      async openSession() {},
+      async navigate(url) {
+        navigated.push(url);
+        current = url;
+        if (url.includes('#order-summary')) heading = 'Order summary';
+        return {
+          finalUrl: url,
+          accessibilityTree: treeFor(url, heading),
+          title: 'PayNSure Host App Simulator',
+        };
+      },
+      async waitFor() {},
+      async snapshot() {
+        return {
+          accessibilityTree: treeFor(current, heading),
+          url: current,
+          title: 'PayNSure Host App Simulator',
+        };
+      },
+      async evaluate({ script }) {
+        if (script.includes('a[href]')) {
+          return {
+            resultText: JSON.stringify({
+              url: current,
+              links: [{ label: '0 items in cart — go to order summary', href: `${shop}#order-summary` }],
+              buttons: ['Kitchen', 'Travel', 'Add to cart'],
+            }),
+          };
+        }
+        return { resultText: '{}' };
+      },
+      async interact({ target }) {
+        clicked.push(target);
+        if (/kitchen/i.test(target)) {
+          heading = 'Kitchen';
+          current = shop;
+        } else if (/travel/i.test(target)) {
+          heading = 'Travel';
+          current = shop;
+        } else if (/order summary|cart/i.test(target)) {
+          current = `${shop}#order-summary`;
+          heading = 'Order summary';
+        }
+      },
+      async screenshot() { return { artifactBase64: '' }; },
+      async closeSession() {},
+    };
+    const out = await createBrowserExplorer(browser).explore({
+      application: 'PayNSure',
+      url: shop,
+      workItemTitle: '2309 Shop catalog filters',
+      story: 'As a shopper I filter Kitchen and Travel categories and open the order summary cart.',
+      criteria: ['Filter by Kitchen category', 'Open order summary from cart link'],
+      scenarios: [],
+      maxPages: 4,
+      maxDepth: 2,
+      maxCrawlMs: 30_000,
+    });
+    expect(clicked.some((c) => /kitchen|travel|order summary|cart/i.test(c))).toBe(true);
+    expect(out.pagesVisited).toBeGreaterThanOrEqual(2);
+    expect(out.details.some((d) => /Kitchen|Travel|order summary|Order summary|#order-summary/i.test(
+      `${d.scenarioName} ${d.url} ${d.cuesSummary || ''}`,
+    ))).toBe(true);
+    expect(out.summary).toMatch(/Explored \d+ pages:/);
+    expect(out.findings).toMatch(/Multi-page explore:/);
+  });
+
   it('crawls in-app links to capture multi-page snapshots before planning', async () => {
     const navigated: string[] = [];
     const clicked: string[] = [];
