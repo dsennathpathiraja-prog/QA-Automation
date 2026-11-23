@@ -65,7 +65,7 @@ const STEP_LABEL: Record<string, string> = {
 
 const STEP_HELP: Record<string, string> = {
   'rv.read-user-story': 'Loads title, description, and acceptance criteria from the work item.',
-  'rv.explore-ui': 'Opens the environment and records UI findings for the planner.',
+  'rv.explore-ui': 'Opens the environment, crawls in-app links/buttons within scope, and records multi-page UI findings for the planner.',
   'rv.explore-code': 'Reads matching source files from the bound Azure DevOps Repos (preferred) or GitHub connector.',
   'rv.consolidate-findings': 'Merges UI and code notes into one findings blob.',
   'rv.generate-test-plan': 'Writes the Markdown test plan artifact with many scenarios and AC coverage gaps.',
@@ -374,7 +374,7 @@ export function WorkflowPage() {
                 <Stack component="form" spacing={2} sx={{ mb: 2 }} onSubmit={(e) => { e.preventDefault(); if (!canStartRun) return; start.mutate(); }}>
                   {generation && exploreUiOn && (
                     <Alert severity="info">
-                      Explore UI opens the selected environment with Playwright (MCP session → navigate) before planning. Pick an environment so the browser can load the application URL.
+                      Explore UI opens the selected environment with Playwright (MCP session → navigate → bounded link/button crawl) and captures multi-page snapshots before planning. Pick an environment so the browser can load the application URL.
                       {exploreCodeOn ? ' Explore code searches the bound source repository before planning.' : ''}
                       {' '}Running prepared cases later is still a separate action on Executions.
                     </Alert>

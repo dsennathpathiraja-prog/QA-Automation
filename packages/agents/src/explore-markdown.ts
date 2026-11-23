@@ -64,6 +64,8 @@ export function renderExploreUiMarkdown(input: {
   primarySurfaceUrl?: string;
   blockingGap?: boolean;
   candidateRoutes?: string[];
+  pagesVisited?: number;
+  exploredUrls?: string[];
 }): string {
   const lines = [
     `# Explore UI: ${input.workItem} — ${input.application}`,
@@ -73,6 +75,20 @@ export function renderExploreUiMarkdown(input: {
     input.findings.trim() || '_(none)_',
     '',
   ];
+  const pageCount = input.pagesVisited
+    ?? input.exploredUrls?.length
+    ?? input.details?.length
+    ?? 0;
+  const explored = input.exploredUrls
+    ?? [...new Set((input.details ?? []).map((d) => d.url).filter(Boolean))];
+  if (pageCount > 0 || explored.length > 0) {
+    lines.push('## Multi-page explore', '');
+    lines.push(`- **Pages explored:** ${pageCount || explored.length}`);
+    if (explored.length > 0) {
+      lines.push(`- **URLs:** ${explored.map((u) => `\`${u}\``).join(', ')}`);
+    }
+    lines.push('');
+  }
   if (input.surfaceKind || input.primarySurfaceUrl || input.blockingGap || (input.candidateRoutes && input.candidateRoutes.length > 0)) {
     lines.push('## Story surface binding', '');
     if (input.surfaceKind) lines.push(`- **Surface kind:** ${input.surfaceKind}`);

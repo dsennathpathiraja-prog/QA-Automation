@@ -139,8 +139,12 @@ export interface ExploreRequest {
   /** Optional criteria / path labels when exploring before the plan exists. */
   criteria?: string[];
   scenarios: PlannerScenario[];
-  /** Cap pages / screenshots for a single run. */
+  /** Cap pages / screenshots for a single run (bounded crawl). */
   maxPages?: number;
+  /** Max click/nav depth from the start page (default 2). */
+  maxDepth?: number;
+  /** Soft wall-clock budget for multi-page crawl in ms (default 45s). */
+  maxCrawlMs?: number;
   executionId?: string;
   stepId?: string;
 }
@@ -178,6 +182,10 @@ export interface ExploreResult {
   templatePreviewUrl?: string;
   /** Candidate routes tried / suggested beyond the environment root. */
   candidateRoutes?: string[];
+  /** Distinct pages captured during multi-page explore (operator progress). */
+  pagesVisited?: number;
+  /** Ordered unique URLs visited during explore. */
+  exploredUrls?: string[];
 }
 
 export interface CodeExploreRequest {

@@ -11,6 +11,18 @@ import {
   type DomProbeResult,
 } from './dom-probe';
 import {
+  CRAWL_LINK_DISCOVERY_SCRIPT,
+  collectCrawlTargets,
+  createCrawlBounds,
+  crawlBudgetOpen,
+  formatExplorePageProgress,
+  normalizeExploreUrl,
+  parseCrawlDiscovery,
+  sameExploreHost,
+  type CrawlKeywords,
+  type CrawlTarget,
+} from './explore-crawl';
+import {
   parseMcpPageSnapshot,
   snapshotArtifactBody,
   snapshotIsActionable,
@@ -230,27 +242,47 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
       const templateStory = analysis.notificationTemplate
         || isNotificationTemplateStory(input.story || '', input.criteria ?? [])
         || binding.surfaceKind === 'template';
-      // Story-driven labels: for template WIs prefer template surfaces, not every AC as a fake page.
-      const labels = input.scenarios.length > 0
-        ? input.scenarios.map((s) => s.name)
-        : templateStory
-          ? [
-            binding.primarySurfaceUrl
-              ? 'Explore: escrow notification template / email preview (configured)'
-              : 'Explore: escrow notification template / email preview',
-            ...(analysis.surfaces.some((s) => /checkout|order placement/i.test(s))
-              ? ['Explore: checkout order trigger (secondary)']
-              : []),
-          ]
-          : (input.criteria?.length ? input.criteria : [input.application]).map((c) => `Explore: ${c}`);
+      // Story-driven primary label; additional pages come from bounded link/button crawl.
+      const primaryLabel = input.scenarios[0]?.name
+        || (templateStory
+          ? (binding.primarySurfaceUrl
+            ? 'Explore: escrow notification template / email preview (configured)'
+            : 'Explore: escrow notification template / email preview')
+          : `Explore: ${(input.criteria?.[0] || input.application)}`);
       const details: ExploreFinding[] = [];
       const probes: Array<DomProbeResult | undefined> = [];
       const probeErrors: Array<string | undefined> = [];
       // Prefer WI / configured template preview primary; otherwise the environment app root.
       const startUrl = binding.primarySurfaceUrl || input.url;
-      // One primary capture is enough when we only have a single environment URL; avoid
-      // repeating identical snapshots once per AC label on the same shop page.
-      const limit = Math.min(input.maxPages ?? (templateStory ? 2 : 5), Math.max(1, labels.length), templateStory ? 2 : 8);
+      const bounds = createCrawlBounds({
+        maxPages: input.maxPages ?? (templateStory ? 3 : 5),
+        maxDepth: input.maxDepth ?? (templateStory ? 1 : 2),
+        maxMs: input.maxCrawlMs,
+      });
+      // Template stories keep a tighter page cap so shop crawl does not drown email evidence.
+      const pageCap = templateStory ? Math.min(bounds.maxPages, 3) : bounds.maxPages;
+      const crawlKeywords: CrawlKeywords = {
+        terms: analysis.searchTerms,
+        criteria: input.criteria ?? [],
+        surfaces: analysis.surfaces,
+      };
+
+      const pushFinding = (
+        finding: ExploreFinding,
+        probe?: DomProbeResult,
+        probeError?: string,
+      ) => {
+        details.push(finding);
+        probes.push(probe);
+        probeErrors.push(probeError);
+      };
+
+      const visited = new Set<string>();
+      const markVisited = (url: string) => {
+        const n = normalizeExploreUrl(url);
+        if (n) visited.add(n.toLowerCase());
+      };
+
       try {
         await browser.openSession();
         let nav: Awaited<ReturnType<BrowserAutomationPort['navigate']>>;
@@ -285,28 +317,31 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
           raw: nav.accessibilityTree,
         });
 
+        let earlyProbe: { probe?: DomProbeResult; error?: string } | undefined;
+        let currentUrl = nav.finalUrl || startUrl;
+
         // Prefer a snapshot already attached to navigate when the tree is rich enough.
         if (nav.accessibilityTree) {
           const fromNav = parseMcpPageSnapshot(nav.accessibilityTree);
           if (!fromNav.url) fromNav.url = nav.finalUrl || startUrl;
           if (!fromNav.title && nav.title) fromNav.title = nav.title;
-          if (snapshotIsActionable(fromNav) && labels.length === 1) {
+          if (snapshotIsActionable(fromNav)) {
             const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
-            details.push({
-              scenarioName: labels[0]!,
-              url: fromNav.url || nav.finalUrl || startUrl,
+            const url = fromNav.url || nav.finalUrl || startUrl;
+            pushFinding({
+              scenarioName: primaryLabel,
+              url,
               title: fromNav.title || undefined,
               snapshotExcerpt: snapshotArtifactBody(fromNav),
               cuesSummary: summarizeSnapshotForFindings(fromNav),
               screenshotBase64: shot.artifactBase64 || undefined,
             });
-            probes.push(undefined);
-            probeErrors.push(undefined);
+            markVisited(url);
+            currentUrl = url;
           }
         }
 
         // One early DOM probe when navigate aria is empty — reused by capture (no evaluate spam).
-        let earlyProbe: { probe?: DomProbeResult; error?: string } | undefined;
         if (details.length === 0 && browser.evaluate) {
           earlyProbe = await probeDom(browser, { reNavigateUrl: startUrl });
           throwIfNavigationFailed({
@@ -315,24 +350,24 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
             raw: nav.accessibilityTree,
             probe: earlyProbe.probe,
           });
-          if (domProbeIsActionable(earlyProbe.probe) && labels.length === 1) {
+          if (domProbeIsActionable(earlyProbe.probe)) {
             const fromDom = parsedSnapshotFromDomProbe(earlyProbe.probe!);
             const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
-            details.push({
-              scenarioName: labels[0]!,
-              url: fromDom.url || nav.finalUrl || startUrl,
+            const url = fromDom.url || nav.finalUrl || startUrl;
+            pushFinding({
+              scenarioName: primaryLabel,
+              url,
               title: fromDom.title || undefined,
               snapshotExcerpt: snapshotArtifactBody(fromDom),
               cuesSummary: summarizeSnapshotForFindings(fromDom),
               screenshotBase64: shot.artifactBase64 || undefined,
-            });
-            probes.push(earlyProbe.probe);
-            probeErrors.push(undefined);
+            }, earlyProbe.probe);
+            markVisited(url);
+            currentUrl = url;
           }
         }
 
-        for (let i = details.length; i < limit; i += 1) {
-          const label = labels[i] ?? `page-${i + 1}`;
+        if (details.length === 0) {
           const { parsed, accessibilityTree, probe, probeError } = await captureActionableSnapshot(
             browser,
             nav.finalUrl || startUrl,
@@ -340,16 +375,17 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
             earlyProbe,
           );
           const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
-          details.push({
-            scenarioName: label,
-            url: parsed.url || nav.finalUrl || startUrl,
+          const url = parsed.url || nav.finalUrl || startUrl;
+          pushFinding({
+            scenarioName: primaryLabel,
+            url,
             title: parsed.title || undefined,
             snapshotExcerpt: accessibilityTree,
             cuesSummary: summarizeSnapshotForFindings(parsed),
             screenshotBase64: shot.artifactBase64 || undefined,
-          });
-          probes.push(probe);
-          probeErrors.push(probeError);
+          }, probe, probeError);
+          markVisited(url);
+          currentUrl = url;
         }
 
         // Template WI + shop-only root: quick-probe a few candidate routes (no long SPA settle).
@@ -361,12 +397,16 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
           && looksLikeShopSurface(rootCues)
           && !exploredSurfaceMatchesKind('template', rootCues)
           && binding.candidateUrls.length > 0
+          && crawlBudgetOpen({ ...bounds, maxPages: pageCap }, details.length)
         ) {
-          const tried = new Set(details.map((d) => (d.url || '').toLowerCase()));
           const toTry = binding.candidateUrls
-            .filter((u) => u !== startUrl && u !== input.url && !tried.has(u.toLowerCase()))
+            .filter((u) => {
+              const n = normalizeExploreUrl(u)?.toLowerCase();
+              return Boolean(n) && !visited.has(n!);
+            })
             .slice(0, 2);
           for (const candidate of toTry) {
+            if (!crawlBudgetOpen({ ...bounds, maxPages: pageCap }, details.length)) break;
             try {
               const candNav = await browser.navigate(candidate);
               throwIfNavigationFailed({
@@ -391,18 +431,19 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
               if (!snapshotIsActionable(parsed)) continue;
               const body = snapshotArtifactBody(parsed) || tree;
               const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
-              details.push({
+              const url = parsed.url || pageUrl;
+              pushFinding({
                 scenarioName: `Explore candidate: ${candidate}`,
-                url: parsed.url || pageUrl,
+                url,
                 title: parsed.title || undefined,
                 snapshotExcerpt: body,
                 cuesSummary: summarizeSnapshotForFindings(parsed),
                 screenshotBase64: shot.artifactBase64 || undefined,
               });
-              probes.push(undefined);
-              probeErrors.push(undefined);
+              markVisited(url);
+              currentUrl = url;
               if (exploredSurfaceMatchesKind('template', {
-                url: parsed.url || pageUrl,
+                url,
                 title: parsed.title,
                 headings: [],
                 buttons: [],
@@ -412,6 +453,176 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
               }
             } catch {
               // Candidate miss is expected on shop-only hosts — continue; gap recorded below.
+            }
+          }
+        }
+
+        // Multi-page crawl: follow in-app links/buttons within host scope (bounded depth/time).
+        // Only start when the landing page is actionable — empty shells should fail fast, not crawl.
+        // Fail soft — keep partial evidence if a click/nav errors or the budget expires.
+        const landingActionable = details.some((d) => {
+          const parsed = parseMcpPageSnapshot(d.snapshotExcerpt);
+          if (!parsed.url) parsed.url = d.url;
+          if (!parsed.title && d.title) parsed.title = d.title;
+          return snapshotIsActionable(parsed);
+        });
+        const crawlFrontier: Array<{ url: string; depth: number; cuesSummary?: string }> = landingActionable
+          ? [{
+            url: currentUrl,
+            depth: 0,
+            cuesSummary: details[details.length - 1]?.cuesSummary,
+          }]
+          : [];
+        const triedTargets = new Set<string>();
+
+        const discoverTargets = async (pageUrl: string, depth: number, cuesSummary?: string): Promise<CrawlTarget[]> => {
+          // Prefer cues already on the snapshot — avoid extra evaluate (circuit breaker).
+          let links: Array<{ label: string; href?: string }> = [];
+          let buttons: string[] = [];
+          if (cuesSummary) {
+            const cues = parseExplorationCues(`- page @ ${pageUrl}\n  ${cuesSummary}`);
+            links = (cues.links || []).map((label) => ({ label }));
+            buttons = cues.buttons || [];
+          }
+          // Enrich with hrefs once when we have labeled links but no URLs (same-host filter needs href).
+          if (browser.evaluate && links.length > 0 && links.every((l) => !l.href)) {
+            try {
+              const out = await browser.evaluate({ script: CRAWL_LINK_DISCOVERY_SCRIPT });
+              const discovered = parseCrawlDiscovery(out.resultText || out.accessibilityTree || '');
+              if (discovered?.links?.length) {
+                const byLabel = new Map(
+                  discovered.links.map((l) => [l.label.toLowerCase(), l.href] as const),
+                );
+                links = links.map((l) => ({
+                  ...l,
+                  href: l.href || byLabel.get(l.label.toLowerCase()),
+                }));
+                // Also accept discovery links not listed in aria cues (same host only).
+                for (const extra of discovered.links) {
+                  if (!links.some((l) => l.label.toLowerCase() === extra.label.toLowerCase())) {
+                    links.push(extra);
+                  }
+                }
+                if (discovered.buttons.length && buttons.length === 0) {
+                  buttons = discovered.buttons;
+                }
+              }
+            } catch {
+              // Discovery evaluate is best-effort.
+            }
+          }
+          // Only follow controls present on the page (plus hrefs from evaluate).
+          // Template candidate routes are probed separately above — do not invent shop paths here.
+          return collectCrawlTargets({
+            links,
+            buttons,
+            pageUrl,
+            depth,
+            keywords: crawlKeywords,
+            visited,
+          });
+        };
+
+        while (
+          crawlBudgetOpen({ ...bounds, maxPages: pageCap }, details.length)
+          && crawlFrontier.length > 0
+        ) {
+          const node = crawlFrontier.shift()!;
+          if (node.depth >= bounds.maxDepth) continue;
+
+          // Ensure browser is on the frontier page before discovering / clicking.
+          const nodeNorm = normalizeExploreUrl(node.url)?.toLowerCase();
+          const curNorm = normalizeExploreUrl(currentUrl)?.toLowerCase();
+          if (nodeNorm && curNorm && nodeNorm !== curNorm) {
+            try {
+              const back = await browser.navigate(node.url);
+              currentUrl = back.finalUrl || node.url;
+              await settleForStorefront(browser, 1.2);
+            } catch {
+              continue;
+            }
+          }
+
+          let targets: CrawlTarget[] = [];
+          try {
+            targets = await discoverTargets(currentUrl, node.depth + 1, node.cuesSummary);
+          } catch {
+            continue;
+          }
+
+          for (const target of targets.slice(0, 8)) {
+            if (!crawlBudgetOpen({ ...bounds, maxPages: pageCap }, details.length)) break;
+            const targetKey = `${target.kind}|${target.label.toLowerCase()}|${(target.href || '').toLowerCase()}`;
+            if (triedTargets.has(targetKey)) continue;
+            triedTargets.add(targetKey);
+
+            try {
+              if (target.href && sameExploreHost(startUrl, target.href)) {
+                const hrefNorm = normalizeExploreUrl(target.href)?.toLowerCase();
+                if (hrefNorm && visited.has(hrefNorm)) continue;
+                const hop = await browser.navigate(target.href);
+                currentUrl = hop.finalUrl || target.href;
+              } else if (browser.interact) {
+                await browser.interact({ action: 'click', target: target.label });
+                await settleForStorefront(browser, 1.5);
+                const after = await browser.snapshot().catch(() => undefined);
+                currentUrl = after?.url || currentUrl;
+              } else {
+                continue;
+              }
+
+              // Stay on the story host — abandon off-scope hops without recording them.
+              if (!sameExploreHost(startUrl, currentUrl) && !sameExploreHost(input.url, currentUrl)) {
+                await browser.navigate(node.url).catch(() => undefined);
+                currentUrl = node.url;
+                continue;
+              }
+
+              const urlNorm = normalizeExploreUrl(currentUrl)?.toLowerCase();
+              if (urlNorm && visited.has(urlNorm) && details.some((d) => normalizeExploreUrl(d.url)?.toLowerCase() === urlNorm)) {
+                // Same URL as an existing page — skip duplicate snapshot.
+                continue;
+              }
+
+              const { parsed, accessibilityTree, probe, probeError } = await captureActionableSnapshot(
+                browser,
+                currentUrl,
+                currentUrl,
+              );
+              if (!snapshotIsActionable(parsed) && !domProbeIsActionable(probe)) {
+                continue;
+              }
+              const pageUrl = parsed.url || currentUrl;
+              const pageNorm = normalizeExploreUrl(pageUrl)?.toLowerCase();
+              if (pageNorm && visited.has(pageNorm)) {
+                // Content may differ on same URL (modal) — still skip near-dup URL for crawl breadth.
+                continue;
+              }
+              const shot = await browser.screenshot().catch(() => ({ artifactBase64: '' }));
+              const finding: ExploreFinding = {
+                scenarioName: `Explore via ${target.kind}: ${target.label}`.slice(0, 120),
+                url: pageUrl,
+                title: parsed.title || undefined,
+                snapshotExcerpt: accessibilityTree,
+                cuesSummary: summarizeSnapshotForFindings(parsed),
+                screenshotBase64: shot.artifactBase64 || undefined,
+              };
+              pushFinding(finding, probe, probeError);
+              markVisited(pageUrl);
+              currentUrl = pageUrl;
+              crawlFrontier.push({
+                url: pageUrl,
+                depth: node.depth + 1,
+                cuesSummary: finding.cuesSummary,
+              });
+            } catch {
+              // Soft-fail one hop; keep prior pages for the planner.
+              try {
+                await browser.navigate(node.url);
+                currentUrl = node.url;
+              } catch {
+                /* ignore */
+              }
             }
           }
         }
@@ -496,7 +707,9 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
       const visitedUrls = [...new Set(unique.map((d) => d.url).filter(Boolean))];
       const primarySurfaceUrl = resolvePrimarySurfaceUrl(binding, visitedUrls)
         || (templateMatch ? visitedUrls.find((u) => exploredSurfaceMatchesKind('template', { url: u })) : undefined);
+      const pageProgress = formatExplorePageProgress(visitedUrls.length > 0 ? visitedUrls : [input.url]);
       const findings = [
+        pageProgress,
         findingsBody,
         `\n- Story surface binding: kind=${binding.surfaceKind}`
           + (primarySurfaceUrl ? `; primary=${primarySurfaceUrl}` : '; primary=(unbound)')
@@ -504,6 +717,7 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
           + (binding.candidateRoutes.length
             ? `; candidates=${binding.candidateRoutes.slice(0, 6).join(',')}`
             : ''),
+        `\n- Multi-page explore: ${unique.length} distinct page snapshot${unique.length === 1 ? '' : 's'} (cap ${pageCap}, depth ≤ ${bounds.maxDepth})`,
         warning ? `\n- Explore coverage warning: ${warning}` : '',
         blockingGap ? '\n- Blocking explore gap: true (fail closed — no Passed on mismatched surface)' : '',
         !blockingGap && templateMatch
@@ -512,14 +726,14 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         templateStory && analysis.searchTerms.length
           ? `\n- Story search terms (for template surfaces): ${analysis.searchTerms.slice(0, 8).join(', ')}`
           : '',
-      ].filter(Boolean).join('');
+      ].filter(Boolean).join('\n');
 
       const urlList = (visitedUrls.length > 0 ? visitedUrls : [input.url]).join(', ');
       const summary = warning
-        ? `Visited ${urlList} (${unique.length} distinct surface${unique.length === 1 ? '' : 's'}) for ${input.application} before planning. ${warning}`
+        ? `${pageProgress} for ${input.application} before planning (${unique.length} distinct surface${unique.length === 1 ? '' : 's'}: ${urlList}). ${warning}`
         : templateMatch
-          ? `Visited ${urlList} (${unique.length} page snapshot${unique.length === 1 ? '' : 's'}) for ${input.application} — notification/template preview surface reached.`
-          : `Visited ${urlList} (${unique.length} page snapshot${unique.length === 1 ? '' : 's'}) for ${input.application} before planning.`;
+          ? `${pageProgress} for ${input.application} — notification/template preview surface reached.`
+          : `${pageProgress} for ${input.application} before planning.`;
       return {
         summary,
         findings,
@@ -532,6 +746,8 @@ export function createBrowserExplorer(browser: BrowserAutomationPort | undefined
         primarySurfaceUrl,
         ...(binding.templatePreviewUrl ? { templatePreviewUrl: binding.templatePreviewUrl } : {}),
         candidateRoutes: binding.candidateRoutes,
+        pagesVisited: unique.length,
+        exploredUrls: visitedUrls.length > 0 ? visitedUrls : [input.url],
       };
     },
   };
