@@ -401,7 +401,7 @@ export const workflow = pgTable(
     ...audit(),
   },
   (t) => [
-    uniqueIndex('workflow_key_uq').on(t.key).where(sql`${t.deletedAt} is null`),
+    uniqueIndex('workflow_project_key_uq').on(t.projectId, t.key).where(sql`${t.deletedAt} is null`),
     index('workflow_project_idx').on(t.projectId),
     check('workflow_type_ck', sql`${t.type} in ('requirement-validation','regression-testing')`),
     check('workflow_status_ck', sql`${t.status} in ('draft','in_review','published','disabled')`),

@@ -29,7 +29,9 @@ export function registerWorkflowRoutes(app: FastifyInstance, workflows: Workflow
   app.get('/api/v1/workflow-templates', { config: { access: requires('workflow.create') } }, async () => WorkflowTemplateList.parse({ items: workflows.templates() }));
 
   app.get('/api/v1/workflows', { config: { access: requires('workflow.view_published') } }, async (req) => {
-    return WorkflowListResponse.parse({ items: await workflows.list(drafts(req.principal!.roles)) });
+    const projectId = typeof (req.query as { projectId?: string }).projectId === 'string' ? (req.query as { projectId: string }).projectId.trim() : '';
+    if (!projectId || !UUID.test(projectId)) throw new PlatformError('validation', 'Query projectId is required.');
+    return WorkflowListResponse.parse({ items: await workflows.list(drafts(req.principal!.roles), { projectId }) });
   });
 
   app.post('/api/v1/workflows', { config: { access: requires('workflow.create') } }, async (req, reply) => {

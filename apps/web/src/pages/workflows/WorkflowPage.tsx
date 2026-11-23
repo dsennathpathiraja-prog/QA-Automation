@@ -88,7 +88,7 @@ export function WorkflowPage() {
   const { id } = useParams({ strict: false }) as { id: string };
   const api = useApi();
   const session = useSession();
-  const { selectedId } = useProject();
+  const { selectedId, select } = useProject();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const workflow = useQuery({ queryKey: keyOf(id), queryFn: () => api.get(`/api/v1/workflows/${id}`, WorkflowSchema) });
@@ -98,15 +98,18 @@ export function WorkflowPage() {
   const [params, setParams] = useState<Record<string, string>>({});
   const [runId, setRunId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<'ask' | 'force' | undefined>();
+  // Bind connectors/envs from the workflow's project only (not the header selection if it differs).
+  const scopeProjectId = workflow.data?.projectId ?? selectedId;
+  const projectMismatch = Boolean(workflow.data?.projectId && selectedId && workflow.data.projectId !== selectedId);
   const savedConnectors = useQuery({
-    queryKey: ['connectors', selectedId],
-    queryFn: () => api.get(`/api/v1/connectors?projectId=${encodeURIComponent(selectedId!)}`, ConnectorListResponse),
-    enabled: !!selectedId && session.can('connector.view_status'),
+    queryKey: ['connectors', scopeProjectId],
+    queryFn: () => api.get(`/api/v1/connectors?projectId=${encodeURIComponent(scopeProjectId!)}`, ConnectorListResponse),
+    enabled: !!scopeProjectId && session.can('connector.view_status'),
   });
   const environments = useQuery({
-    queryKey: ['environments', selectedId],
-    queryFn: () => api.get(`/api/v1/environments?projectId=${encodeURIComponent(selectedId!)}`, EnvironmentListResponse),
-    enabled: !!selectedId && session.can('environment.view'),
+    queryKey: ['environments', scopeProjectId],
+    queryFn: () => api.get(`/api/v1/environments?projectId=${encodeURIComponent(scopeProjectId!)}`, EnvironmentListResponse),
+    enabled: !!scopeProjectId && session.can('environment.view'),
   });
   const def = edited ?? (definition.data?.definition as Def | undefined);
   const draft = workflow.data?.status === 'draft';
@@ -193,6 +196,19 @@ export function WorkflowPage() {
       <PageHeader title={workflow.data?.name ?? 'Workflow'} description={workflow.data ? `${workflow.data.status}${workflow.data.publishedVersion ? ` · version ${workflow.data.publishedVersion}` : ''}` : 'Loading the workflow.'} />
       <Typography sx={{ mb: 2 }}><Link to="/workflows">All workflows</Link></Typography>
       {workflow.isError && <ErrorNotice message="This workflow could not be loaded." onRetry={() => void workflow.refetch()} />}
+      {projectMismatch && workflow.data?.projectId && (
+        <Alert
+          severity="warning"
+          sx={{ mb: 2 }}
+          action={(
+            <Button color="inherit" size="small" onClick={() => select(workflow.data!.projectId)}>
+              Select this workflow's project
+            </Button>
+          )}
+        >
+          This workflow belongs to another project. Connector binding and runs use that project's connectors and environments.
+        </Alert>
+      )}
       {def && (
         <Stack spacing={2}>
           <Paper>
@@ -283,7 +299,7 @@ export function WorkflowPage() {
             <Paper sx={{ p: 2 }} aria-label="Connectors">
               <Typography variant="h2" gutterBottom>Connectors</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                Choose a connector you already set up. Leave a role on None when that step is turned off. Then Save draft.
+                Bind roles to connectors from this workflow's project only. Leave a role on None when that step is turned off. Then Save draft before publish.
               </Typography>
               <Stack spacing={2}>
                 {(def.spec?.connectors ?? []).map((c) => {

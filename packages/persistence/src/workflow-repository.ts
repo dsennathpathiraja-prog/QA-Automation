@@ -2,7 +2,6 @@ import { and, eq, isNull, sql } from 'drizzle-orm';
 import { PlatformError } from '@qa/domain';
 import type { NewWorkflow, WorkflowRecord, WorkflowRepository, WorkflowType } from '@qa/application';
 import type { Db } from './db';
-import { DEFAULT_PROJECT_ID } from './project-repository';
 import { workflow } from './schema';
 
 const unique = (e: unknown) => ((e as { code?: string; cause?: { code?: string } }).code ?? (e as { cause?: { code?: string } }).cause?.code) === '23505';
@@ -10,6 +9,7 @@ const live = (id: string) => and(eq(workflow.id, id), isNull(workflow.deletedAt)
 
 const toRecord = (r: typeof workflow.$inferSelect): WorkflowRecord => ({
   id: r.id,
+  projectId: r.projectId,
   key: r.key,
   name: r.name,
   description: r.description,
@@ -24,8 +24,11 @@ const toRecord = (r: typeof workflow.$inferSelect): WorkflowRecord => ({
 export class PgWorkflowRepository implements WorkflowRepository {
   constructor(private readonly db: Db) {}
 
-  async list() {
-    const rows = await this.db.select().from(workflow).where(isNull(workflow.deletedAt)).orderBy(workflow.name);
+  async list(filter?: { projectId?: string }) {
+    const cond = filter?.projectId
+      ? and(isNull(workflow.deletedAt), eq(workflow.projectId, filter.projectId))
+      : isNull(workflow.deletedAt);
+    const rows = await this.db.select().from(workflow).where(cond).orderBy(workflow.name);
     return rows.map(toRecord);
   }
 
@@ -40,7 +43,7 @@ export class PgWorkflowRepository implements WorkflowRepository {
         .insert(workflow)
         .values({
           id: n.id,
-          projectId: (n as { projectId?: string }).projectId ?? DEFAULT_PROJECT_ID,
+          projectId: n.projectId,
           key: n.key,
           name: n.name,
           description: n.description,
@@ -51,7 +54,7 @@ export class PgWorkflowRepository implements WorkflowRepository {
         .returning();
       return toRecord(row!);
     } catch (e) {
-      if (unique(e)) throw new PlatformError('conflict', `A workflow with key "${n.key}" already exists.`);
+      if (unique(e)) throw new PlatformError('conflict', `A workflow with key "${n.key}" already exists in this project.`);
       throw e;
     }
   }
