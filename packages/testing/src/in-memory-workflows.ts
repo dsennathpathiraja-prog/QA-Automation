@@ -4,8 +4,10 @@ import type { NewWorkflow, NewWorkflowVersion, WorkflowRecord, WorkflowRepositor
 export class InMemoryWorkflowRepository implements WorkflowRepository {
   readonly rows = new Map<string, WorkflowRecord>();
 
-  async list() {
-    return [...this.rows.values()].sort((a, b) => a.name.localeCompare(b.name));
+  async list(filter?: { projectId?: string }) {
+    return [...this.rows.values()]
+      .filter((r) => !filter?.projectId || r.projectId === filter.projectId)
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async get(id: string) {
@@ -14,9 +16,23 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   }
 
   async insert(n: NewWorkflow) {
-    if ([...this.rows.values()].some((r) => r.key === n.key)) throw new PlatformError('conflict', `A workflow with key "${n.key}" already exists.`);
+    if ([...this.rows.values()].some((r) => r.projectId === n.projectId && r.key === n.key)) {
+      throw new PlatformError('conflict', `A workflow with key "${n.key}" already exists in this project.`);
+    }
     const now = new Date();
-    const rec: WorkflowRecord = { id: n.id, key: n.key, name: n.name, description: n.description, type: n.type, status: 'draft', enabled: true, definition: structuredClone(n.definition), createdAt: now, updatedAt: now };
+    const rec: WorkflowRecord = {
+      id: n.id,
+      projectId: n.projectId,
+      key: n.key,
+      name: n.name,
+      description: n.description,
+      type: n.type,
+      status: 'draft',
+      enabled: true,
+      definition: structuredClone(n.definition),
+      createdAt: now,
+      updatedAt: now,
+    };
     this.rows.set(rec.id, rec);
     return structuredClone(rec);
   }

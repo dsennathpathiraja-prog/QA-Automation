@@ -26,7 +26,7 @@ export function RequireProject({ title, children }: { title: string; children: R
       <>
         <PageHeader title={title} description="Select a project before continuing." />
         <Card label="No project selected">
-          <p>Create or select a project first. Connectors and environments are configured under that project.</p>
+          <p>Create or select a project first. Connectors, environments, and workflows are scoped to that project.</p>
           <p className="mt-3">
             <Link to="/projects" className={primaryButtonClass}>
               Go to Projects

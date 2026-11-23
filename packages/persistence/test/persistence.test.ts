@@ -28,10 +28,10 @@ describe('migrations', () => {
     const client = new PGlite();
     const db = drizzle(client, { schema }) as unknown as Db;
     const first = await migrate(db);
-    expect(first.applied).toEqual(['0000_baseline', '0001_append_only_guards', '0002_llm_call_log', '0003_llm_call_log_append_only', '0004_connector_management', '0005_workflow_draft', '0006_workflow_engine', '0007_environment_reachability', '0008_test_case_library', '0009_test_case_work_item', '0010_squash_read_write', '0011_work_item_execution', '0012_work_item_run_results', '0013_test_case_kind_priority', '0014_work_item_live_progress', '0015_work_item_cancelled', '0016_template_preview_url', '0017_automation_assets', '0018_regression_collections', '0019_project_surface', '0020_project_surface_backfill']);
+    expect(first.applied).toEqual(['0000_baseline', '0001_append_only_guards', '0002_llm_call_log', '0003_llm_call_log_append_only', '0004_connector_management', '0005_workflow_draft', '0006_workflow_engine', '0007_environment_reachability', '0008_test_case_library', '0009_test_case_work_item', '0010_squash_read_write', '0011_work_item_execution', '0012_work_item_run_results', '0013_test_case_kind_priority', '0014_work_item_live_progress', '0015_work_item_cancelled', '0016_template_preview_url', '0017_automation_assets', '0018_regression_collections', '0019_project_surface', '0020_project_surface_backfill', '0021_workflow_project_scope']);
     const second = await migrate(db);
     expect(second.applied).toEqual([]);
-    expect(second.alreadyApplied).toHaveLength(21);
+    expect(second.alreadyApplied).toHaveLength(22);
 
     const tmp = mkdtempSync(join(tmpdir(), 'mig-'));
     cpSync(DEFAULT_MIGRATIONS_DIR, tmp, { recursive: true });
@@ -214,7 +214,7 @@ describe('workflow engine storage', () => {
     const workflows = new PgWorkflowRepository(db);
     const versions = new PgWorkflowVersionRepository(db);
     const runs = new PgExecutionRepository(db);
-    const wf = await workflows.insert({ id: uuidv7(), key: 'demo', name: 'Demo', description: '', type: 'requirement-validation', definition: { spec: { steps: [{ id: 'a' }] } } });
+    const wf = await workflows.insert({ id: uuidv7(), projectId: '01900000-0000-7000-8000-000000000001', key: 'demo', name: 'Demo', description: '', type: 'requirement-validation', definition: { spec: { steps: [{ id: 'a' }] } } });
     const version = await versions.insert({ id: uuidv7(), workflowId: wf.id, version: 1, contentHash: 'abc', definition: wf.definition, approvedBy: 'lead' });
     expect(await failure(db.update(schema.workflowVersion).set({ contentHash: 'changed' }).where(sql`id = ${version.id}`))).toMatch(/not allowed/);
     const run = await runs.insert({ id: uuidv7(), workflowId: wf.id, versionId: version.id, definition: { spec: { steps: [{ id: 'a' }, { id: 'b' }] } }, params: {} });

@@ -285,6 +285,7 @@ export const ResolvedEnvironmentSchema = z.object({
 });
 export const WorkflowSchema = z.object({
   id: z.string(),
+  projectId: z.string(),
   key: z.string(),
   name: z.string(),
   description: z.string(),
@@ -295,7 +296,14 @@ export const WorkflowSchema = z.object({
   publishedVersion: z.number().nullable(),
 });
 export const WorkflowListResponse = z.object({ items: z.array(WorkflowSchema) });
-export const CreateWorkflowRequest = z.object({ name: z.string(), type: z.enum(['requirement-validation', 'regression-testing']), description: z.string().optional(), key: z.string().optional(), templateKey: z.string().optional() });
+export const CreateWorkflowRequest = z.object({
+  projectId: z.string().uuid(),
+  name: z.string(),
+  type: z.enum(['requirement-validation', 'regression-testing']),
+  description: z.string().optional(),
+  key: z.string().optional(),
+  templateKey: z.string().optional(),
+});
 export const UpdateWorkflowRequest = z.object({ name: z.string().optional(), description: z.string().optional() });
 export const WorkflowDefinitionResponse = z.object({ definition: z.unknown() });
 export const SaveWorkflowDefinitionRequest = z.object({ definition: z.record(z.unknown()) });

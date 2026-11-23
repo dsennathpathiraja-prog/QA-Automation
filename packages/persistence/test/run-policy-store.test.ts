@@ -31,6 +31,7 @@ describe('PgRunPolicyStore browser allowlist', () => {
     const runs = new PgExecutionRepository(db);
     const wf = await workflows.insert({
       id: uuidv7(),
+      projectId: '01900000-0000-7000-8000-000000000001',
       key: 'rv',
       name: 'RV',
       description: '',
@@ -78,6 +79,7 @@ describe('PgRunPolicyStore browser allowlist', () => {
 
     const wf = await workflows.insert({
       id: uuidv7(),
+      projectId: '01900000-0000-7000-8000-000000000001',
       key: 'rv2',
       name: 'RV2',
       description: '',

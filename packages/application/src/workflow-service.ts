@@ -10,6 +10,7 @@ export type WorkflowStatus = 'draft' | 'in_review' | 'published' | 'disabled';
 
 export interface WorkflowRecord {
   id: string;
+  projectId: string;
   key: string;
   name: string;
   description: string;
@@ -23,6 +24,7 @@ export interface WorkflowRecord {
 
 export interface NewWorkflow {
   id: string;
+  projectId: string;
   key: string;
   name: string;
   description: string;
@@ -31,7 +33,7 @@ export interface NewWorkflow {
 }
 
 export interface WorkflowRepository {
-  list(): Promise<WorkflowRecord[]>;
+  list(filter?: { projectId?: string }): Promise<WorkflowRecord[]>;
   get(id: string): Promise<WorkflowRecord | undefined>;
   insert(rec: NewWorkflow): Promise<WorkflowRecord>;
   update(id: string, patch: { name?: string; description?: string; enabled?: boolean; status?: WorkflowStatus; definition?: Record<string, unknown> }): Promise<WorkflowRecord>;
@@ -102,6 +104,7 @@ export interface ExecutionRepository {
 
 export interface WorkflowView {
   id: string;
+  projectId: string;
   key: string;
   name: string;
   description: string;
@@ -129,7 +132,7 @@ export interface EnvironmentCheck {
 }
 
 const viewOf = (r: WorkflowRecord, publishedVersion: number | null): WorkflowView => ({
-  id: r.id, key: r.key, name: r.name, description: r.description, type: r.type, status: r.status, enabled: r.enabled, updatedAt: r.updatedAt.toISOString(), publishedVersion,
+  id: r.id, projectId: r.projectId, key: r.key, name: r.name, description: r.description, type: r.type, status: r.status, enabled: r.enabled, updatedAt: r.updatedAt.toISOString(), publishedVersion,
 });
 
 const runOf = (r: ExecutionRecord, workflowName = ''): ExecutionView => ({
@@ -152,8 +155,10 @@ export class WorkflowService {
     return TEMPLATES.map((t) => ({ key: t.key, name: t.name, type: t.type, summary: t.summary }));
   }
 
-  async list(includeDrafts: boolean): Promise<WorkflowView[]> {
-    const rows = (await this.d.workflows.list()).filter((r) => includeDrafts || r.status === 'published');
+  async list(includeDrafts: boolean, filter?: { projectId?: string }): Promise<WorkflowView[]> {
+    const projectId = (filter?.projectId ?? '').trim();
+    if (!projectId) throw new PlatformError('validation', 'A project is required to list workflows.');
+    const rows = (await this.d.workflows.list({ projectId })).filter((r) => includeDrafts || r.status === 'published');
     return Promise.all(rows.map((r) => this.present(r)));
   }
 
@@ -169,7 +174,9 @@ export class WorkflowService {
     return row.definition;
   }
 
-  async create(actor: ActorRef, input: { name: string; type: string; description?: string; key?: string; templateKey?: string }): Promise<WorkflowView> {
+  async create(actor: ActorRef, input: { projectId: string; name: string; type: string; description?: string; key?: string; templateKey?: string }): Promise<WorkflowView> {
+    const projectId = (input.projectId ?? '').trim();
+    if (!projectId) throw new PlatformError('validation', 'A project is required to create a workflow.');
     const name = this.name(input.name);
     const type = this.kind(input.type);
     const key = this.key(input.key ?? name);
@@ -177,15 +184,20 @@ export class WorkflowService {
     const template = input.templateKey ? templateDefinition(input.templateKey) : undefined;
     if (input.templateKey && !template) throw new PlatformError('validation', 'That template does not exist.');
     if (template && template.metadata.type !== type) throw new PlatformError('validation', 'That template is a different workflow type.');
+    // Templates keep connector *roles*; instance binding happens later on the workflow detail page from this project's connectors only.
     const definition: WfDef = template ?? (shell(key, name, description, type) as unknown as WfDef);
     if (template) {
       definition.metadata.key = key;
       definition.metadata.name = name;
       definition.metadata.description = description;
       definition.metadata.templateRef = { key: input.templateKey!, version: 1 };
+      for (const c of definition.spec.connectors) {
+        if (c.category === 'test-runner') continue;
+        c.binding = { connectorInstanceId: null };
+      }
     }
-    const rec = await this.d.workflows.insert({ id: randomUUID(), key, name, description, type, definition: definition as unknown as Record<string, unknown> });
-    await this.d.audit.append({ actorId: actor.id, action: 'workflow.create', subjectType: 'workflow', subjectId: rec.id, detail: { key, type, template: input.templateKey ?? null } });
+    const rec = await this.d.workflows.insert({ id: randomUUID(), projectId, key, name, description, type, definition: definition as unknown as Record<string, unknown> });
+    await this.d.audit.append({ actorId: actor.id, action: 'workflow.create', subjectType: 'workflow', subjectId: rec.id, detail: { projectId, key, type, template: input.templateKey ?? null } });
     return this.present(rec);
   }
 
@@ -223,13 +235,13 @@ export class WorkflowService {
   async validate(id: string, includeDrafts: boolean): Promise<ValidationIssue[]> {
     const row = await this.require(id);
     if (row.status !== 'published' && !includeDrafts) throw new PlatformError('not-found', 'Workflow not found');
-    return this.report(row.definition);
+    return this.report(row.definition, row.projectId);
   }
 
   async requestPublish(actor: ActorRef, id: string): Promise<WorkflowView> {
     const current = await this.require(id);
     if (current.status !== 'draft') throw new PlatformError('conflict', 'Only a draft can be sent for approval.');
-    this.ready(await this.report(current.definition));
+    this.ready(await this.report(current.definition, current.projectId));
     const rec = await this.d.workflows.update(id, { status: 'in_review' });
     await this.d.audit.append({ actorId: actor.id, action: 'workflow.publish.request', subjectType: 'workflow', subjectId: id });
     return this.present(rec);
@@ -238,7 +250,7 @@ export class WorkflowService {
   async approve(actor: ActorRef, id: string): Promise<WorkflowView> {
     const current = await this.require(id);
     if (current.status !== 'in_review') throw new PlatformError('conflict', 'Only a workflow that is waiting for approval can be published.');
-    const issues = await this.report(current.definition);
+    const issues = await this.report(current.definition, current.projectId);
     this.ready(issues);
     const versions = this.versions();
     const version = (await versions.list(id)).length + 1;
@@ -253,7 +265,7 @@ export class WorkflowService {
 
   async duplicate(actor: ActorRef, id: string): Promise<WorkflowView> {
     const current = await this.require(id);
-    const created = await this.create(actor, { name: `${current.name} copy`, type: current.type, description: current.description });
+    const created = await this.create(actor, { projectId: current.projectId, name: `${current.name} copy`, type: current.type, description: current.description });
     const definition = structuredClone(current.definition);
     const meta = definition.metadata;
     if (meta && typeof meta === 'object') {
@@ -305,7 +317,7 @@ export class WorkflowService {
     if (current.status !== 'published' || !current.enabled) throw new PlatformError('conflict', 'Only a published workflow can be started.');
     const version = await this.versions().latest(id);
     if (!version) throw new PlatformError('conflict', 'This workflow has no published version.');
-    this.ready(await this.report(version.definition));
+    this.ready(await this.report(version.definition, current.projectId));
     const def = asDef(version.definition);
     // Pinned wizard values (e.g. Regression smoke collectionKey) are not shown in the run form — merge them in.
     const mergedParams: Record<string, unknown> = { ...params };
@@ -327,10 +339,14 @@ export class WorkflowService {
     return (await this.executions().listForWorkflow(workflowId)).map((r) => runOf(r, workflow.name));
   }
 
-  async history(): Promise<ExecutionView[]> {
+  async history(filter?: { projectId?: string }): Promise<ExecutionView[]> {
     const runs = await this.executions().listRecent(100);
-    const names = new Map((await this.d.workflows.list()).map((w) => [w.id, w.name]));
-    return runs.map((r) => runOf(r, names.get(r.workflowId) ?? 'Removed workflow'));
+    const projectId = (filter?.projectId ?? '').trim();
+    // When project-scoped, resolve names from that project's workflows and drop runs whose workflow is outside it.
+    const workflows = projectId ? await this.d.workflows.list({ projectId }) : await this.d.workflows.list();
+    const names = new Map(workflows.map((w) => [w.id, w.name]));
+    if (!projectId) return runs.map((r) => runOf(r, names.get(r.workflowId) ?? 'Removed workflow'));
+    return runs.filter((r) => names.has(r.workflowId)).map((r) => runOf(r, names.get(r.workflowId)!));
   }
 
   async run(id: string): Promise<ExecutionView> {
@@ -369,14 +385,14 @@ export class WorkflowService {
     return viewOf(row, latest?.version ?? null);
   }
 
-  private async report(definition: Record<string, unknown>): Promise<ValidationIssue[]> {
+  private async report(definition: Record<string, unknown>, projectId: string): Promise<ValidationIssue[]> {
     const def = asDef(definition);
     const pinned = def.spec?.environment?.pinnedEnvironmentId ?? null;
     const environment = pinned ? (this.d.environment ? await this.d.environment(pinned) : null) : undefined;
-    return validateWorkflow(def, { instances: await this.instances(def), ...(environment !== undefined ? { environment } : {}) });
+    return validateWorkflow(def, { instances: await this.instances(def, projectId), ...(environment !== undefined ? { environment } : {}) });
   }
 
-  private async instances(def: WfDef): Promise<BoundInstance[]> {
+  private async instances(def: WfDef, projectId: string): Promise<BoundInstance[]> {
     const out: BoundInstance[] = [];
     for (const c of def.spec?.connectors ?? []) {
       const id = c.binding?.connectorInstanceId;
@@ -387,7 +403,8 @@ export class WorkflowService {
         continue;
       }
       const row = this.d.connectors ? await this.d.connectors.get(id) : undefined;
-      if (!row) {
+      // Bindings must resolve to a connector that belongs to this workflow's project (never a global/other-project instance).
+      if (!row || row.projectId !== projectId) {
         out.push({ role: c.role, category: c.category, enabled: false, health: 'unhealthy', accessMode: 'read_only', capabilities: [] });
         continue;
       }
