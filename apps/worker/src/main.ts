@@ -239,14 +239,14 @@ const loop = new WorkerLoop({
             : undefined;
           const collections = regressionCollections || (testCases && automation)
             ? {
-              caseIdsForCollectionKey: async (key: string) => {
+              caseIdsForCollectionKey: async (key: string, platformProjectId?: string) => {
                 if (regressionCollections) {
                   const curated = await regressionCollections.caseIdsForKey(key);
                   if (curated !== undefined) return curated;
                 }
                 if (!testCases || !automation) return undefined;
                 const run = await executions?.get(step.runId);
-                const projectId = run?.projectId ?? DEFAULT_PROJECT_ID;
+                const projectId = (platformProjectId ?? '').trim() || run?.projectId || DEFAULT_PROJECT_ID;
                 return caseIdsFromPlatformCollection({
                   collectionKey: key,
                   listCollections: () => testCases.collections({ projectId }),
@@ -275,8 +275,10 @@ const loop = new WorkerLoop({
           );
         }
         if (step.type === 'rg.execute-tests') {
+          const run = await executions?.get(step.runId);
           return performExecuteTests(step, {
             testCases,
+            platformProjectId: run?.projectId,
             resolveEnvironment: environments
               ? async (id) => {
                   const row = await environments.get(id);
@@ -374,7 +376,9 @@ const loop = new WorkerLoop({
           return performRegressionReport(step, {
             findPreviousRun: testCases
               ? async ({ evidenceExecutionId, environmentId }) => {
-                  const board = await testCases.executionBoard();
+                  const run = await executions?.get(step.runId);
+                  const projectId = run?.projectId ?? DEFAULT_PROJECT_ID;
+                  const board = await testCases.executionBoard({ projectId });
                   const candidates = board.items
                     .filter((item) => item.workItem.startsWith('rg:'))
                     .filter((item) => item.status === 'completed' || item.status === 'failed')

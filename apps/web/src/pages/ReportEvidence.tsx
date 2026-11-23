@@ -15,6 +15,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { useEffect, useMemo } from 'react';
 import { useApi } from '../api/context';
+import { useProject } from '../project/ProjectContext';
 import { ErrorNotice, PageHeader } from './common';
 import { countsLabel, type RunDetailView, WI_LIVE, WI_STATUS } from './run-detail/helpers';
 
@@ -34,6 +35,7 @@ type LegacySearch = {
  */
 export function ReportEvidence({ mode }: { mode: ReportEvidenceMode }) {
   const api = useApi();
+  const { selectedId } = useProject();
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as LegacySearch;
   const focusFromUrl = typeof search.focus === 'string' && search.focus.trim() ? search.focus.trim() : null;
@@ -55,8 +57,9 @@ export function ReportEvidence({ mode }: { mode: ReportEvidenceMode }) {
   }, [focusFromUrl, mode, navigate, search.case, search.view]);
 
   const board = useQuery({
-    queryKey: ['work-item-executions'],
-    queryFn: () => api.get('/api/v1/work-item-executions', WorkItemExecutionBoard),
+    queryKey: ['work-item-executions', selectedId],
+    queryFn: () => api.get(`/api/v1/work-item-executions?projectId=${encodeURIComponent(selectedId!)}`, WorkItemExecutionBoard),
+    enabled: Boolean(selectedId),
     refetchInterval: (q) => (q.state.data?.items.some((item) => WI_LIVE.has(item.status)) ? 2000 : false),
   });
 

@@ -103,8 +103,10 @@ describe('publish and run', () => {
     const run = await call('POST', `/api/v1/workflows/${id}/runs`, engineer, { parameters: { story: 'QA-1', environment: 'qa', applicationName: 'checkout' } });
     expect(run.statusCode).toBe(201);
     expect(run.json().status).toBe('queued');
-    const history = await call('GET', '/api/v1/executions', engineer);
+    expect((await call('GET', '/api/v1/executions', engineer)).statusCode).toBe(400);
+    const history = await call('GET', `/api/v1/executions?projectId=${DEFAULT_PROJECT}`, engineer);
     expect(history.json().items[0]).toMatchObject({ id: run.json().id, workflowName: 'Checkout', status: 'queued' });
+    expect((await call('GET', `/api/v1/executions?projectId=${OTHER_PROJECT}`, engineer)).json().items).toHaveLength(0);
     const paused = await call('POST', `/api/v1/executions/${run.json().id}/pause`, engineer, {});
     expect(paused.json().status).toBe('paused');
     expect((await call('POST', `/api/v1/executions/${run.json().id}/pause`, engineer, {})).json().status).toBe('paused');

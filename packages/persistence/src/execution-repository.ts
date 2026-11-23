@@ -27,7 +27,7 @@ export class PgExecutionRepository implements ExecutionRepository {
 
   async insert(n: NewExecution) {
     const [wf] = await this.db.select({ projectId: workflow.projectId }).from(workflow).where(eq(workflow.id, n.workflowId)).limit(1);
-    const projectId = (n as { projectId?: string }).projectId ?? wf?.projectId ?? DEFAULT_PROJECT_ID;
+    const projectId = n.projectId ?? wf?.projectId ?? DEFAULT_PROJECT_ID;
     const [row] = await this.db
       .insert(workflowExecution)
       .values({ id: n.id, projectId, workflowId: n.workflowId, versionId: n.versionId, definition: n.definition, params: n.params, status: 'queued' })
@@ -46,8 +46,10 @@ export class PgExecutionRepository implements ExecutionRepository {
     return rows.map(toRecord);
   }
 
-  async listRecent(limit: number) {
-    const rows = await this.db.select().from(workflowExecution).orderBy(desc(workflowExecution.createdAt)).limit(limit);
+  async listRecent(limit: number, filter?: { projectId?: string }) {
+    const rows = filter?.projectId
+      ? await this.db.select().from(workflowExecution).where(eq(workflowExecution.projectId, filter.projectId)).orderBy(desc(workflowExecution.createdAt)).limit(limit)
+      : await this.db.select().from(workflowExecution).orderBy(desc(workflowExecution.createdAt)).limit(limit);
     return rows.map(toRecord);
   }
 

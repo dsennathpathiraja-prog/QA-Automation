@@ -412,7 +412,11 @@ export const WorkItemExecutionBoard = z.object({
   environments: z.array(z.object({ id: z.string(), name: z.string(), kind: z.string() })),
   items: z.array(WorkItemExecutionSchema),
 });
-export const StartWorkItemExecutionRequest = z.object({ workItem: z.string(), environmentId: z.string() });
+export const StartWorkItemExecutionRequest = z.object({
+  projectId: z.string().uuid(),
+  workItem: z.string(),
+  environmentId: z.string(),
+});
 export const WorkItemCaseScreenshot = z.object({
   testCaseId: z.string(),
   name: z.string(),
@@ -542,7 +546,10 @@ export const RegressionScopeKindSchema = z.enum(['suite', 'campaign', 'collectio
 export const RegressionScopeRequest = z.object({
   kind: RegressionScopeKindSchema.optional(),
   mode: z.string().optional(),
+  /** Squash project id (suite / campaign). */
   projectId: z.string().min(1).optional(),
+  /** Platform project id — scopes platform collection fallback for smoke / named collections. */
+  platformProjectId: z.string().uuid().optional(),
   suiteId: z.string().min(1).optional(),
   campaignId: z.string().min(1).optional(),
   iterationId: z.string().min(1).optional(),
@@ -558,6 +565,7 @@ export const RegressionScopeResponse = z.object({
   kind: RegressionScopeKindSchema,
   mode: z.enum(['all-in-suite', 'selected', 'regression-collection', 'campaign']),
   projectId: z.string().optional(),
+  platformProjectId: z.string().optional(),
   suiteId: z.string().optional(),
   campaignId: z.string().optional(),
   iterationId: z.string().optional(),

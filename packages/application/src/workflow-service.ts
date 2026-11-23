@@ -81,6 +81,7 @@ export interface ExecutionRecord {
 
 export interface NewExecution {
   id: string;
+  projectId?: string;
   workflowId: string;
   versionId: string;
   definition: Record<string, unknown>;
@@ -98,7 +99,7 @@ export interface ExecutionRepository {
   insert(rec: NewExecution): Promise<ExecutionRecord>;
   get(id: string): Promise<ExecutionRecord | undefined>;
   listForWorkflow(workflowId: string): Promise<ExecutionRecord[]>;
-  listRecent(limit: number): Promise<ExecutionRecord[]>;
+  listRecent(limit: number, filter?: { projectId?: string }): Promise<ExecutionRecord[]>;
   events(id: string): Promise<ExecutionEvent[]>;
   apply(id: string, patch: { status?: ExecutionStatus; control?: ExecutionRecord['control']; leaseOwner?: string | null; leaseUntil?: Date | null }): Promise<ExecutionRecord>;
 }
@@ -330,8 +331,15 @@ export class WorkflowService {
       if (current.type === 'requirement-validation' && p.name === 'environment') continue;
       if (p.required && (p.pinned === undefined || p.pinned === null) && missing) throw new PlatformError('validation', `${p.name} is required to start this workflow.`);
     }
-    const run = await this.executions().insert({ id: randomUUID(), workflowId: id, versionId: version.id, definition: version.definition, params: mergedParams });
-    await this.d.audit.append({ actorId: actor.id, action: 'execution.start', subjectType: 'workflow_execution', subjectId: run.id, detail: { workflowId: id, versionId: version.id } });
+    const run = await this.executions().insert({
+      id: randomUUID(),
+      projectId: current.projectId,
+      workflowId: id,
+      versionId: version.id,
+      definition: version.definition,
+      params: mergedParams,
+    });
+    await this.d.audit.append({ actorId: actor.id, action: 'execution.start', subjectType: 'workflow_execution', subjectId: run.id, detail: { projectId: current.projectId, workflowId: id, versionId: version.id } });
     return runOf(run, current.name);
   }
 
@@ -341,13 +349,12 @@ export class WorkflowService {
   }
 
   async history(filter?: { projectId?: string }): Promise<ExecutionView[]> {
-    const runs = await this.executions().listRecent(100);
     const projectId = (filter?.projectId ?? '').trim();
-    // When project-scoped, resolve names from that project's workflows and drop runs whose workflow is outside it.
-    const workflows = projectId ? await this.d.workflows.list({ projectId }) : await this.d.workflows.list();
+    if (!projectId) throw new PlatformError('validation', 'A project is required to list executions.');
+    const runs = await this.executions().listRecent(100, { projectId });
+    const workflows = await this.d.workflows.list({ projectId });
     const names = new Map(workflows.map((w) => [w.id, w.name]));
-    if (!projectId) return runs.map((r) => runOf(r, names.get(r.workflowId) ?? 'Removed workflow'));
-    return runs.filter((r) => names.has(r.workflowId)).map((r) => runOf(r, names.get(r.workflowId)!));
+    return runs.map((r) => runOf(r, names.get(r.workflowId) ?? 'Removed workflow'));
   }
 
   async run(id: string): Promise<ExecutionView> {
