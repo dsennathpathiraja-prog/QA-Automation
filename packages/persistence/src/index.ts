@@ -8,6 +8,7 @@ export * from './operation-log';
 export * from './user-repository';
 export * from './llm-audit';
 export * from './connector-repository';
+export * from './project-repository';
 export * from './test-request-queue';
 export * from './approved-hosts';
 export * from './envelope-rows';

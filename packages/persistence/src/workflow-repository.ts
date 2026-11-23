@@ -2,6 +2,7 @@ import { and, eq, isNull, sql } from 'drizzle-orm';
 import { PlatformError } from '@qa/domain';
 import type { NewWorkflow, WorkflowRecord, WorkflowRepository, WorkflowType } from '@qa/application';
 import type { Db } from './db';
+import { DEFAULT_PROJECT_ID } from './project-repository';
 import { workflow } from './schema';
 
 const unique = (e: unknown) => ((e as { code?: string; cause?: { code?: string } }).code ?? (e as { cause?: { code?: string } }).cause?.code) === '23505';
@@ -35,7 +36,19 @@ export class PgWorkflowRepository implements WorkflowRepository {
 
   async insert(n: NewWorkflow) {
     try {
-      const [row] = await this.db.insert(workflow).values({ id: n.id, key: n.key, name: n.name, description: n.description, type: n.type, definition: n.definition, status: 'draft' }).returning();
+      const [row] = await this.db
+        .insert(workflow)
+        .values({
+          id: n.id,
+          projectId: (n as { projectId?: string }).projectId ?? DEFAULT_PROJECT_ID,
+          key: n.key,
+          name: n.name,
+          description: n.description,
+          type: n.type,
+          definition: n.definition,
+          status: 'draft',
+        })
+        .returning();
       return toRecord(row!);
     } catch (e) {
       if (unique(e)) throw new PlatformError('conflict', `A workflow with key "${n.key}" already exists.`);

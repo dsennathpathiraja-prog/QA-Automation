@@ -9,6 +9,7 @@ async function queued() {
   const environments = new InMemoryEnvironmentRepository();
   await environments.insert({
     id,
+    projectId: '01900000-0000-7000-8000-000000000001',
     name: 'QA',
     kind: 'qa',
     applicationUrl: 'https://qa.shop.example',

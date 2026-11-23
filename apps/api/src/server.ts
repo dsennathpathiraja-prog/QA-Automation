@@ -1,8 +1,8 @@
 import { PlatformError, type DeploymentProfile, type PlatformEnv } from '@qa/domain';
 import { EgressPolicy, HardenedHttpClient, OidcProvider, initTelemetry, OllamaAdapter, OpenAiCompatibleAdapter, readSecretFile, type EgressRule } from '@qa/infrastructure';
 import type { LlmPort } from '@qa/llm';
-import { AutomationService, ConnectorService, EnvironmentService, RegressionCollectionService, TestCaseService, WorkflowService } from '@qa/application';
-import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgAutomationRepository, PgConnectorRepository, PgEnvironmentRepository, PgOperationLogReader, PgRegressionCollectionRepository, PgSessionStore, PgTestRequestQueue, PgExecutionRepository, PgTestCaseRepository, PgUserRepository, PgWorkflowRepository, PgWorkflowVersionRepository, connectPostgres, migrate, pingDb, seedDefaultGroupMappings, seedRegressionCollections, seedRoles, type Db } from '@qa/persistence';
+import { AutomationService, ConnectorService, EnvironmentService, ProjectService, RegressionCollectionService, TestCaseService, WorkflowService } from '@qa/application';
+import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgAutomationRepository, PgConnectorRepository, PgEnvironmentRepository, PgOperationLogReader, PgProjectRepository, PgRegressionCollectionRepository, PgSessionStore, PgTestRequestQueue, PgExecutionRepository, PgTestCaseRepository, PgUserRepository, PgWorkflowRepository, PgWorkflowVersionRepository, connectPostgres, migrate, pingDb, seedDefaultGroupMappings, seedRegressionCollections, seedRoles, type Db } from '@qa/persistence';
 import { buildProviders, buildSecretStore } from '@qa/bootstrap';
 import { buildApp } from './app';
 import { OidcSessionResolver, type AuthConfig } from './auth';
@@ -163,6 +163,12 @@ function buildConnectors(db: Db | undefined, secrets: ReturnType<typeof buildSec
 }
 
 const secretSelection = conn ? buildSecretStore(env, platformEnv, conn.db) : undefined;
+const projects = conn
+  ? new ProjectService({
+      projects: new PgProjectRepository(conn.db),
+      audit: new PgAuditSink(new PgAuditLog(conn.db)),
+    })
+  : undefined;
 const environments = conn
   ? new EnvironmentService({
       environments: new PgEnvironmentRepository(conn.db),
@@ -178,6 +184,7 @@ const app = buildApp({
   sessions: auth ? auth.resolver : new DevHeaderSessionResolver(platformEnv),
   profile,
   auth,
+  projects,
   connectors: buildConnectors(conn?.db, secretSelection),
   environments,
   workflows: conn

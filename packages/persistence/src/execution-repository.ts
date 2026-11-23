@@ -3,7 +3,8 @@ import { PlatformError } from '@qa/domain';
 import type { ExecutionPolicy } from '@qa/connector-sdk';
 import type { ExecutionEvent, ExecutionRecord, ExecutionRepository, ExecutionStatus, NewExecution } from '@qa/application';
 import type { Db } from './db';
-import { connectorInstance, egressAllowlist, environment, workflowEvent, workflowExecution } from './schema';
+import { DEFAULT_PROJECT_ID } from './project-repository';
+import { connectorInstance, egressAllowlist, environment, workflow, workflowEvent, workflowExecution } from './schema';
 
 const toRecord = (r: typeof workflowExecution.$inferSelect): ExecutionRecord => ({
   id: r.id,
@@ -24,7 +25,12 @@ export class PgExecutionRepository implements ExecutionRepository {
   constructor(private readonly db: Db) {}
 
   async insert(n: NewExecution) {
-    const [row] = await this.db.insert(workflowExecution).values({ id: n.id, workflowId: n.workflowId, versionId: n.versionId, definition: n.definition, params: n.params, status: 'queued' }).returning();
+    const [wf] = await this.db.select({ projectId: workflow.projectId }).from(workflow).where(eq(workflow.id, n.workflowId)).limit(1);
+    const projectId = (n as { projectId?: string }).projectId ?? wf?.projectId ?? DEFAULT_PROJECT_ID;
+    const [row] = await this.db
+      .insert(workflowExecution)
+      .values({ id: n.id, projectId, workflowId: n.workflowId, versionId: n.versionId, definition: n.definition, params: n.params, status: 'queued' })
+      .returning();
     await this.append(n.id, 'started', {});
     return toRecord(row!);
   }

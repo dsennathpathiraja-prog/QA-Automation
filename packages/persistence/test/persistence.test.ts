@@ -28,10 +28,10 @@ describe('migrations', () => {
     const client = new PGlite();
     const db = drizzle(client, { schema }) as unknown as Db;
     const first = await migrate(db);
-    expect(first.applied).toEqual(['0000_baseline', '0001_append_only_guards', '0002_llm_call_log', '0003_llm_call_log_append_only', '0004_connector_management', '0005_workflow_draft', '0006_workflow_engine', '0007_environment_reachability', '0008_test_case_library', '0009_test_case_work_item', '0010_squash_read_write', '0011_work_item_execution', '0012_work_item_run_results', '0013_test_case_kind_priority', '0014_work_item_live_progress', '0015_work_item_cancelled', '0016_template_preview_url', '0017_automation_assets', '0018_regression_collections']);
+    expect(first.applied).toEqual(['0000_baseline', '0001_append_only_guards', '0002_llm_call_log', '0003_llm_call_log_append_only', '0004_connector_management', '0005_workflow_draft', '0006_workflow_engine', '0007_environment_reachability', '0008_test_case_library', '0009_test_case_work_item', '0010_squash_read_write', '0011_work_item_execution', '0012_work_item_run_results', '0013_test_case_kind_priority', '0014_work_item_live_progress', '0015_work_item_cancelled', '0016_template_preview_url', '0017_automation_assets', '0018_regression_collections', '0019_project_surface', '0020_project_surface_backfill']);
     const second = await migrate(db);
     expect(second.applied).toEqual([]);
-    expect(second.alreadyApplied).toHaveLength(19);
+    expect(second.alreadyApplied).toHaveLength(21);
 
     const tmp = mkdtempSync(join(tmpdir(), 'mig-'));
     cpSync(DEFAULT_MIGRATIONS_DIR, tmp, { recursive: true });
@@ -45,6 +45,7 @@ describe('migrations', () => {
     const actual = new Set(dbCols.map((r) => `${r.table_name}.${r.column_name}`));
     const expected = new Set<string>();
     for (const t of Object.values(schema)) {
+      if (!t || typeof t !== 'object' || !('getSQL' in (t as object))) continue;
       const cfg = getTableConfig(t as PgTable);
       for (const c of cfg.columns) expected.add(`${getTableName(t as PgTable)}.${c.name}`);
     }
@@ -71,7 +72,7 @@ describe('seed', () => {
 });
 
 describe('database-enforced invariants', () => {
-  const connector = (over: Record<string, unknown> = {}) => ({ providerKey: 'github', category: 'source-repo', name: 'repo-a', accessMode: 'read_only', ...over });
+  const connector = (over: Record<string, unknown> = {}) => ({ projectId: '01900000-0000-7000-8000-000000000001', providerKey: 'github', category: 'source-repo', name: 'repo-a', accessMode: 'read_only', ...over });
 
   it('a source repository connector can never be read_write', async () => {
     const { db } = await freshDb();
@@ -84,7 +85,7 @@ describe('database-enforced invariants', () => {
   it('connector names are unique among non-deleted rows; provider and category are immutable', async () => {
     const { db } = await freshDb();
     const [a] = await db.insert(schema.connectorInstance).values(connector() as never).returning({ id: schema.connectorInstance.id });
-    expect(await failure(db.insert(schema.connectorInstance).values(connector() as never))).toMatch(/connector_instance_name_uq/);
+    expect(await failure(db.insert(schema.connectorInstance).values(connector() as never))).toMatch(/connector_instance_project_name_uq/);
     await db.execute(sql`update connector_instance set deleted_at = now() where id = ${a!.id}`);
     await db.insert(schema.connectorInstance).values(connector() as never);
     expect(await failure(db.execute(sql`update connector_instance set category = 'work-item' where id = ${a!.id}`))).toMatch(/immutable/);
@@ -93,7 +94,7 @@ describe('database-enforced invariants', () => {
   it('allows only one active production authorization per environment', async () => {
     const { db } = await freshDb();
     const [u] = await db.insert(schema.appUser).values({ externalSubject: 's1', displayName: 'A' }).returning({ id: schema.appUser.id });
-    const [env] = await db.insert(schema.environment).values({ name: 'prod', kind: 'production', applicationUrl: 'https://app.example' }).returning({ id: schema.environment.id });
+    const [env] = await db.insert(schema.environment).values({ projectId: '01900000-0000-7000-8000-000000000001', name: 'prod', kind: 'production', applicationUrl: 'https://app.example' }).returning({ id: schema.environment.id });
     const auth = { environmentId: env!.id, grantedBy: u!.id, justification: 'release', validFrom: new Date('2026-01-01'), validUntil: new Date('2026-01-02') };
     await db.insert(schema.environmentAuthorization).values(auth);
     expect(await failure(db.insert(schema.environmentAuthorization).values(auth))).toMatch(/env_auth_one_active_uq/);

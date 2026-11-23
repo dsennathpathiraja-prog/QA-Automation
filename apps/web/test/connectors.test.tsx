@@ -7,6 +7,7 @@ import { meFor, renderApp } from './harness';
 afterEach(cleanup);
 
 const provider = {
+  projectId: '01900000-0000-7000-8000-000000000001',
   providerKey: 'sample-work-items',
   category: 'work-item',
   displayName: 'Sample work items (demo)',
@@ -22,6 +23,7 @@ const provider = {
 const detail = (over: Record<string, unknown> = {}) => ({
   id: '11111111-1111-4111-8111-111111111111',
   name: 'Demo source',
+  projectId: '01900000-0000-7000-8000-000000000001',
   providerKey: 'sample-work-items',
   providerName: 'Sample work items (demo)',
   category: 'work-item',
@@ -50,13 +52,13 @@ const ID = '11111111-1111-4111-8111-111111111111';
 describe('connector list', () => {
   it('shows status and use in plain language, and offers Add connector only to managers', async () => {
     const items = [{ ...detail(), config: undefined }];
-    const admin = renderApp('/connectors', { me: { status: 200, body: meFor('administrator') }, routes: { '/api/v1/connectors': { status: 200, body: { items } } } });
+    const admin = renderApp('/connectors', { me: { status: 200, body: meFor('administrator') }, routes: { '/api/v1/connectors?projectId=01900000-0000-7000-8000-000000000001': { status: 200, body: { items } } } });
     const row = (await screen.findByRole('link', { name: 'Demo source' })).closest('tr')!;
     expect(within(row).getByText('Connected')).toBeTruthy();
     expect(within(row).getByText('Switched off')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Add connector' })).toBeTruthy();
     admin.unmount();
-    renderApp('/connectors', { me: { status: 200, body: meFor('qa_lead') }, routes: { '/api/v1/connectors': { status: 200, body: { items } } } });
+    renderApp('/connectors', { me: { status: 200, body: meFor('qa_lead') }, routes: { '/api/v1/connectors?projectId=01900000-0000-7000-8000-000000000001': { status: 200, body: { items } } } });
     await screen.findByRole('link', { name: 'Demo source' });
     expect(screen.queryByRole('link', { name: 'Add connector' })).toBeNull();
   });
@@ -148,7 +150,7 @@ describe('add connector wizard', () => {
         '/api/v1/connector-providers': { status: 200, body: { items: [provider] } },
         'POST /api/v1/connectors': { status: 201, body: detail({ status: 'draft', canEnable: false, latestTest: undefined, capabilities: [] }) },
         [`/api/v1/connectors/${ID}`]: { status: 200, body: detail({ status: 'draft', canEnable: false, latestTest: undefined, capabilities: [] }) },
-        '/api/v1/connectors': { status: 200, body: { items: [] } },
+        '/api/v1/connectors?projectId=01900000-0000-7000-8000-000000000001': { status: 200, body: { items: [] } },
       },
     });
     await userEvent.click(await screen.findByRole('radio', { name: /Sample work items/ }));

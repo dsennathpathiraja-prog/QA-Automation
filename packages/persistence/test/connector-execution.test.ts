@@ -32,7 +32,7 @@ async function setup() {
       redactor: new SecretRedactor(),
       adapterDeps: { http: { request: async () => Promise.reject(new Error('no network in this test')) } },
     });
-  const created = await service.create(actor, { providerKey: 'sample-work-items', name: 'Demo source', config: { projectName: 'Retail Web' }, secrets: { demoKey: 'demo-key-for-test' } });
+  const created = await service.create(actor, { projectId: '01900000-0000-7000-8000-000000000001', providerKey: 'sample-work-items', name: 'Demo source', config: { projectName: 'Retail Web' }, secrets: { demoKey: 'demo-key-for-test' } });
   const invoke = () => manager(created.id).invoke<{ items: { id: string }[] }>({ role: 'workItems', capability: 'workitem.project.list', input: {}, actor: actorRef });
   const grantAll = async () => {
     await connectors.replaceCapabilityStates(created.id, [{ capability: 'workitem.project.list', support: 'supported', granted: true }]);

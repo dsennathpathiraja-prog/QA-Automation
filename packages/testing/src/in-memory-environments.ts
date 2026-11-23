@@ -21,8 +21,10 @@ export class InMemoryEnvironmentRepository implements EnvironmentRepository {
   readonly connectorRefs: ConnectorRefRecord[] = [];
   readonly secretRefs: SecretRefWrite[] = [];
 
-  async list() {
-    return [...this.rows.values()].sort((a, b) => a.name.localeCompare(b.name));
+  async list(filter?: { projectId?: string }) {
+    return [...this.rows.values()]
+      .filter((r) => !filter?.projectId || r.projectId === filter.projectId)
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async get(id: string) {
@@ -31,10 +33,13 @@ export class InMemoryEnvironmentRepository implements EnvironmentRepository {
   }
 
   async insert(n: NewEnvironment) {
-    if ([...this.rows.values()].some((r) => r.name.toLowerCase() === n.name.toLowerCase())) throw new PlatformError('conflict', `An environment named "${n.name}" already exists.`);
+    if ([...this.rows.values()].some((r) => r.projectId === n.projectId && r.name.toLowerCase() === n.name.toLowerCase())) {
+      throw new PlatformError('conflict', `An environment named "${n.name}" already exists in this project.`);
+    }
     const now = new Date();
     const rec: EnvironmentRecord = {
       id: n.id,
+      projectId: n.projectId,
       name: n.name,
       kind: n.kind,
       applicationUrl: n.applicationUrl,

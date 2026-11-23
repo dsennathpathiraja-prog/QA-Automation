@@ -8,6 +8,7 @@ import type {
   AutomationRepository,
 } from '@qa/application';
 import type { Db } from './db';
+import { DEFAULT_PROJECT_ID } from './project-repository';
 import { automationAsset, automationMapping } from './schema';
 
 const asStatus = (value: string): AutomationAssetStatus => (value === 'approved' ? 'approved' : 'draft');
@@ -64,6 +65,7 @@ export class PgAutomationRepository implements AutomationRepository {
     try {
       const [saved] = await this.db.insert(automationAsset).values({
         id: row.id,
+        projectId: (row as { projectId?: string }).projectId ?? DEFAULT_PROJECT_ID,
         key: row.key,
         name: row.name,
         scriptPath: row.scriptPath,
@@ -126,6 +128,7 @@ export class PgAutomationRepository implements AutomationRepository {
     try {
       const [saved] = await this.db.insert(automationMapping).values({
         id: row.id,
+        projectId: (row as { projectId?: string }).projectId ?? DEFAULT_PROJECT_ID,
         squashCaseId: row.squashCaseId,
         squashReference: row.squashReference,
         assetId: row.assetId,

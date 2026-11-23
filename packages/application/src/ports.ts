@@ -5,6 +5,7 @@ export type AccessMode = 'read_only' | 'read_write';
 
 export interface ConnectorRecord {
   id: string;
+  projectId: string;
   providerKey: string;
   category: ConnectorCategory;
   name: string;
@@ -24,6 +25,7 @@ export interface ConnectorRecord {
 
 export interface NewConnector {
   id: string;
+  projectId: string;
   providerKey: string;
   category: ConnectorCategory;
   name: string;
@@ -52,9 +54,9 @@ export interface CapabilityStateRecord {
 }
 
 export interface ConnectorRepository {
-  list(): Promise<ConnectorRecord[]>;
+  list(filter?: { projectId?: string }): Promise<ConnectorRecord[]>;
   get(id: string): Promise<ConnectorRecord | undefined>;
-  /** Throws PlatformError('conflict') when the name is taken for this provider. */
+  /** Throws PlatformError('conflict') when the name is taken for this provider in the project. */
   insert(rec: NewConnector): Promise<ConnectorRecord>;
   update(id: string, patch: ConnectorPatch): Promise<ConnectorRecord>;
   softDelete(id: string): Promise<void>;
@@ -157,6 +159,7 @@ export type Reachability = (typeof REACHABILITY)[number];
 
 export interface EnvironmentRecord {
   id: string;
+  projectId: string;
   name: string;
   kind: EnvironmentKind;
   applicationUrl: string;
@@ -178,6 +181,7 @@ export interface EnvironmentRecord {
 
 export interface NewEnvironment {
   id: string;
+  projectId: string;
   name: string;
   kind: EnvironmentKind;
   applicationUrl: string;
@@ -270,9 +274,9 @@ export interface ConnectorLookup {
 }
 
 export interface EnvironmentRepository {
-  list(): Promise<EnvironmentRecord[]>;
+  list(filter?: { projectId?: string }): Promise<EnvironmentRecord[]>;
   get(id: string): Promise<EnvironmentRecord | undefined>;
-  /** Throws PlatformError('conflict') when the name is taken. */
+  /** Throws PlatformError('conflict') when the name is taken in the project. */
   insert(rec: NewEnvironment): Promise<EnvironmentRecord>;
   update(id: string, patch: EnvironmentPatch): Promise<EnvironmentRecord>;
   softDelete(id: string): Promise<void>;
@@ -300,4 +304,42 @@ export interface EnvironmentRepository {
   finishReachability(id: string, result: 'reachable' | 'unreachable', detail: string, at: Date): Promise<void>;
   /** Drops a previous result, used when the application address changes. */
   clearReachability(id: string): Promise<void>;
+}
+
+/* ---------- projects ---------- */
+
+export type ProjectStatus = 'active' | 'archived';
+
+export interface ProjectRecord {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  status: ProjectStatus;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface NewProject {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  createdBy?: string;
+}
+
+export interface ProjectPatch {
+  name?: string;
+  description?: string;
+  status?: ProjectStatus;
+}
+
+export interface ProjectRepository {
+  list(filter?: { status?: ProjectStatus }): Promise<ProjectRecord[]>;
+  get(id: string): Promise<ProjectRecord | undefined>;
+  getByKey(key: string): Promise<ProjectRecord | undefined>;
+  /** Throws PlatformError('conflict') when key or name is taken. */
+  insert(rec: NewProject): Promise<ProjectRecord>;
+  update(id: string, patch: ProjectPatch): Promise<ProjectRecord>;
+  softDelete(id: string): Promise<void>;
 }

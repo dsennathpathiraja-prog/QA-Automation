@@ -43,7 +43,7 @@ function setup(opts: { hosts?: EgressRule[] } = {}) {
 }
 
 const createSample = (s: ReturnType<typeof setup>, key = 'demo-secret-key-1') =>
-  s.service.create(actor, { providerKey: 'sample-work-items', name: 'Demo source', config: { projectName: 'Retail Web' }, secrets: { demoKey: key } });
+  s.service.create(actor, { projectId: '01900000-0000-7000-8000-000000000001', providerKey: 'sample-work-items', name: 'Demo source', config: { projectName: 'Retail Web' }, secrets: { demoKey: key } });
 
 afterEach(async () => {
   await mock?.close();
@@ -97,7 +97,7 @@ describe('Test Connection runs on the worker', () => {
         allowedMethods: ['GET'],
       }),
     });
-    const c = await service.create(actor, { providerKey: 'sample-work-items', name: 'Demo', config: { projectName: 'Retail Web' }, secrets: { demoKey: 'demo-secret-key-1' } });
+    const c = await service.create(actor, { projectId: '01900000-0000-7000-8000-000000000001', providerKey: 'sample-work-items', name: 'Demo', config: { projectName: 'Retail Web' }, secrets: { demoKey: 'demo-secret-key-1' } });
     await service.requestTest(actor, c.id);
     expect(await tester.runOnce()).toBe('busy');
     expect(reset).toEqual([c.id]);
@@ -158,7 +158,7 @@ describe('Test Connection runs on the worker', () => {
 
 describe('Squash through Test Connection (documentation-based mock)', () => {
   const squash = (s: ReturnType<typeof setup>, token: string, baseUrl: string) =>
-    s.service.create(actor, { providerKey: 'squash-tm', name: 'Squash QA', config: { baseUrl }, secrets: { token } });
+    s.service.create(actor, { projectId: '01900000-0000-7000-8000-000000000001', providerKey: 'squash-tm', name: 'Squash QA', config: { baseUrl }, secrets: { token } });
 
   it('only reaches Squash once the host is approved, then reports supported, partial and unsupported capabilities', async () => {
     const token = makeSquashToken({ permissions: 'READ', expiresAt: new Date(Date.now() + 100 * 86_400_000) });

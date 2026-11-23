@@ -3,18 +3,27 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useApi } from '../api/context';
 import { useSession } from '../auth/session';
+import { useProject } from '../project/ProjectContext';
 import { Card, ErrorNotice, PageHeader } from './common';
 import { EnabledBadge, StatusBadge, connectorsKey, primaryButtonClass, when } from './connectors/shared';
 
 export function Connectors() {
   const api = useApi();
   const session = useSession();
-  const q = useQuery({ queryKey: connectorsKey, queryFn: () => api.get('/api/v1/connectors', ConnectorListResponse) });
+  const { selectedId, selected } = useProject();
+  const q = useQuery({
+    queryKey: [...connectorsKey, selectedId],
+    enabled: !!selectedId,
+    queryFn: () => api.get(`/api/v1/connectors?projectId=${encodeURIComponent(selectedId!)}`, ConnectorListResponse),
+  });
   const canManage = session.can('connector.manage');
 
   return (
     <>
-      <PageHeader title="Connectors" description="Connections to work item systems, source repositories, test management and browser automation." />
+      <PageHeader
+        title="Connectors"
+        description={selected ? `Connections for project ${selected.name}.` : 'Connections to work item systems, source repositories, test management and browser automation.'}
+      />
       {canManage && (
         <p className="mb-4">
           <Link to="/connectors/new" className={primaryButtonClass}>
@@ -26,7 +35,7 @@ export function Connectors() {
       {q.isPending && <p role="status">Loading connectors…</p>}
       {q.data && q.data.items.length === 0 && (
         <Card label="No connectors">
-          <p>No connectors have been configured yet.</p>
+          <p>No connectors have been configured for this project yet.</p>
           <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
             {canManage ? 'Choose Add connector to connect a system. The guided steps check the connection before anything is switched on.' : 'An Administrator can add connectors.'}
           </p>

@@ -9,6 +9,7 @@ import { registerRequestTelemetry } from './telemetry';
 import { registerAuthRoutes, type AuthConfig, type OidcSessionResolver } from './auth';
 import { registerConnectorRoutes, type ConnectorRouteDeps } from './connector-routes';
 import { registerEnvironmentRoutes } from './environment-routes';
+import { registerProjectRoutes } from './project-routes';
 import { registerWorkflowRoutes } from './workflow-routes';
 import { registerTestCaseRoutes } from './test-case-routes';
 import { registerAutomationRoutes } from './automation-routes';
@@ -17,6 +18,7 @@ import {
   RegressionScopeService,
   type AutomationService,
   type EnvironmentService,
+  type ProjectService,
   type RegressionCollectionService,
   type TestCaseService,
   type WorkflowService,
@@ -40,6 +42,8 @@ export interface AppDeps {
   /** Read-only view of configured model providers (API; operator Models UI removed). */
   llm?: { providers(): Promise<LlmProvidersResponse['items']> };
   auth?: { config: AuthConfig; resolver: OidcSessionResolver };
+  /** Project management. Without it the project list stays empty. */
+  projects?: ProjectService;
   /** Connector management. Without it the connector list stays empty. */
   connectors?: ConnectorRouteDeps;
   /** Environment management. Without it the environment list stays empty. */
@@ -117,6 +121,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.get('/api/v1/identity/mappings', { config: { access: requires('user.manage') } }, async () => ({
     items: (deps.mappings ?? DEFAULT_GROUP_MAPPINGS).map((m) => ({ idpGroup: m.idpGroup, role: m.role, enabled: m.enabled !== false })),
   }));
+
+  if (deps.projects) registerProjectRoutes(app, deps.projects);
+  else app.get('/api/v1/projects', { config: { access: requires('project.view') } }, async () => ({ items: [] }));
 
   if (deps.connectors) registerConnectorRoutes(app, deps.connectors, policy);
   else app.get('/api/v1/connectors', { config: { access: requires('connector.view_status') } }, async () => ({ items: [] }));

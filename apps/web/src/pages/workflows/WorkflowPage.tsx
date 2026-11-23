@@ -23,6 +23,7 @@ import { useState } from 'react';
 import { ApiError } from '../../api/client';
 import { useApi } from '../../api/context';
 import { useSession } from '../../auth/session';
+import { useProject } from '../../project/ProjectContext';
 import { ErrorNotice, PageHeader } from '../common';
 import { errorText } from '../connectors/shared';
 import { findEvidenceExecutionId } from '../run-detail/helpers';
@@ -87,6 +88,7 @@ export function WorkflowPage() {
   const { id } = useParams({ strict: false }) as { id: string };
   const api = useApi();
   const session = useSession();
+  const { selectedId } = useProject();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const workflow = useQuery({ queryKey: keyOf(id), queryFn: () => api.get(`/api/v1/workflows/${id}`, WorkflowSchema) });
@@ -96,11 +98,15 @@ export function WorkflowPage() {
   const [params, setParams] = useState<Record<string, string>>({});
   const [runId, setRunId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<'ask' | 'force' | undefined>();
-  const savedConnectors = useQuery({ queryKey: ['connectors'], queryFn: () => api.get('/api/v1/connectors', ConnectorListResponse), enabled: session.can('connector.view_status') });
+  const savedConnectors = useQuery({
+    queryKey: ['connectors', selectedId],
+    queryFn: () => api.get(`/api/v1/connectors?projectId=${encodeURIComponent(selectedId!)}`, ConnectorListResponse),
+    enabled: !!selectedId && session.can('connector.view_status'),
+  });
   const environments = useQuery({
-    queryKey: ['environments'],
-    queryFn: () => api.get('/api/v1/environments', EnvironmentListResponse),
-    enabled: session.can('environment.view'),
+    queryKey: ['environments', selectedId],
+    queryFn: () => api.get(`/api/v1/environments?projectId=${encodeURIComponent(selectedId!)}`, EnvironmentListResponse),
+    enabled: !!selectedId && session.can('environment.view'),
   });
   const def = edited ?? (definition.data?.definition as Def | undefined);
   const draft = workflow.data?.status === 'draft';

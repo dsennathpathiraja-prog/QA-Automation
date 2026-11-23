@@ -18,26 +18,26 @@ describe('role-based navigation (ui-design.md section 1)', () => {
     renderApp('/', { me: { status: 200, body: meFor('administrator') } });
     await screen.findByRole('navigation', { name: 'Primary' });
     expect(labels()).toEqual([
-      ...ALL_MAIN, 'Connectors', 'Environments', 'Users & Identity mapping', 'Approved hosts', 'Security & Approvals', 'Audit Log', 'System Settings',
+      ...ALL_MAIN, 'Projects', 'Connectors', 'Environments', 'Users & Identity mapping', 'Approved hosts', 'Security & Approvals', 'Audit Log', 'System Settings',
     ]);
   });
 
   it('QA Lead: no identity/settings administration, only the audit log', async () => {
     renderApp('/', { me: { status: 200, body: meFor('qa_lead') } });
     await screen.findByRole('navigation', { name: 'Primary' });
-    expect(labels()).toEqual([...ALL_MAIN, 'Connectors', 'Environments', 'Audit Log']);
+    expect(labels()).toEqual([...ALL_MAIN, 'Projects', 'Connectors', 'Environments', 'Audit Log']);
   });
 
   it('QA Engineer: no administration', async () => {
     renderApp('/', { me: { status: 200, body: meFor('qa_engineer') } });
     await screen.findByRole('navigation', { name: 'Primary' });
-    expect(labels()).toEqual([...ALL_MAIN, 'Connectors', 'Environments']);
+    expect(labels()).toEqual([...ALL_MAIN, 'Projects', 'Connectors', 'Environments']);
   });
 
-  it('Business User: no connectors, environments or configuration', async () => {
+  it('Business User: projects only in configuration (no connectors or environments)', async () => {
     renderApp('/', { me: { status: 200, body: meFor('business_user') } });
     await screen.findByRole('navigation', { name: 'Primary' });
-    expect(labels()).toEqual(['Dashboard', 'Workflows', 'Executions', 'Test Cases', 'Evidence', 'Reports & Analytics']);
+    expect(labels()).toEqual(['Dashboard', 'Workflows', 'Executions', 'Test Cases', 'Evidence', 'Reports & Analytics', 'Projects']);
   });
 
   it('shows the signed-in name and role names in plain language', async () => {
@@ -346,10 +346,10 @@ describe('data pages', () => {
   });
 
   it('Connectors shows an empty state with the next step, and an error with retry', async () => {
-    const ok = renderApp('/connectors', { me: { status: 200, body: meFor('qa_lead') }, routes: { '/api/v1/connectors': { status: 200, body: { items: [] } } } });
-    expect(await screen.findByText('No connectors have been configured yet.')).toBeTruthy();
+    const ok = renderApp('/connectors', { me: { status: 200, body: meFor('qa_lead') }, routes: { '/api/v1/connectors?projectId=01900000-0000-7000-8000-000000000001': { status: 200, body: { items: [] } } } });
+    expect(await screen.findByText('No connectors have been configured for this project yet.')).toBeTruthy();
     ok.unmount();
-    renderApp('/connectors', { me: { status: 200, body: meFor('qa_lead') }, routes: { '/api/v1/connectors': { status: 500, body: { error: { class: 'internal', message: 'Internal error' } } } } });
+    renderApp('/connectors', { me: { status: 200, body: meFor('qa_lead') }, routes: { '/api/v1/connectors?projectId=01900000-0000-7000-8000-000000000001': { status: 500, body: { error: { class: 'internal', message: 'Internal error' } } } } });
     expect(await screen.findByRole('alert')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
   });

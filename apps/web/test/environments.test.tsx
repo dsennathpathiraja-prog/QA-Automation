@@ -9,6 +9,7 @@ afterEach(cleanup);
 const ID = '11111111-1111-4111-8111-111111111111';
 const env = {
   id: ID,
+  projectId: '01900000-0000-7000-8000-000000000001',
   name: 'QA',
   kind: 'qa',
   applicationUrl: 'https://qa.shop.example/',
@@ -23,11 +24,11 @@ const env = {
 
 describe('environments', () => {
   it('lists environments and offers creation only to an administrator', async () => {
-    const admin = renderApp('/environments', { me: { status: 200, body: meFor('administrator') }, routes: { '/api/v1/environments': { status: 200, body: { items: [env] } } } });
+    const admin = renderApp('/environments', { me: { status: 200, body: meFor('administrator') }, routes: { '/api/v1/environments?projectId=01900000-0000-7000-8000-000000000001': { status: 200, body: { items: [env] } } } });
     expect(await screen.findByRole('link', { name: 'QA' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Create environment' })).toBeTruthy();
     admin.unmount();
-    renderApp('/environments', { me: { status: 200, body: meFor('qa_engineer') }, routes: { '/api/v1/environments': { status: 200, body: { items: [env] } } } });
+    renderApp('/environments', { me: { status: 200, body: meFor('qa_engineer') }, routes: { '/api/v1/environments?projectId=01900000-0000-7000-8000-000000000001': { status: 200, body: { items: [env] } } } });
     await screen.findByRole('link', { name: 'QA' });
     expect(screen.queryByRole('button', { name: 'Create environment' })).toBeNull();
   });

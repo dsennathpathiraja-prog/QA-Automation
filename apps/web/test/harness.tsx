@@ -25,6 +25,15 @@ export function meFor(role: Role, name = 'Dasun') {
   return { userId: 'u-1', displayName: name, roles: [role], permissions: [...ROLE_PERMISSIONS[role]] };
 }
 
+const DEFAULT_PROJECT = {
+  id: '01900000-0000-7000-8000-000000000001',
+  key: 'default',
+  name: 'Default',
+  description: 'Migrated from unscoped platform data.',
+  status: 'active' as const,
+  updatedAt: '2026-11-18T08:00:00.000Z',
+};
+
 export function fakeBackend(b: Backend) {
   const calls: Call[] = [];
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -33,7 +42,12 @@ export function fakeBackend(b: Backend) {
     const reply = (status: number, body?: unknown) => new Response(body === undefined ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
     if (url === '/api/v1/me') return reply(b.me?.status ?? 200, b.me?.body);
     const r = b.routes?.[`${init?.method ?? 'GET'} ${url}`] ?? b.routes?.[url];
-    return r ? reply(r.status, r.body) : reply(404, { error: { class: 'not-found', message: 'no route' } });
+    if (r) return reply(r.status, r.body);
+    // ProjectProvider loads active projects on every shell render.
+    if ((init?.method ?? 'GET') === 'GET' && (url === '/api/v1/projects' || url.startsWith('/api/v1/projects?'))) {
+      return reply(200, { items: [DEFAULT_PROJECT] });
+    }
+    return reply(404, { error: { class: 'not-found', message: 'no route' } });
   }) as typeof fetch;
   return { calls, fetchImpl };
 }

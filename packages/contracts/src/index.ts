@@ -36,6 +36,7 @@ const ConnectorStatusSchema = z.enum(['draft', 'connected', 'degraded', 'error',
 
 export const ConnectorSummarySchema = z.object({
   id: z.string(),
+  projectId: z.string(),
   name: z.string(),
   providerKey: z.string(),
   providerName: z.string(),
@@ -51,6 +52,30 @@ export type ConnectorSummary = z.infer<typeof ConnectorSummarySchema>;
 
 export const ConnectorListResponse = z.object({ items: z.array(ConnectorSummarySchema) });
 export type ConnectorListResponse = z.infer<typeof ConnectorListResponse>;
+
+export const ProjectSummarySchema = z.object({
+  id: z.string(),
+  key: z.string(),
+  name: z.string(),
+  description: z.string(),
+  status: z.enum(['active', 'archived']),
+  updatedAt: z.string(),
+});
+export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
+export const ProjectListResponse = z.object({ items: z.array(ProjectSummarySchema) });
+export type ProjectListResponse = z.infer<typeof ProjectListResponse>;
+export const CreateProjectRequest = z.object({
+  name: z.string().min(1).max(200),
+  key: z.string().min(2).max(63).optional(),
+  description: z.string().max(2000).optional(),
+});
+export type CreateProjectRequest = z.infer<typeof CreateProjectRequest>;
+export const UpdateProjectRequest = z.object({
+  name: z.string().min(1).max(200).optional(),
+  description: z.string().max(2000).optional(),
+  status: z.enum(['active', 'archived']).optional(),
+});
+export type UpdateProjectRequest = z.infer<typeof UpdateProjectRequest>;
 
 const FieldViewSchema = z.object({ name: z.string(), label: z.string(), type: z.enum(['text', 'url', 'select', 'secret']), required: z.boolean() });
 
@@ -93,6 +118,7 @@ export const ConnectorDetailSchema = ConnectorSummarySchema.extend({
 export type ConnectorDetail = z.infer<typeof ConnectorDetailSchema>;
 
 export const CreateConnectorRequest = z.object({
+  projectId: z.string().uuid(),
   providerKey: z.string().min(1).max(100),
   name: z.string().min(1).max(200),
   config: z.record(z.unknown()).optional(),
@@ -176,6 +202,7 @@ const EnvironmentRestrictionsSchema = z.object({
 
 export const EnvironmentSummarySchema = z.object({
   id: z.string(),
+  projectId: z.string(),
   name: z.string(),
   kind: EnvironmentKindSchema,
   applicationUrl: z.string(),
@@ -196,6 +223,7 @@ export const EnvironmentDetailSchema = EnvironmentSummarySchema.extend({
 });
 export const EnvironmentListResponse = z.object({ items: z.array(EnvironmentSummarySchema) });
 export const CreateEnvironmentRequest = z.object({
+  projectId: z.string().uuid(),
   name: z.string(),
   kind: EnvironmentKindSchema,
   applicationUrl: z.string(),
@@ -204,7 +232,7 @@ export const CreateEnvironmentRequest = z.object({
   restrictions: EnvironmentRestrictionsSchema.partial().optional(),
   enabled: z.boolean().optional(),
 });
-export const UpdateEnvironmentRequest = CreateEnvironmentRequest.partial().extend({
+export const UpdateEnvironmentRequest = CreateEnvironmentRequest.omit({ projectId: true }).partial().extend({
   /** Pass empty string to clear the template preview URL. */
   templatePreviewUrl: z.string().nullable().optional(),
 });

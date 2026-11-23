@@ -9,6 +9,7 @@ type Row = typeof connectorInstance.$inferSelect;
 
 const toRecord = (r: Row): ConnectorRecord => ({
   id: r.id,
+  projectId: r.projectId,
   providerKey: r.providerKey,
   category: r.category as ConnectorCategory,
   name: r.name,
@@ -35,8 +36,11 @@ const live = (id: string) => and(eq(connectorInstance.id, id), isNull(connectorI
 export class PgConnectorRepository implements ConnectorRepository {
   constructor(private readonly db: Db) {}
 
-  async list(): Promise<ConnectorRecord[]> {
-    const rows = await this.db.select().from(connectorInstance).where(isNull(connectorInstance.deletedAt)).orderBy(connectorInstance.createdAt, connectorInstance.name);
+  async list(filter?: { projectId?: string }): Promise<ConnectorRecord[]> {
+    const cond = filter?.projectId
+      ? and(isNull(connectorInstance.deletedAt), eq(connectorInstance.projectId, filter.projectId))
+      : isNull(connectorInstance.deletedAt);
+    const rows = await this.db.select().from(connectorInstance).where(cond).orderBy(connectorInstance.createdAt, connectorInstance.name);
     return rows.map(toRecord);
   }
 
@@ -49,11 +53,19 @@ export class PgConnectorRepository implements ConnectorRepository {
     try {
       const [row] = await this.db
         .insert(connectorInstance)
-        .values({ id: n.id, providerKey: n.providerKey, category: n.category, name: n.name, config: n.config, accessMode: n.accessMode })
+        .values({
+          id: n.id,
+          projectId: n.projectId,
+          providerKey: n.providerKey,
+          category: n.category,
+          name: n.name,
+          config: n.config,
+          accessMode: n.accessMode,
+        })
         .returning();
       return toRecord(row!);
     } catch (e) {
-      if (isUniqueViolation(e)) throw new PlatformError('conflict', `A connector named "${n.name}" already exists for this provider.`);
+      if (isUniqueViolation(e)) throw new PlatformError('conflict', `A connector named "${n.name}" already exists for this provider in this project.`);
       throw e;
     }
   }
@@ -74,7 +86,7 @@ export class PgConnectorRepository implements ConnectorRepository {
       if (!row) throw new PlatformError('not-found', 'Connector not found');
       return toRecord(row);
     } catch (e) {
-      if (isUniqueViolation(e)) throw new PlatformError('conflict', `A connector named "${patch.name}" already exists for this provider.`);
+      if (isUniqueViolation(e)) throw new PlatformError('conflict', `A connector named "${patch.name}" already exists for this provider in this project.`);
       throw e;
     }
   }

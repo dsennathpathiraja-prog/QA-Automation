@@ -6,6 +6,7 @@ import type {
   RegressionCollectionRepository,
 } from '@qa/application';
 import type { Db } from './db';
+import { DEFAULT_PROJECT_ID } from './project-repository';
 import { regressionCollection, regressionCollectionMember } from './schema';
 
 const collectionOf = (r: typeof regressionCollection.$inferSelect): RegressionCollectionRecord => ({
@@ -34,6 +35,7 @@ export class PgRegressionCollectionRepository implements RegressionCollectionRep
     try {
       const [saved] = await this.db.insert(regressionCollection).values({
         id: row.id,
+        projectId: (row as { projectId?: string }).projectId ?? DEFAULT_PROJECT_ID,
         key: row.key,
         name: row.name,
         description: row.description,

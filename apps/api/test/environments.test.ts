@@ -37,17 +37,17 @@ const call = (method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, 
 
 describe('environment routes', () => {
   it('lets an administrator create an environment and hides management from other roles', async () => {
-    expect((await call('GET', '/api/v1/environments', business)).statusCode).toBe(403);
-    expect((await call('POST', '/api/v1/environments', engineer, { name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' })).statusCode).toBe(403);
-    const created = await call('POST', '/api/v1/environments', admin, { name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' });
+    expect((await call('GET', '/api/v1/environments?projectId=01900000-0000-7000-8000-000000000001', business)).statusCode).toBe(403);
+    expect((await call('POST', '/api/v1/environments?projectId=01900000-0000-7000-8000-000000000001', engineer, { projectId: '01900000-0000-7000-8000-000000000001', name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' })).statusCode).toBe(403);
+    const created = await call('POST', '/api/v1/environments?projectId=01900000-0000-7000-8000-000000000001', admin, { projectId: '01900000-0000-7000-8000-000000000001', name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' });
     expect(created.statusCode).toBe(201);
     const body = created.json();
     expect(body.selectable).toBe(true);
-    expect((await call('GET', '/api/v1/environments', engineer)).json()).toMatchObject({ items: [{ name: 'QA' }] });
+    expect((await call('GET', '/api/v1/environments?projectId=01900000-0000-7000-8000-000000000001', engineer)).json()).toMatchObject({ items: [{ projectId: '01900000-0000-7000-8000-000000000001', name: 'QA' }] });
   });
 
   it('accepts a password and answers without it', async () => {
-    const created = await call('POST', '/api/v1/environments', admin, { name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' });
+    const created = await call('POST', '/api/v1/environments?projectId=01900000-0000-7000-8000-000000000001', admin, { projectId: '01900000-0000-7000-8000-000000000001', name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' });
     const id = created.json().id as string;
     const profile = await call('POST', `/api/v1/environments/${id}/auth-profiles`, admin, { name: 'qa-user', type: 'basic', config: { username: 'qa.bot' }, secrets: { password: 'pw-not-shown' } });
     expect(profile.statusCode).toBe(201);
@@ -57,7 +57,7 @@ describe('environment routes', () => {
   });
 
   it('queues a reachability check for an administrator', async () => {
-    const created = await call('POST', '/api/v1/environments', admin, { name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' });
+    const created = await call('POST', '/api/v1/environments?projectId=01900000-0000-7000-8000-000000000001', admin, { projectId: '01900000-0000-7000-8000-000000000001', name: 'QA', kind: 'qa', applicationUrl: 'https://qa.shop.example' });
     const id = created.json().id as string;
     expect((await call('POST', `/api/v1/environments/${id}/reachability`, engineer)).statusCode).toBe(403);
     const queued = await call('POST', `/api/v1/environments/${id}/reachability`, admin);
