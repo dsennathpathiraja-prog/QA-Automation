@@ -20,6 +20,8 @@ export type ExecuteTestsDeps = {
   resolveEnvironment?: (id: string) => Promise<EnvironmentTarget | undefined>;
   /** Persist live progress + screenshots on Executions (Phase 7/8 path). */
   testCases?: TestCaseService;
+  /** Platform project for the evidence work-item row (from the workflow execution). */
+  platformProjectId?: string;
   /**
    * Run approved cases through the Playwright runner (same as work-item Executions).
    * Omit to force Blocked (runner required) without launching.
@@ -282,6 +284,7 @@ export async function performExecuteTests(
       label: evidenceLabel,
       environmentId: env.id,
       environmentName: env.name,
+      ...(deps.platformProjectId ? { projectId: deps.platformProjectId } : {}),
       cases: [
         ...cases.map((c) => ({ testCaseId: c.id, name: c.name, steps: c.steps })),
         ...skipped.map((s) => ({

@@ -24,13 +24,15 @@ import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { useEffect, useMemo, useState } from 'react';
 import { useApi } from '../api/context';
 import { useSession } from '../auth/session';
+import { useProject } from '../project/ProjectContext';
 import { ErrorNotice, PageHeader } from './common';
 import { errorText } from './connectors/shared';
 import { countsLabel, findEvidenceExecutionId, parseRunDetailView, type RunDetailView, WI_LIVE, WI_STATUS } from './run-detail/helpers';
 import { WorkItemRunDetail } from './run-detail/WorkItemRunDetail';
 import { StepArtifact, markdownFromStepPayload } from './StepArtifact';
 
-const key = ['executions'] as const;
+const executionsKey = (projectId: string | null | undefined) => ['executions', projectId] as const;
+const boardKey = (projectId: string | null | undefined) => ['work-item-executions', projectId] as const;
 const LIVE = new Set(['queued', 'running']);
 const FINISHED_RUN = new Set(['completed', 'failed', 'cancelled']);
 /** How many recently prepared rows the Prepared tab keeps visible. */
@@ -98,6 +100,7 @@ export function Executions() {
   const api = useApi();
   const session = useSession();
   const qc = useQueryClient();
+  const { selectedId } = useProject();
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as {
     tab?: string;
@@ -158,12 +161,20 @@ export function Executions() {
   }, [focusFromUrl]);
 
   useEffect(() => {
+    setWorkItem('');
+    setEnvironmentId('');
+    setSelected(null);
+    setJustPreparedId(null);
+  }, [selectedId]);
+
+  useEffect(() => {
     if (!sessionStorage.getItem(PREPARED_VISITED_KEY)) writePreparedVisitedAt(preparedVisitedAt);
   }, [preparedVisitedAt]);
 
   const board = useQuery({
-    queryKey: ['work-item-executions'],
-    queryFn: () => api.get('/api/v1/work-item-executions', WorkItemExecutionBoard),
+    queryKey: boardKey(selectedId),
+    queryFn: () => api.get(`/api/v1/work-item-executions?projectId=${encodeURIComponent(selectedId!)}`, WorkItemExecutionBoard),
+    enabled: Boolean(selectedId),
     refetchInterval: (q) => (q.state.data?.items.some((item) => WI_LIVE.has(item.status)) ? 2000 : false),
   });
   const detail = useQuery({
@@ -173,12 +184,12 @@ export function Executions() {
     refetchInterval: (q) => (q.state.data && WI_LIVE.has(q.state.data.status) ? 1000 : false),
   });
   const prepare = useMutation({
-    mutationFn: () => api.post('/api/v1/work-item-executions', { workItem, environmentId }, WorkItemExecutionSchema),
+    mutationFn: () => api.post('/api/v1/work-item-executions', { projectId: selectedId!, workItem, environmentId }, WorkItemExecutionSchema),
     onSuccess: async (row) => {
       setJustPreparedId(row.id);
       setOpenRun(row.id);
       setTab('prepared');
-      await qc.invalidateQueries({ queryKey: ['work-item-executions'] });
+      await qc.invalidateQueries({ queryKey: boardKey(selectedId) });
     },
   });
   const run = useMutation({
@@ -187,7 +198,7 @@ export function Executions() {
       setJustPreparedId(null);
       selectRun(row.id, 'summary');
       setTab('execution');
-      await qc.invalidateQueries({ queryKey: ['work-item-executions'] });
+      await qc.invalidateQueries({ queryKey: boardKey(selectedId) });
       await qc.invalidateQueries({ queryKey: ['work-item-execution', row.id] });
     },
   });
@@ -195,13 +206,14 @@ export function Executions() {
     mutationFn: (id: string) => api.post(`/api/v1/work-item-executions/${id}/cancel`, {}, WorkItemExecutionSchema),
     onSuccess: async (row) => {
       selectRun(row.id, detailView);
-      await qc.invalidateQueries({ queryKey: ['work-item-executions'] });
+      await qc.invalidateQueries({ queryKey: boardKey(selectedId) });
       await qc.invalidateQueries({ queryKey: ['work-item-execution', row.id] });
     },
   });
   const runs = useQuery({
-    queryKey: key,
-    queryFn: () => api.get('/api/v1/executions', ExecutionListResponse),
+    queryKey: executionsKey(selectedId),
+    queryFn: () => api.get(`/api/v1/executions?projectId=${encodeURIComponent(selectedId!)}`, ExecutionListResponse),
+    enabled: Boolean(selectedId),
     refetchInterval: (q) => (q.state.data?.items.some((item) => LIVE.has(item.status)) ? 2000 : false),
   });
   const events = useQuery({
@@ -216,7 +228,7 @@ export function Executions() {
   const control = useMutation({
     mutationFn: (command: 'pause' | 'resume' | 'cancel') => api.post(`/api/v1/executions/${selected}/${command}`, {}, ExecutionSchema),
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: key });
+      await qc.invalidateQueries({ queryKey: executionsKey(selectedId) });
       await qc.invalidateQueries({ queryKey: ['execution', selected, 'events'] });
     },
   });

@@ -107,6 +107,7 @@ export interface TestCaseRepository {
 
 export interface WorkItemRunRecord {
   id: string;
+  projectId?: string;
   workItem: string;
   environmentId: string;
   environmentName: string;
@@ -432,16 +433,15 @@ export class TestCaseService {
   async executionBoard(filter?: { projectId?: string }) {
     // Align with Test Cases collections: only live members of a live work-item collection count
     // (soft-deleted cases and orphans removed from a collection must not appear here).
-    // Optional projectId is a minimal Slice D hook — when set, board is project-scoped.
-    const projectId = (filter?.projectId ?? '').trim() || undefined;
+    const projectId = this.requireProjectId(filter?.projectId);
     const workItems: { workItem: string; caseCount: number }[] = [];
-    for (const collection of await this.d.cases.listCollections(projectId ? { projectId } : undefined)) {
+    for (const collection of await this.d.cases.listCollections({ projectId })) {
       if (collection.size <= 0) continue;
       workItems.push({ workItem: collection.name, caseCount: collection.size });
     }
     workItems.sort((a, b) => a.workItem.localeCompare(b.workItem));
     const items = [];
-    for (const row of await this.d.cases.listWorkItemRuns(projectId ? { projectId } : undefined)) {
+    for (const row of await this.d.cases.listWorkItemRuns({ projectId })) {
       // Include results for queued/running so the UI can poll live progress after seed.
       const results = row.status === 'prepared' ? undefined : await this.d.cases.listCaseResults(row.id);
       items.push(runOf(row, results && results.length > 0 ? results : undefined));
@@ -456,13 +456,27 @@ export class TestCaseService {
     return runOf(row, results);
   }
 
-  async startWorkItemExecution(actor: ActorRef, input: { workItem: string; environmentId: string; environmentName: string }) {
+  async startWorkItemExecution(actor: ActorRef, input: { projectId: string; workItem: string; environmentId: string; environmentName: string }) {
+    const projectId = this.requireProjectId(input.projectId);
     const workItem = this.summary(input.workItem);
     if (!workItem) throw new PlatformError('validation', 'Choose a work item.');
-    const caseCount = (await this.casesForWorkItem(workItem)).length;
+    const caseCount = (await this.casesForWorkItem(workItem, { projectId })).length;
     if (caseCount === 0) throw new PlatformError('validation', 'That work item has no test cases.');
-    const row = await this.d.cases.insertWorkItemRun({ id: randomUUID(), workItem, environmentId: input.environmentId, environmentName: input.environmentName, caseCount });
-    await this.d.audit.append({ actorId: actor.id, action: 'workitem.execution.prepare', subjectType: 'work_item_execution', subjectId: row.id, detail: { workItem, environmentId: input.environmentId, caseCount } });
+    const row = await this.d.cases.insertWorkItemRun({
+      id: randomUUID(),
+      projectId,
+      workItem,
+      environmentId: input.environmentId,
+      environmentName: input.environmentName,
+      caseCount,
+    });
+    await this.d.audit.append({
+      actorId: actor.id,
+      action: 'workitem.execution.prepare',
+      subjectType: 'work_item_execution',
+      subjectId: row.id,
+      detail: { projectId, workItem, environmentId: input.environmentId, caseCount },
+    });
     return runOf(row);
   }
 
@@ -471,7 +485,7 @@ export class TestCaseService {
     const row = await this.d.cases.getWorkItemRun(id);
     if (!row) throw new PlatformError('not-found', 'Work item execution not found');
     if (row.status !== 'prepared' && row.status !== 'failed') throw new PlatformError('conflict', 'That execution is already running or finished.');
-    await this.seedQueuedCaseProgress(id, row.workItem);
+    await this.seedQueuedCaseProgress(id, row.workItem, row.projectId);
     const updated = await this.d.cases.updateWorkItemRun(id, { status: 'queued' });
     await this.d.audit.append({ actorId: actor.id, action: 'workitem.execution.queue', subjectType: 'work_item_execution', subjectId: id, detail: { workItem: row.workItem } });
     return runOf(updated, await this.d.cases.listCaseResults(id));
@@ -493,7 +507,7 @@ export class TestCaseService {
     const prior = await this.d.cases.listCaseResults(id);
     const cases = prior.length > 0
       ? prior
-      : (await this.casesForWorkItem(row.workItem)).map((c) => ({
+      : (await this.casesForWorkItem(row.workItem, row.projectId ? { projectId: row.projectId } : undefined)).map((c) => ({
           id: randomUUID(),
           testCaseId: c.id,
           name: c.name,
@@ -531,8 +545,8 @@ export class TestCaseService {
   }
 
   /** Seeds Queued placeholders (with step labels) so the Execution UI can show live progress immediately. */
-  async seedQueuedCaseProgress(executionId: string, workItem: string) {
-    const cases = await this.casesForWorkItem(workItem);
+  async seedQueuedCaseProgress(executionId: string, workItem: string, projectId?: string) {
+    const cases = await this.casesForWorkItem(workItem, projectId ? { projectId } : undefined);
     await this.d.cases.replaceCaseResults(executionId, cases.map((c) => ({
       id: randomUUID(),
       testCaseId: c.id,
@@ -551,15 +565,18 @@ export class TestCaseService {
     label: string;
     environmentId: string;
     environmentName: string;
+    projectId?: string;
     cases: Array<{ testCaseId: string; name: string; steps?: string; message?: string; status?: CaseRunStatus }>;
   }) {
     const label = this.summary(input.label) || 'rg';
+    const projectId = (input.projectId ?? '').trim() || undefined;
     const row = await this.d.cases.insertWorkItemRun({
       id: randomUUID(),
       workItem: label,
       environmentId: input.environmentId,
       environmentName: input.environmentName,
       caseCount: input.cases.length,
+      ...(projectId ? { projectId } : {}),
     });
     await this.d.cases.replaceCaseResults(row.id, input.cases.map((c) => ({
       id: randomUUID(),
@@ -627,6 +644,7 @@ export class TestCaseService {
     const projectId = (filter?.projectId ?? '').trim() || undefined;
     const collection = (await this.d.cases.listCollections(projectId ? { projectId } : undefined)).find((c) => c.name.toLowerCase() === wanted);
     if (!collection) return [];
+    if (projectId && collection.projectId !== projectId) return [];
     const detail = await this.d.cases.getCollection(collection.id);
     if (!detail) return [];
     const out: TestCaseView[] = [];

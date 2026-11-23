@@ -85,10 +85,12 @@ export function registerTestCaseRoutes(app: FastifyInstance, cases: TestCaseServ
     return reply.code(204).send();
   });
 
-  // Work-item board stays unscoped for Slice C; Slice D will require projectId (minimal hook already on executionBoard).
-  app.get('/api/v1/work-item-executions', { config: { access: requires('execution.start') } }, async () => {
-    const board = await cases.executionBoard();
-    const listed = environments ? (await environments.list()).filter((item) => item.enabled && item.selectable) : [];
+  app.get('/api/v1/work-item-executions', { config: { access: requires('execution.start') } }, async (req) => {
+    const projectId = projectIdOf(req);
+    const board = await cases.executionBoard({ projectId });
+    const listed = environments
+      ? (await environments.list({ projectId })).filter((item) => item.enabled && item.selectable)
+      : [];
     return WorkItemExecutionBoard.parse({ ...board, environments: listed.map((item) => ({ id: item.id, name: item.name, kind: item.kind })) });
   });
 
@@ -97,7 +99,15 @@ export function registerTestCaseRoutes(app: FastifyInstance, cases: TestCaseServ
     if (!environments) throw new PlatformError('validation', 'No environments are configured.');
     const env = await environments.get(input.environmentId);
     if (!env.enabled || !env.selectable) throw new PlatformError('validation', 'That environment cannot be used.');
-    const created = await cases.startWorkItemExecution({ id: req.principal!.id }, { workItem: input.workItem, environmentId: env.id, environmentName: env.name });
+    if (env.projectId !== input.projectId) {
+      throw new PlatformError('validation', 'That environment belongs to a different project.');
+    }
+    const created = await cases.startWorkItemExecution({ id: req.principal!.id }, {
+      projectId: input.projectId,
+      workItem: input.workItem,
+      environmentId: env.id,
+      environmentName: env.name,
+    });
     return reply.code(201).send(WorkItemExecutionSchema.parse(created));
   });
 

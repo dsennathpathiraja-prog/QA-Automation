@@ -362,6 +362,7 @@ export class PgTestCaseRepository implements TestCaseRepository {
   private runOf(r: typeof workItemExecution.$inferSelect): WorkItemRunRecord {
     return {
       id: r.id,
+      projectId: r.projectId,
       workItem: r.workItem,
       environmentId: r.environmentId,
       environmentName: r.environmentName,

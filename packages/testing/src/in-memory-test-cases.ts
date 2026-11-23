@@ -221,7 +221,16 @@ export class InMemoryTestCaseRepository implements TestCaseRepository {
   }
 
   async insertWorkItemRun(row: { id: string; workItem: string; environmentId: string; environmentName: string; caseCount: number; projectId?: string }) {
-    const saved: WorkItemRunRecord = { id: row.id, workItem: row.workItem, environmentId: row.environmentId, environmentName: row.environmentName, caseCount: row.caseCount, status: 'prepared', createdAt: new Date() };
+    const saved: WorkItemRunRecord = {
+      id: row.id,
+      projectId: row.projectId,
+      workItem: row.workItem,
+      environmentId: row.environmentId,
+      environmentName: row.environmentName,
+      caseCount: row.caseCount,
+      status: 'prepared',
+      createdAt: new Date(),
+    };
     this.workItemRuns.unshift(saved);
     if (row.projectId) this.workItemRunProjects.set(saved.id, row.projectId);
     return structuredClone(saved);

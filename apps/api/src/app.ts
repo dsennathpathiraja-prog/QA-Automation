@@ -24,6 +24,9 @@ import {
   type WorkflowService,
 } from '@qa/application';
 
+/** System Default project — last-resort fallback when prep API omits platformProjectId. */
+const DEFAULT_PLATFORM_PROJECT_ID = '01900000-0000-7000-8000-000000000001';
+
 declare module 'fastify' {
   interface FastifyContextConfig {
     access?: RouteAccess;
@@ -145,17 +148,17 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const scope = new RegressionScopeService({
       collections: deps.regressionCollections || deps.testCases
         ? {
-          caseIdsForCollectionKey: async (key) => {
+          caseIdsForCollectionKey: async (key, platformProjectId) => {
             if (deps.regressionCollections) {
               const curated = await deps.regressionCollections.caseIdsForKey(key);
               if (curated !== undefined) return curated;
             }
             if (!deps.testCases) return undefined;
-            // Prep API has no selected project yet (Slice D); fall back to Default where existing cases live.
-            const defaultProjectId = '01900000-0000-7000-8000-000000000001';
+            // Prefer the selected platform project; fall back to Default only when none was supplied.
+            const projectId = (platformProjectId ?? '').trim() || DEFAULT_PLATFORM_PROJECT_ID;
             return caseIdsFromPlatformCollection({
               collectionKey: key,
-              listCollections: () => deps.testCases!.collections({ projectId: defaultProjectId }),
+              listCollections: () => deps.testCases!.collections({ projectId }),
               getCollection: (id) => deps.testCases!.collection(id).then((c) => ({ cases: c.cases })).catch(() => undefined),
               listAssets: () => deps.automation!.listAssets(),
               listMappings: () => deps.automation!.listMappings(),

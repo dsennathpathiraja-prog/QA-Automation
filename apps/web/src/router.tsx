@@ -138,14 +138,26 @@ export function buildRouter(opts: RouterOptions = {}): AnyRouter {
     getParentRoute: () => shell,
     path: '/evidence',
     validateSearch: reportEvidenceSearch,
-    component: () => <Guarded item={evidenceItem}><ReportEvidence mode="evidence" /></Guarded>,
+    component: () => (
+      <Guarded item={evidenceItem}>
+        <RequireProject title="Evidence">
+          <ReportEvidence mode="evidence" />
+        </RequireProject>
+      </Guarded>
+    ),
   });
   const reportsItem = NAV_ITEMS.find((item) => item.id === 'reports')!;
   const reports = createRoute({
     getParentRoute: () => shell,
     path: '/reports',
     validateSearch: reportEvidenceSearch,
-    component: () => <Guarded item={reportsItem}><ReportEvidence mode="report" /></Guarded>,
+    component: () => (
+      <Guarded item={reportsItem}>
+        <RequireProject title="Reports">
+          <ReportEvidence mode="report" />
+        </RequireProject>
+      </Guarded>
+    ),
   });
   const runDetail = createRoute({
     getParentRoute: () => shell,

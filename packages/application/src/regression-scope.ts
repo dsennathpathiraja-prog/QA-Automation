@@ -8,6 +8,8 @@ export interface RegressionScopeInput {
   kind: RegressionScopeKind;
   /** Squash project id (required for suite / campaign). */
   projectId?: string;
+  /** Platform project id — scopes platform collection fallback (not Squash). */
+  platformProjectId?: string;
   /** Optional Squash suite / folder id — only when the connector probe supports `tm.suite.list`. */
   suiteId?: string;
   /** Squash campaign id (required for campaign). */
@@ -26,6 +28,7 @@ export interface RegressionScopeResult {
   /** Template-facing mode label. */
   mode: 'all-in-suite' | 'selected' | 'regression-collection' | 'campaign';
   projectId?: string;
+  platformProjectId?: string;
   suiteId?: string;
   campaignId?: string;
   iterationId?: string;
@@ -50,7 +53,7 @@ export interface RegressionScopeSquashPort {
 
 /** Platform collection key → Squash case ids (Phase 9 E4 curated regression collections). */
 export interface RegressionScopeCollectionPort {
-  caseIdsForCollectionKey(key: string): Promise<string[] | undefined>;
+  caseIdsForCollectionKey(key: string, platformProjectId?: string): Promise<string[] | undefined>;
 }
 
 const text = (raw: unknown): string =>
@@ -88,6 +91,7 @@ export function parseRegressionScopeInput(raw: unknown): RegressionScopeInput {
   const config = asRecord(root.config) ?? {};
 
   const projectId = text(root.projectId) || text(squash.projectId) || text(squash.project) || text(selection.projectId);
+  const platformProjectId = text(root.platformProjectId) || text(selection.platformProjectId) || text(config.platformProjectId);
   const suiteId = text(root.suiteId) || text(squash.suiteId) || text(squash.suite) || text(selection.suiteId);
   const campaignId = text(root.campaignId) || text(squash.campaignId) || text(squash.campaign) || text(selection.campaignId);
   const iterationId = text(root.iterationId) || text(squash.iterationId) || text(squash.iteration) || text(selection.iterationId);
@@ -105,7 +109,7 @@ export function parseRegressionScopeInput(raw: unknown): RegressionScopeInput {
   const mode = modeRaw.toLowerCase();
 
   if (mode === 'selected' || mode === 'selection') {
-    return { kind: 'selected', projectId: projectId || undefined, caseIds };
+    return { kind: 'selected', projectId: projectId || undefined, platformProjectId: platformProjectId || undefined, caseIds };
   }
   if (mode === 'regression-collection' || mode === 'collection' || mode === 'smoke' || collectionKey) {
     return {
@@ -113,6 +117,7 @@ export function parseRegressionScopeInput(raw: unknown): RegressionScopeInput {
       collectionKey: collectionKey || (mode === 'smoke' ? 'smoke' : undefined),
       caseIds: caseIds.length > 0 ? caseIds : undefined,
       projectId: projectId || undefined,
+      platformProjectId: platformProjectId || undefined,
     };
   }
   if (mode === 'campaign' || campaignId) {
@@ -183,6 +188,7 @@ export class RegressionScopeService {
       kind: 'selected',
       mode: 'selected',
       ...(input.projectId ? { projectId: input.projectId } : {}),
+      ...(input.platformProjectId ? { platformProjectId: input.platformProjectId } : {}),
     };
   }
 
@@ -199,6 +205,7 @@ export class RegressionScopeService {
         mode: 'regression-collection',
         collectionKey: key,
         ...(input.projectId ? { projectId: input.projectId } : {}),
+        ...(input.platformProjectId ? { platformProjectId: input.platformProjectId } : {}),
       };
     }
 
@@ -208,7 +215,7 @@ export class RegressionScopeService {
         `Platform collection "${key}" lookup is not wired on this process. Pass caseIds to preview, seed the smoke collection, or run configure-scope on the worker.`,
       );
     }
-    const found = await this.deps.collections.caseIdsForCollectionKey(key);
+    const found = await this.deps.collections.caseIdsForCollectionKey(key, input.platformProjectId);
     if (found === undefined) {
       throw new PlatformError(
         'not-found',
@@ -225,6 +232,7 @@ export class RegressionScopeService {
       mode: 'regression-collection',
       collectionKey: key,
       ...(input.projectId ? { projectId: input.projectId } : {}),
+      ...(input.platformProjectId ? { platformProjectId: input.platformProjectId } : {}),
     };
   }
 

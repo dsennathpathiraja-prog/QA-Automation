@@ -7,7 +7,7 @@ export class InMemoryExecutionRepository implements ExecutionRepository {
 
   async insert(n: NewExecution) {
     const now = new Date();
-    const projectId = (n as { projectId?: string }).projectId ?? '01900000-0000-7000-8000-000000000001';
+    const projectId = n.projectId ?? '01900000-0000-7000-8000-000000000001';
     const rec: ExecutionRecord = { id: n.id, projectId, workflowId: n.workflowId, versionId: n.versionId, status: 'queued', stepIndex: 0, control: null, createdAt: now, updatedAt: now };
     this.rows.set(rec.id, rec);
     this.log.set(rec.id, [{ seq: 1, kind: 'started', payload: {}, at: now.toISOString() }]);
@@ -23,8 +23,12 @@ export class InMemoryExecutionRepository implements ExecutionRepository {
     return [...this.rows.values()].filter((r) => r.workflowId === workflowId).map((r) => structuredClone(r));
   }
 
-  async listRecent(limit: number) {
-    return [...this.rows.values()].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, limit).map((r) => structuredClone(r));
+  async listRecent(limit: number, filter?: { projectId?: string }) {
+    return [...this.rows.values()]
+      .filter((r) => !filter?.projectId || r.projectId === filter.projectId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, limit)
+      .map((r) => structuredClone(r));
   }
 
   async events(id: string) {
