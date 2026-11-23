@@ -52,6 +52,7 @@ export async function seedRegressionCollections(db: Db): Promise<{ created: bool
   const existing = await db.select({ id: regressionCollection.id }).from(regressionCollection).where(eq(regressionCollection.key, 'smoke')).limit(1);
   if (existing.length > 0) return { created: false };
   await db.insert(regressionCollection).values({
+    projectId: '01900000-0000-7000-8000-000000000001',
     key: 'smoke',
     name: 'Smoke',
     description: 'Curated platform smoke collection for Regression template #7 (Squash case id members).',

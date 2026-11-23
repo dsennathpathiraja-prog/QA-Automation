@@ -31,9 +31,14 @@ export function AppShell() {
           </button>
         </div>
         <div className="border-b border-slate-100 px-4 pb-3 dark:border-slate-800">
-          <label htmlFor="project-select" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-            Project
-          </label>
+          <div className="mb-1 flex items-baseline justify-between gap-2">
+            <label htmlFor="project-select" className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              Project
+            </label>
+            <Link to="/projects" className="text-xs text-blue-700 underline dark:text-blue-300">
+              Manage
+            </Link>
+          </div>
           {project.loading && <p className="text-xs text-slate-500">Loading…</p>}
           {!project.loading && project.projects.length === 0 && (
             <Link to="/projects" className="text-sm text-blue-700 underline dark:text-blue-300">
@@ -41,18 +46,24 @@ export function AppShell() {
             </Link>
           )}
           {project.projects.length > 0 && (
-            <select
-              id="project-select"
-              className="w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950"
-              value={project.selectedId ?? ''}
-              onChange={(e) => project.select(e.target.value || undefined)}
-            >
-              {project.projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+            <>
+              <p className="mb-1 text-sm font-semibold" aria-live="polite">
+                {project.selected?.name ?? 'None selected'}
+              </p>
+              <select
+                id="project-select"
+                className="w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950"
+                value={project.selectedId ?? ''}
+                onChange={(e) => project.select(e.target.value || undefined)}
+                aria-label="Switch project"
+              >
+                {project.projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </>
           )}
         </div>
         <nav id="primary-nav" aria-label="Primary" className={`${menuOpen ? 'block' : 'hidden'} px-2 pb-4 md:block`}>

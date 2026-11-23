@@ -91,6 +91,8 @@ export class ProjectService {
   }
 
   async archive(actor: ActorRef, id: string): Promise<ProjectSummary> {
+    const rec = await this.require(id);
+    if (rec.key === 'default') throw new PlatformError('conflict', 'The Default project cannot be archived.');
     return this.update(actor, id, { status: 'archived' });
   }
 

@@ -389,8 +389,7 @@ export const workflow = pgTable(
   'workflow',
   {
     id: id(),
-    /** Set by migration backfill; required for publish/run in a follow-up slice. */
-    projectId: uuid('project_id').references(() => project.id),
+    projectId: uuid('project_id').notNull().references(() => project.id),
     key: text('key').notNull(),
     name: text('name').notNull(),
     description: text('description').notNull().default(''),
@@ -428,6 +427,7 @@ export const workflowExecution = pgTable(
   'workflow_execution',
   {
     id: id(),
+    projectId: uuid('project_id').notNull().references(() => project.id),
     workflowId: uuid('workflow_id').notNull(),
     versionId: uuid('version_id').notNull(),
     status: text('status').notNull().default('queued'),
@@ -445,6 +445,7 @@ export const workflowExecution = pgTable(
     check('workflow_execution_status_ck', sql`${t.status} in ('queued','running','paused','succeeded','failed','cancelled')`),
     check('workflow_execution_phase_ck', sql`${t.phase} in ('pending','effect')`),
     index('workflow_execution_status_idx').on(t.status),
+    index('workflow_execution_project_idx').on(t.projectId),
   ],
 );
 
@@ -473,8 +474,7 @@ export const testCase = pgTable(
   'test_case',
   {
     id: id(),
-    /** Set by migration backfill; required for generation/library in a follow-up slice. */
-    projectId: uuid('project_id').references(() => project.id),
+    projectId: uuid('project_id').notNull().references(() => project.id),
     key: text('key').notNull(),
     name: text('name').notNull(),
     summary: text('summary').notNull().default(''),
@@ -511,7 +511,7 @@ export const testCollection = pgTable(
   'test_collection',
   {
     id: id(),
-    projectId: uuid('project_id').references(() => project.id),
+    projectId: uuid('project_id').notNull().references(() => project.id),
     name: text('name').notNull(),
     description: text('description').notNull().default(''),
     deletedAt: ts('deleted_at'),
@@ -528,6 +528,7 @@ export const workItemExecution = pgTable(
   'work_item_execution',
   {
     id: id(),
+    projectId: uuid('project_id').notNull().references(() => project.id),
     workItem: text('work_item').notNull(),
     environmentId: uuid('environment_id').notNull(),
     environmentName: text('environment_name').notNull(),
@@ -539,6 +540,7 @@ export const workItemExecution = pgTable(
   },
   (t) => [
     index('work_item_execution_created_idx').on(t.createdAt),
+    index('work_item_execution_project_idx').on(t.projectId),
     check('work_item_execution_status_ck', sql`${t.status} in ('prepared','queued','running','completed','failed','cancelled')`),
   ],
 );
@@ -579,6 +581,7 @@ export const automationAsset = pgTable(
   'automation_asset',
   {
     id: id(),
+    projectId: uuid('project_id').notNull().references(() => project.id),
     key: text('key').notNull(),
     name: text('name').notNull(),
     scriptPath: text('script_path').notNull(),
@@ -593,6 +596,7 @@ export const automationAsset = pgTable(
   (t) => [
     uniqueIndex('automation_asset_key_uq').on(t.key),
     index('automation_asset_status_idx').on(t.status),
+    index('automation_asset_project_idx').on(t.projectId),
     check('automation_asset_status_ck', sql`${t.status} in ('draft','approved')`),
   ],
 );
@@ -601,6 +605,7 @@ export const automationMapping = pgTable(
   'automation_mapping',
   {
     id: id(),
+    projectId: uuid('project_id').notNull().references(() => project.id),
     squashCaseId: text('squash_case_id').notNull(),
     squashReference: text('squash_reference').notNull().default(''),
     assetId: uuid('asset_id').notNull(),
@@ -610,6 +615,7 @@ export const automationMapping = pgTable(
   (t) => [
     uniqueIndex('automation_mapping_squash_uq').on(t.squashCaseId),
     index('automation_mapping_asset_idx').on(t.assetId),
+    index('automation_mapping_project_idx').on(t.projectId),
   ],
 );
 
@@ -619,13 +625,17 @@ export const regressionCollection = pgTable(
   'regression_collection',
   {
     id: id(),
+    projectId: uuid('project_id').notNull().references(() => project.id),
     key: text('key').notNull(),
     name: text('name').notNull(),
     description: text('description').notNull().default(''),
     createdAt: ts('created_at').notNull().defaultNow(),
     updatedAt: ts('updated_at').notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('regression_collection_key_uq').on(t.key)],
+  (t) => [
+    uniqueIndex('regression_collection_key_uq').on(t.key),
+    index('regression_collection_project_idx').on(t.projectId),
+  ],
 );
 
 export const regressionCollectionMember = pgTable(

@@ -2,7 +2,8 @@ import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { PlatformError } from '@qa/domain';
 import type { CaseRunStatus, CaseStepProgress, CollectionCaseRecord, TestCaseInsert, TestCaseKind, TestCasePriority, TestCaseRecord, TestCaseRepository, TestCaseVersionRecord, TestCollectionRecord, WorkItemCaseResultRecord, WorkItemRunRecord, WorkItemRunStatus } from '@qa/application';
 import type { Db } from './db';
-import { testCase, testCaseVersion, testCollection, testCollectionCase, workItemCaseResult, workItemExecution } from './schema';
+import { DEFAULT_PROJECT_ID } from './project-repository';
+import { environment, testCase, testCaseVersion, testCollection, testCollectionCase, workItemCaseResult, workItemExecution } from './schema';
 
 const asKind = (value: string): TestCaseKind => (value === 'negative' || value === 'edge' ? value : 'positive');
 const asPriority = (value: string): TestCasePriority => (value === 'high' || value === 'low' ? value : 'medium');
@@ -74,6 +75,7 @@ export class PgTestCaseRepository implements TestCaseRepository {
       return await this.db.transaction(async (tx) => {
         const [saved] = await tx.insert(testCase).values({
           id: row.id,
+          projectId: (row as { projectId?: string }).projectId ?? DEFAULT_PROJECT_ID,
           key: row.key,
           name: row.name,
           summary: row.summary,
@@ -202,9 +204,12 @@ export class PgTestCaseRepository implements TestCaseRepository {
     return { id: row.id, name: row.name, description: row.description, cases: mapped };
   }
 
-  async insertCollection(row: { id: string; name: string; description: string }) {
+  async insertCollection(row: { id: string; name: string; description: string; projectId?: string }) {
     try {
-      const [saved] = await this.db.insert(testCollection).values(row).returning();
+      const [saved] = await this.db
+        .insert(testCollection)
+        .values({ id: row.id, projectId: row.projectId ?? DEFAULT_PROJECT_ID, name: row.name, description: row.description })
+        .returning();
       return { id: saved!.id, name: saved!.name, description: saved!.description, size: 0 };
     } catch (e) {
       if (unique(e)) throw new PlatformError('conflict', 'A collection with that name already exists.');
@@ -260,8 +265,10 @@ export class PgTestCaseRepository implements TestCaseRepository {
     return row && this.runOf(row);
   }
 
-  async insertWorkItemRun(row: { id: string; workItem: string; environmentId: string; environmentName: string; caseCount: number }) {
-    const [saved] = await this.db.insert(workItemExecution).values(row).returning();
+  async insertWorkItemRun(row: { id: string; workItem: string; environmentId: string; environmentName: string; caseCount: number; projectId?: string }) {
+    const [env] = await this.db.select({ projectId: environment.projectId }).from(environment).where(eq(environment.id, row.environmentId)).limit(1);
+    const projectId = row.projectId ?? env?.projectId ?? DEFAULT_PROJECT_ID;
+    const [saved] = await this.db.insert(workItemExecution).values({ ...row, projectId }).returning();
     return this.runOf(saved!);
   }
 

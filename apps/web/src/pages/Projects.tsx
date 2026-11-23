@@ -1,6 +1,5 @@
 import { CreateProjectRequest, ProjectListResponse, ProjectSummarySchema, type ProjectSummary } from '@qa/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useApi } from '../api/context';
 import { useSession } from '../auth/session';
@@ -11,64 +10,100 @@ import { Field, errorText, fieldClass, primaryButtonClass } from './connectors/s
 export function Projects() {
   const api = useApi();
   const session = useSession();
-  const { selectedId, select } = useProject();
+  const { selected, selectedId, select } = useProject();
   const manage = session.can('project.manage');
+  const qc = useQueryClient();
   const q = useQuery({ queryKey: projectsKey, queryFn: () => api.get('/api/v1/projects', ProjectListResponse) });
+
+  const archive = useMutation({
+    mutationFn: (id: string) => api.post(`/api/v1/projects/${id}/archive`, undefined, ProjectSummarySchema),
+    onSuccess: async (updated) => {
+      await qc.invalidateQueries({ queryKey: projectsKey });
+      if (selectedId === updated.id) {
+        const next = (q.data?.items ?? []).find((p) => p.id !== updated.id && p.status === 'active');
+        select(next?.id);
+      }
+    },
+  });
 
   return (
     <>
-      <PageHeader
-        title="Projects"
-        description="A project holds connectors, environments, workflows, test cases, and executions. Select one before publishing or running."
-      />
+      <PageHeader title="Projects" description="Select a project, or create a new empty one." />
       <div className="space-y-4">
-        {manage && <NewProject />}
-        <Card label="Projects">
-          {q.isError && <ErrorNotice message="The project list could not be loaded." onRetry={() => void q.refetch()} />}
-          {q.data && q.data.items.length === 0 && <p>No projects yet. Create one to configure connectors and environments.</p>}
-          {q.data && q.data.items.length > 0 && (
-            <table className="w-full text-left text-sm">
-              <caption className="sr-only">Projects</caption>
-              <thead>
-                <tr className="border-b border-slate-200 dark:border-slate-700">
-                  <th scope="col" className="py-2 pr-4">Name</th>
-                  <th scope="col" className="py-2 pr-4">Key</th>
-                  <th scope="col" className="py-2 pr-4">Status</th>
-                  <th scope="col" className="py-2">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {q.data.items.map((p) => (
-                  <ProjectRow key={p.id} project={p} selected={p.id === selectedId} onSelect={() => select(p.id)} />
-                ))}
-              </tbody>
-            </table>
+        <Card label="Selected project">
+          {selected ? (
+            <p className="text-lg font-semibold">{selected.name}</p>
+          ) : (
+            <p className="text-sm text-slate-600 dark:text-slate-300">No project selected.</p>
           )}
         </Card>
-        {selectedId && <ProjectSetup projectId={selectedId} />}
+
+        {manage && <NewProject />}
+
+        <Card label="All projects">
+          {q.isError && <ErrorNotice message="The project list could not be loaded." onRetry={() => void q.refetch()} />}
+          {q.data && q.data.items.length === 0 && <p>No projects yet.</p>}
+          {q.data && q.data.items.length > 0 && (
+            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+              {q.data.items.map((p) => (
+                <ProjectRow
+                  key={p.id}
+                  project={p}
+                  selected={p.id === selectedId}
+                  canManage={manage}
+                  onSelect={() => select(p.id)}
+                  onArchive={() => archive.mutate(p.id)}
+                  archivePending={archive.isPending}
+                />
+              ))}
+            </ul>
+          )}
+          {archive.isError && (
+            <div className="mt-3">
+              <ErrorNotice message={errorText(archive.error, 'The project could not be archived.')} />
+            </div>
+          )}
+        </Card>
       </div>
     </>
   );
 }
 
-function ProjectRow({ project, selected, onSelect }: { project: ProjectSummary; selected: boolean; onSelect: () => void }) {
+function ProjectRow({
+  project,
+  selected,
+  canManage,
+  onSelect,
+  onArchive,
+  archivePending,
+}: {
+  project: ProjectSummary;
+  selected: boolean;
+  canManage: boolean;
+  onSelect: () => void;
+  onArchive: () => void;
+  archivePending: boolean;
+}) {
   return (
-    <tr className="border-b border-slate-100 last:border-0 dark:border-slate-800">
-      <td className="py-2 pr-4">
+    <li className={`flex flex-wrap items-center justify-between gap-2 py-3 ${selected ? 'bg-blue-50/60 dark:bg-blue-950/30' : ''}`}>
+      <div>
         <span className="font-medium">{project.name}</span>
-        {selected && <span className="ml-2 text-xs text-slate-500">(selected)</span>}
-        {project.description ? <div className="text-xs text-slate-500">{project.description}</div> : null}
-      </td>
-      <td className="py-2 pr-4 font-mono text-xs">{project.key}</td>
-      <td className="py-2 pr-4">{project.status}</td>
-      <td className="py-2">
+        {selected && <span className="ml-2 text-xs font-semibold uppercase tracking-wide text-blue-800 dark:text-blue-200">Selected</span>}
+        {project.status === 'archived' && <span className="ml-2 text-xs text-slate-500">Archived</span>}
+      </div>
+      <div className="flex gap-2">
         {!selected && project.status === 'active' && (
           <button type="button" className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800" onClick={onSelect}>
             Select
           </button>
         )}
-      </td>
-    </tr>
+        {canManage && project.status === 'active' && project.key !== 'default' && (
+          <button type="button" className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800" disabled={archivePending} onClick={onArchive}>
+            Archive
+          </button>
+        )}
+      </div>
+    </li>
   );
 }
 
@@ -77,37 +112,25 @@ function NewProject() {
   const qc = useQueryClient();
   const { select } = useProject();
   const [name, setName] = useState('');
-  const [key, setKey] = useState('');
-  const [description, setDescription] = useState('');
   const add = useMutation({
-    mutationFn: (body: { name: string; key?: string; description?: string }) => {
-      const parsed = CreateProjectRequest.parse(body);
-      return api.post('/api/v1/projects', parsed, ProjectSummarySchema);
-    },
+    mutationFn: (body: { name: string }) => api.post('/api/v1/projects', CreateProjectRequest.parse(body), ProjectSummarySchema),
     onSuccess: async (created) => {
       await qc.invalidateQueries({ queryKey: projectsKey });
       select(created.id);
       setName('');
-      setKey('');
-      setDescription('');
     },
   });
   return (
     <Card label="New project">
+      <p className="mb-3 text-sm text-slate-600 dark:text-slate-300">Creates an empty project. Connectors and environments are added after you select it.</p>
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          add.mutate({ name, key: key.trim() || undefined, description: description.trim() || undefined });
+          add.mutate({ name });
         }}
       >
         <Field id="project-name" label="Name">
           <input id="project-name" required className={fieldClass} value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field id="project-key" label="Key" hint="Optional slug. Generated from the name when left blank.">
-          <input id="project-key" className={fieldClass} value={key} onChange={(e) => setKey(e.target.value)} placeholder="my-app" />
-        </Field>
-        <Field id="project-desc" label="Description">
-          <input id="project-desc" className={fieldClass} value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
         <button type="submit" className={`${primaryButtonClass} mt-3`} disabled={add.isPending}>
           Create project
@@ -118,49 +141,6 @@ function NewProject() {
           </div>
         )}
       </form>
-    </Card>
-  );
-}
-
-function ProjectSetup({ projectId }: { projectId: string }) {
-  return (
-    <Card label="Project setup">
-      <p className="mb-3 text-sm text-slate-600 dark:text-slate-300">
-        Configure connectors and environments for this project. Workflows, test cases, and executions use the selected project.
-      </p>
-      <ul className="list-inside list-disc space-y-1 text-sm">
-        <li>
-          <Link to="/connectors" className="text-blue-700 underline dark:text-blue-300">
-            Connectors
-          </Link>{' '}
-          — place and test systems for this project
-        </li>
-        <li>
-          <Link to="/environments" className="text-blue-700 underline dark:text-blue-300">
-            Environments
-          </Link>{' '}
-          — application URLs and auth for this project
-        </li>
-        <li>
-          <Link to="/workflows" className="text-blue-700 underline dark:text-blue-300">
-            Workflows
-          </Link>{' '}
-          — publish after the project is selected (follow-up: project-scoped publish)
-        </li>
-        <li>
-          <Link to="/test-cases" className="text-blue-700 underline dark:text-blue-300">
-            Test cases
-          </Link>{' '}
-          — generate and store in project scope (follow-up)
-        </li>
-        <li>
-          <Link to="/executions" className="text-blue-700 underline dark:text-blue-300">
-            Executions
-          </Link>{' '}
-          — select project, then run published workflows (follow-up)
-        </li>
-      </ul>
-      <p className="mt-3 font-mono text-xs text-slate-500">projectId={projectId}</p>
     </Card>
   );
 }

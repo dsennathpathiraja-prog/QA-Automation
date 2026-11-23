@@ -28,4 +28,13 @@ describe('ProjectService', () => {
     const archived = await s.service.archive(actor, a.id);
     expect(archived.status).toBe('archived');
   });
+
+  it('refuses to archive the Default project and creates an empty project row only', async () => {
+    const s = setup();
+    const def = await s.service.create(actor, { name: 'Default', key: 'default' });
+    await expect(s.service.archive(actor, def.id)).rejects.toMatchObject({ errorClass: 'conflict' });
+    const created = await s.service.create(actor, { name: 'Fresh' });
+    expect(s.projects.rows.size).toBe(2);
+    expect(created.key).toBe('fresh');
+  });
 });
