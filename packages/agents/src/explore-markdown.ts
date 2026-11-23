@@ -1,5 +1,5 @@
 import { parseMcpPageSnapshot, snapshotArtifactBody } from './snapshot-content';
-import type { CodeFinding, ExploreFinding } from './types';
+import type { CodeFinding, ExploreClickOutcome, ExploreFinding } from './types';
 
 const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'item';
 
@@ -54,6 +54,30 @@ function cueList(label: string, values: string[]): string[] {
   return [`- **${label}:** ${values.slice(0, 12).map((v) => `\`${v}\``).join(', ')}`];
 }
 
+function renderClickOutcome(o: ExploreClickOutcome): string[] {
+  const lines = [
+    `### Clicked ${o.kind} \`${o.control}\``,
+    '',
+    `- **Result:** ${o.result}`,
+    `- **URL:** \`${o.urlBefore}\` → \`${o.urlAfter}\``,
+  ];
+  if (o.headingBefore || o.headingAfter) {
+    lines.push(`- **Heading:** ${o.headingBefore ? `"${o.headingBefore}"` : '_(none)_'} → ${o.headingAfter ? `"${o.headingAfter}"` : '_(none)_'}`);
+  }
+  lines.push(`- **Change:** ${o.changeSummary}`);
+  if (o.disabledBefore?.length) {
+    lines.push(`- **Disabled before:** ${o.disabledBefore.slice(0, 10).map((d) => `\`${d}\``).join(', ')}`);
+  }
+  if (o.disabledAfter?.length) {
+    lines.push(`- **Disabled after:** ${o.disabledAfter.slice(0, 10).map((d) => `\`${d}\``).join(', ')}`);
+  }
+  if (o.newlyEnabled?.length) {
+    lines.push(`- **Became enabled:** ${o.newlyEnabled.slice(0, 10).map((d) => `\`${d}\``).join(', ')}`);
+  }
+  lines.push('');
+  return lines;
+}
+
 /** Markdown for Explore UI findings (URLs + structured a11y / YAML snapshots). */
 export function renderExploreUiMarkdown(input: {
   workItem: string;
@@ -66,6 +90,7 @@ export function renderExploreUiMarkdown(input: {
   candidateRoutes?: string[];
   pagesVisited?: number;
   exploredUrls?: string[];
+  clickOutcomes?: ExploreClickOutcome[];
 }): string {
   const lines = [
     `# Explore UI: ${input.workItem} — ${input.application}`,
@@ -87,7 +112,18 @@ export function renderExploreUiMarkdown(input: {
     if (explored.length > 0) {
       lines.push(`- **URLs:** ${explored.map((u) => `\`${u}\``).join(', ')}`);
     }
+    if (input.clickOutcomes && input.clickOutcomes.length > 0) {
+      const clicked = input.clickOutcomes.filter((o) => o.result !== 'skipped-disabled').length;
+      lines.push(`- **Control clicks recorded:** ${clicked}`);
+    }
     lines.push('');
+  }
+  if (input.clickOutcomes && input.clickOutcomes.length > 0) {
+    lines.push('## Click findings', '');
+    lines.push('Each systematically attempted control with before→after UI observations:', '');
+    for (const o of input.clickOutcomes) {
+      lines.push(...renderClickOutcome(o));
+    }
   }
   if (input.surfaceKind || input.primarySurfaceUrl || input.blockingGap || (input.candidateRoutes && input.candidateRoutes.length > 0)) {
     lines.push('## Story surface binding', '');
@@ -114,6 +150,7 @@ export function renderExploreUiMarkdown(input: {
       lines.push('');
       lines.push(`- **URL:** ${parsed.url || d.url}`);
       if (parsed.title) lines.push(`- **Title:** ${parsed.title}`);
+      if (d.viaClick) lines.push(`- **Via click:** \`${d.viaClick}\``);
       if (d.screenshotBase64) lines.push('- **Screenshot:** captured');
       lines.push(...cueList('Headings', parsed.cues.headings));
       lines.push(...cueList('Buttons', parsed.cues.buttons));

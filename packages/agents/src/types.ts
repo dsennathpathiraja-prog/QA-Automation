@@ -162,6 +162,30 @@ export interface ExploreFinding {
   /** Compact cues (links / buttons / fields / headings) for findings. */
   cuesSummary?: string;
   screenshotBase64?: string;
+  /** Optional click that produced this page/view (when from crawl). */
+  viaClick?: string;
+}
+
+/** One explore click/nav attempt with before→after UI observations for the MD findings. */
+export interface ExploreClickOutcome {
+  control: string;
+  kind: 'link' | 'button' | 'route';
+  urlBefore: string;
+  urlAfter: string;
+  headingBefore?: string;
+  headingAfter?: string;
+  cuesBefore?: string;
+  cuesAfter?: string;
+  /** Human summary of what changed (or that catalog looked the same). */
+  changeSummary: string;
+  changed: boolean;
+  /** Controls observed disabled before the click. */
+  disabledBefore?: string[];
+  /** Controls observed disabled after the click. */
+  disabledAfter?: string[];
+  /** Controls that became enabled after the click. */
+  newlyEnabled?: string[];
+  result: 'captured' | 'documented' | 'no-op' | 'skipped-disabled' | 'error';
 }
 
 export interface ExploreResult {
@@ -186,6 +210,8 @@ export interface ExploreResult {
   pagesVisited?: number;
   /** Ordered unique URLs visited during explore. */
   exploredUrls?: string[];
+  /** Per-click before→after observations (systematic crawl findings). */
+  clickOutcomes?: ExploreClickOutcome[];
 }
 
 export interface CodeExploreRequest {

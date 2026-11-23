@@ -5,6 +5,7 @@ import {
   crawlBudgetOpen,
   cuesMeaningfullyChanged,
   exploreViewKey,
+  formatClickFindings,
   formatExplorePageProgress,
   isDestructiveNavLabel,
   isHashOnlyNavigation,
@@ -14,6 +15,7 @@ import {
   resolveExploreHref,
   sameExploreHost,
   scoreCrawlTarget,
+  summarizeClickChange,
 } from '../src/explore-crawl';
 
 describe('explore-crawl', () => {
@@ -120,14 +122,37 @@ describe('explore-crawl', () => {
       url: 'https://shop.example/shop',
       links: [{ label: 'Cart', href: '/cart' }, { text: 'Help', href: '/help' }],
       buttons: ['Add to cart'],
+      disabled: ['Proceed to checkout'],
     }));
     expect(parsed?.links).toHaveLength(2);
     expect(parsed?.buttons).toEqual(['Add to cart']);
+    expect(parsed?.disabled).toEqual(['Proceed to checkout']);
     expect(formatExplorePageProgress([
       'https://shop.example/shop',
       'https://shop.example/cart',
       'https://shop.example/shop',
     ])).toMatch(/Explored 2 pages:/);
     expect(normalizeExploreUrl('https://shop.example/cart/#x')).toBe('https://shop.example/cart');
+  });
+
+  it('summarizes before→after click changes including newly enabled controls', () => {
+    const diff = summarizeClickChange({
+      urlBefore: 'https://portal.example.com/app',
+      urlAfter: 'https://portal.example.com/app',
+      cuesBefore: 'heading="Overview"; buttons="Settings"',
+      cuesAfter: 'heading="Users"; buttons="Settings","Save"',
+      disabledBefore: ['Save'],
+      disabledAfter: [],
+    });
+    expect(diff.changed).toBe(true);
+    expect(diff.newlyEnabled).toContain('Save');
+    expect(diff.changeSummary).toMatch(/heading/);
+    expect(formatClickFindings([{
+      control: 'Users',
+      kind: 'link',
+      changeSummary: diff.changeSummary,
+      result: 'captured',
+      newlyEnabled: diff.newlyEnabled,
+    }])).toMatch(/Clicked link "Users"/);
   });
 });

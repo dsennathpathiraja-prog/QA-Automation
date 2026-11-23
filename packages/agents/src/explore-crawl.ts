@@ -295,12 +295,20 @@ export function collectCrawlTargets(input: {
 
 /**
  * Playwright MCP `browser_evaluate` body: discover links (text+href) and
- * button/tab/menuitem labels for app-agnostic crawl. Self-contained — runs in the page.
+ * button/tab/menuitem labels + disabled state. Self-contained — runs in the page.
  */
 export const CRAWL_LINK_DISCOVERY_SCRIPT = `() => {
   const textOf = (el) => {
     const raw = (el && (el.innerText || el.textContent || el.getAttribute?.('aria-label') || el.getAttribute?.('title') || '')) + '';
     return raw.replace(/\\s+/g, ' ').trim().slice(0, 80);
+  };
+  const isDisabled = (el) => {
+    if (!el) return false;
+    if (el.disabled === true) return true;
+    const aria = (el.getAttribute && el.getAttribute('aria-disabled')) || '';
+    if (String(aria).toLowerCase() === 'true') return true;
+    if (el.classList && (el.classList.contains('disabled') || el.classList.contains('is-disabled'))) return true;
+    return false;
   };
   const links = [];
   const seen = new Set();
@@ -311,22 +319,30 @@ export const CRAWL_LINK_DISCOVERY_SCRIPT = `() => {
     const key = (href + '|' + label).toLowerCase();
     if (!href || href === '#' || seen.has(key)) continue;
     seen.add(key);
-    links.push({ label, href });
+    links.push({ label, href, disabled: isDisabled(a) });
   }
   const buttons = [];
+  const disabled = [];
   const clickable = 'button,[role="button"],[role="tab"],[role="menuitem"],[role="option"],input[type="button"],input[type="submit"]';
   for (const el of Array.from(document.querySelectorAll(clickable))) {
-    if (buttons.length >= 40) break;
+    if (buttons.length + disabled.length >= 50) break;
     const label = textOf(el) || (el.value || '');
-    if (label && !buttons.includes(label)) buttons.push(label);
+    if (!label) continue;
+    if (isDisabled(el)) {
+      if (!disabled.includes(label)) disabled.push(label);
+    } else if (!buttons.includes(label)) {
+      buttons.push(label);
+    }
   }
-  return { url: location.href || '', links, buttons };
+  return { url: location.href || '', links, buttons, disabled };
 }`;
 
 export interface CrawlDiscoveryResult {
   url: string;
-  links: Array<{ label: string; href?: string }>;
+  links: Array<{ label: string; href?: string; disabled?: boolean }>;
   buttons: string[];
+  /** Enabled=false controls observed on the page (do not click until enabled). */
+  disabled: string[];
 }
 
 export function parseCrawlDiscovery(raw: string): CrawlDiscoveryResult | undefined {
@@ -339,20 +355,112 @@ export function parseCrawlDiscovery(raw: string): CrawlDiscoveryResult | undefin
     if (start < 0 || end <= start) return undefined;
     const parsed = JSON.parse(text.slice(start, end + 1)) as {
       url?: string;
-      links?: Array<{ label?: string; href?: string; text?: string }>;
-      buttons?: string[];
+      links?: Array<{ label?: string; href?: string; text?: string; disabled?: boolean }>;
+      buttons?: string[] | Array<{ label?: string; disabled?: boolean }>;
+      disabled?: string[];
     };
     const links = (parsed.links ?? [])
       .map((l) => ({
         label: String(l.label || l.text || l.href || '').trim(),
         href: l.href ? String(l.href) : undefined,
+        disabled: Boolean(l.disabled),
       }))
       .filter((l) => l.label || l.href);
-    const buttons = (parsed.buttons ?? []).map((b) => String(b).trim()).filter(Boolean);
-    return { url: String(parsed.url || ''), links, buttons };
+    const buttons: string[] = [];
+    const disabled = [...(parsed.disabled ?? []).map((d) => String(d).trim()).filter(Boolean)];
+    for (const b of parsed.buttons ?? []) {
+      if (typeof b === 'string') {
+        if (b.trim()) buttons.push(b.trim());
+        continue;
+      }
+      const label = String(b.label || '').trim();
+      if (!label) continue;
+      if (b.disabled) disabled.push(label);
+      else buttons.push(label);
+    }
+    return {
+      url: String(parsed.url || ''),
+      links,
+      buttons: [...new Set(buttons)],
+      disabled: [...new Set(disabled)],
+    };
   } catch {
     return undefined;
   }
+}
+
+export function headingFromCues(cuesSummary?: string): string | undefined {
+  if (!cuesSummary) return undefined;
+  return /heading\s*=\s*"((?:\\.|[^"\\])*)"/i.exec(cuesSummary)?.[1]?.replace(/\\"/g, '"').trim()
+    || undefined;
+}
+
+/** Build a compact before→after change line for Explore MD findings. */
+export function summarizeClickChange(input: {
+  urlBefore: string;
+  urlAfter: string;
+  cuesBefore?: string;
+  cuesAfter?: string;
+  disabledBefore?: string[];
+  disabledAfter?: string[];
+}): { changed: boolean; changeSummary: string; newlyEnabled: string[] } {
+  const parts: string[] = [];
+  const urlBefore = normalizeExploreUrl(input.urlBefore, undefined, { keepHash: true }) || input.urlBefore;
+  const urlAfter = normalizeExploreUrl(input.urlAfter, undefined, { keepHash: true }) || input.urlAfter;
+  if (urlBefore.toLowerCase() !== urlAfter.toLowerCase()) {
+    parts.push(`URL ${urlBefore} → ${urlAfter}`);
+  } else {
+    parts.push(`URL unchanged (${urlAfter})`);
+  }
+  const hBefore = headingFromCues(input.cuesBefore);
+  const hAfter = headingFromCues(input.cuesAfter);
+  if (hBefore || hAfter) {
+    if ((hBefore || '') !== (hAfter || '')) {
+      parts.push(`heading "${hBefore || '(none)'}" → "${hAfter || '(none)'}"`);
+    } else if (hAfter) {
+      parts.push(`heading stayed "${hAfter}"`);
+    }
+  }
+  const cueChanged = cuesMeaningfullyChanged(input.cuesBefore, input.cuesAfter);
+  if (cueChanged) {
+    parts.push('cues/region changed');
+  } else if (urlBefore.toLowerCase() === urlAfter.toLowerCase()) {
+    parts.push('visible catalog/cues looked the same');
+  }
+  const beforeDis = new Set((input.disabledBefore ?? []).map((d) => d.toLowerCase()));
+  const afterDis = new Set((input.disabledAfter ?? []).map((d) => d.toLowerCase()));
+  const newlyEnabled = (input.disabledBefore ?? []).filter((d) => !afterDis.has(d.toLowerCase()));
+  const newlyDisabled = (input.disabledAfter ?? []).filter((d) => !beforeDis.has(d.toLowerCase()));
+  if (newlyEnabled.length) parts.push(`newly enabled: ${newlyEnabled.slice(0, 6).join(', ')}`);
+  if (newlyDisabled.length) parts.push(`newly disabled: ${newlyDisabled.slice(0, 6).join(', ')}`);
+  if ((input.disabledAfter ?? []).length && !newlyEnabled.length && !newlyDisabled.length) {
+    parts.push(`disabled: ${(input.disabledAfter ?? []).slice(0, 6).join(', ')}`);
+  }
+  const changed = urlBefore.toLowerCase() !== urlAfter.toLowerCase() || cueChanged || newlyEnabled.length > 0;
+  return { changed, changeSummary: parts.join('; '), newlyEnabled };
+}
+
+/** Format click outcomes for the findings string / planner. */
+export function formatClickFindings(outcomes: Array<{
+  control: string;
+  kind: string;
+  changeSummary: string;
+  result: string;
+  disabledBefore?: string[];
+  newlyEnabled?: string[];
+}>): string {
+  if (outcomes.length === 0) return '';
+  const lines = ['Click findings:'];
+  for (const o of outcomes) {
+    lines.push(`- Clicked ${o.kind} "${o.control}" → ${o.changeSummary} [${o.result}]`);
+    if (o.disabledBefore?.length) {
+      lines.push(`  disabled before: ${o.disabledBefore.slice(0, 8).join(', ')}`);
+    }
+    if (o.newlyEnabled?.length) {
+      lines.push(`  became enabled: ${o.newlyEnabled.slice(0, 8).join(', ')}`);
+    }
+  }
+  return lines.join('\n');
 }
 
 /** Operator-facing one-liner for multi-page explore progress. */

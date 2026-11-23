@@ -237,12 +237,17 @@ ${extra}
       maxDepth: 2,
       maxCrawlMs: 30_000,
     });
-    expect(clicked.some((c) => /kitchen|travel|order summary|cart/i.test(c))).toBe(true);
+    expect(clicked.filter((c) => /kitchen|travel|order summary|cart/i.test(c)).length).toBeGreaterThanOrEqual(2);
     expect(out.pagesVisited).toBeGreaterThanOrEqual(2);
+    expect(out.clickOutcomes?.length).toBeGreaterThanOrEqual(2);
+    expect(out.clickOutcomes?.some((o) => /kitchen/i.test(o.control))).toBe(true);
+    expect(out.clickOutcomes?.some((o) => /order summary|cart/i.test(o.control))).toBe(true);
+    expect(out.findings).toMatch(/Click findings:/);
     expect(out.details.some((d) => /Kitchen|Travel|order summary|Order summary|#order-summary/i.test(
       `${d.scenarioName} ${d.url} ${d.cuesSummary || ''}`,
     ))).toBe(true);
     expect(out.summary).toMatch(/Explored \d+ pages:/);
+    expect(out.summary).toMatch(/clicks/);
     expect(out.findings).toMatch(/Multi-page explore:/);
   });
 

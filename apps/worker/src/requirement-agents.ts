@@ -172,6 +172,7 @@ export async function performRequirementStep(
       candidateRoutes: explored.candidateRoutes,
       pagesVisited: explored.pagesVisited,
       exploredUrls: explored.exploredUrls,
+      clickOutcomes: explored.clickOutcomes,
     });
     return {
       summary: explored.summary,
@@ -188,6 +189,7 @@ export async function performRequirementStep(
         candidateRoutes: explored.candidateRoutes,
         pagesVisited: explored.pagesVisited ?? details.length,
         exploredUrls: explored.exploredUrls ?? [...new Set(details.map((d) => d.url).filter(Boolean))],
+        clickOutcomes: explored.clickOutcomes ?? [],
         artifactMarkdown,
         artifactPath: exploreUiArtifactPath(workItem, application),
       },
