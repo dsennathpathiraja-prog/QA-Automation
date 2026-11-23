@@ -84,7 +84,7 @@ export function sameExploreHost(baseUrl: string, candidateUrl: string): boolean 
 
 /**
  * Normalize an explore URL for comparison.
- * When `keepHash` is true, SPA fragments like `#order-summary` stay distinct from the base path.
+ * When `keepHash` is true, SPA fragments like `#section` stay distinct from the base path.
  */
 export function normalizeExploreUrl(
   url: string,
@@ -145,7 +145,7 @@ export function isSkippableHref(href: string | undefined): boolean {
   const t = href.trim();
   if (!t || t === '#') return true;
   if (SKIP_SCHEME.test(t)) return true;
-  // Bare hash-only junk, not `#order-summary`.
+  // Bare hash-only junk, not navigational `#section` fragments.
   if (/^#+$/.test(t)) return true;
   return false;
 }
