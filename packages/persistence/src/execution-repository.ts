@@ -8,6 +8,7 @@ import { connectorInstance, egressAllowlist, environment, workflow, workflowEven
 
 const toRecord = (r: typeof workflowExecution.$inferSelect): ExecutionRecord => ({
   id: r.id,
+  projectId: r.projectId,
   workflowId: r.workflowId,
   versionId: r.versionId,
   status: r.status as ExecutionStatus,

@@ -151,9 +151,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
               if (curated !== undefined) return curated;
             }
             if (!deps.testCases) return undefined;
+            // Prep API has no selected project yet (Slice D); fall back to Default where existing cases live.
+            const defaultProjectId = '01900000-0000-7000-8000-000000000001';
             return caseIdsFromPlatformCollection({
               collectionKey: key,
-              listCollections: () => deps.testCases!.collections(),
+              listCollections: () => deps.testCases!.collections({ projectId: defaultProjectId }),
               getCollection: (id) => deps.testCases!.collection(id).then((c) => ({ cases: c.cases })).catch(() => undefined),
               listAssets: () => deps.automation!.listAssets(),
               listMappings: () => deps.automation!.listMappings(),

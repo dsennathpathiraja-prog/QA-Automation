@@ -20,15 +20,24 @@ const idOf = (raw: unknown, what: string) => {
   return id;
 };
 
+const projectIdOf = (req: { query: unknown }) => {
+  const projectId = typeof (req.query as { projectId?: string }).projectId === 'string' ? (req.query as { projectId: string }).projectId.trim() : '';
+  if (!projectId || !UUID.test(projectId)) throw new PlatformError('validation', 'Query projectId is required.');
+  return projectId;
+};
+
 export function registerTestCaseRoutes(app: FastifyInstance, cases: TestCaseService, environments?: EnvironmentService) {
-  app.get('/api/v1/test-cases', { config: { access: requires('testcase.view') } }, async () => TestCaseListResponse.parse({ items: await cases.list() }));
+  app.get('/api/v1/test-cases', { config: { access: requires('testcase.view') } }, async (req) => {
+    const projectId = projectIdOf(req);
+    return TestCaseListResponse.parse({ items: await cases.list({ projectId }) });
+  });
 
   app.post('/api/v1/test-cases', { config: { access: requires('testcase.edit') } }, async (req, reply) => {
     const created = await cases.create({ id: req.principal!.id }, body(CreateTestCaseRequest, req.body, 'create test case'));
     return reply.code(201).send(TestCaseSchema.parse(created));
   });
 
-  /** Soft-clears every platform collection and case. Squash is never wiped here. */
+  /** Soft-clears every collection and case in the given project. Squash is never wiped here. */
   app.post('/api/v1/test-cases/reset', { config: { access: requires('testcase.edit') } }, async (req) => {
     const input = body(ResetTestCasesRequest, req.body, 'reset test cases');
     return ResetTestCasesResponse.parse(await cases.resetPlatform({ id: req.principal!.id }, input));
@@ -48,7 +57,10 @@ export function registerTestCaseRoutes(app: FastifyInstance, cases: TestCaseServ
     return reply.code(204).send();
   });
 
-  app.get('/api/v1/test-collections', { config: { access: requires('testcase.view') } }, async () => TestCollectionListResponse.parse({ items: await cases.collections() }));
+  app.get('/api/v1/test-collections', { config: { access: requires('testcase.view') } }, async (req) => {
+    const projectId = projectIdOf(req);
+    return TestCollectionListResponse.parse({ items: await cases.collections({ projectId }) });
+  });
 
   app.post('/api/v1/test-collections', { config: { access: requires('testcase.edit') } }, async (req, reply) => {
     const created = await cases.createCollection({ id: req.principal!.id }, body(CreateTestCollectionRequest, req.body, 'create collection'));
@@ -73,6 +85,7 @@ export function registerTestCaseRoutes(app: FastifyInstance, cases: TestCaseServ
     return reply.code(204).send();
   });
 
+  // Work-item board stays unscoped for Slice C; Slice D will require projectId (minimal hook already on executionBoard).
   app.get('/api/v1/work-item-executions', { config: { access: requires('execution.start') } }, async () => {
     const board = await cases.executionBoard();
     const listed = environments ? (await environments.list()).filter((item) => item.enabled && item.selectable) : [];

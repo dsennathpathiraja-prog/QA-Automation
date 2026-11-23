@@ -7,7 +7,8 @@ export class InMemoryExecutionRepository implements ExecutionRepository {
 
   async insert(n: NewExecution) {
     const now = new Date();
-    const rec: ExecutionRecord = { id: n.id, workflowId: n.workflowId, versionId: n.versionId, status: 'queued', stepIndex: 0, control: null, createdAt: now, updatedAt: now };
+    const projectId = (n as { projectId?: string }).projectId ?? '01900000-0000-7000-8000-000000000001';
+    const rec: ExecutionRecord = { id: n.id, projectId, workflowId: n.workflowId, versionId: n.versionId, status: 'queued', stepIndex: 0, control: null, createdAt: now, updatedAt: now };
     this.rows.set(rec.id, rec);
     this.log.set(rec.id, [{ seq: 1, kind: 'started', payload: {}, at: now.toISOString() }]);
     return structuredClone(rec);

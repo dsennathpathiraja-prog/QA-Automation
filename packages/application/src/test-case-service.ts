@@ -16,6 +16,7 @@ export type TestCasePriority = 'high' | 'medium' | 'low';
 
 export interface TestCaseRecord {
   id: string;
+  projectId: string;
   key: string;
   name: string;
   summary: string;
@@ -35,6 +36,7 @@ export interface TestCaseVersionRecord {
 
 export interface TestCollectionRecord {
   id: string;
+  projectId: string;
   name: string;
   description: string;
   size: number;
@@ -62,6 +64,7 @@ export interface WorkItemCaseResultRecord {
 
 export interface TestCaseInsert {
   id: string;
+  projectId: string;
   key: string;
   name: string;
   summary: string;
@@ -73,9 +76,9 @@ export interface TestCaseInsert {
 }
 
 export interface TestCaseRepository {
-  list(): Promise<TestCaseRecord[]>;
+  list(filter?: { projectId?: string }): Promise<TestCaseRecord[]>;
   get(id: string): Promise<TestCaseRecord | undefined>;
-  findKey(key: string): Promise<TestCaseRecord | undefined>;
+  findKey(key: string, projectId: string): Promise<TestCaseRecord | undefined>;
   insert(row: TestCaseInsert): Promise<TestCaseRecord>;
   current(id: string): Promise<TestCaseVersionRecord | undefined>;
   versions(id: string): Promise<TestCaseVersionRecord[]>;
@@ -84,17 +87,17 @@ export interface TestCaseRepository {
   /** Updates name, key, kind, and/or priority without bumping the case version. */
   saveIdentity(id: string, patch: { name?: string; key?: string; kind?: TestCaseKind; priority?: TestCasePriority }): Promise<TestCaseRecord>;
   softDelete(id: string): Promise<boolean>;
-  /** Soft-deletes every active collection and case on the platform. Squash is not touched. */
-  softDeleteAllPlatform(): Promise<{ cases: number; collections: number }>;
-  listCollections(): Promise<TestCollectionRecord[]>;
-  getCollection(id: string): Promise<{ id: string; name: string; description: string; cases: CollectionCaseRecord[] } | undefined>;
-  insertCollection(row: { id: string; name: string; description: string }): Promise<TestCollectionRecord>;
+  /** Soft-deletes every active collection and case in a project. Squash is not touched. */
+  softDeleteForProject(projectId: string): Promise<{ cases: number; collections: number }>;
+  listCollections(filter?: { projectId?: string }): Promise<TestCollectionRecord[]>;
+  getCollection(id: string): Promise<{ id: string; projectId: string; name: string; description: string; cases: CollectionCaseRecord[] } | undefined>;
+  insertCollection(row: { id: string; projectId: string; name: string; description: string }): Promise<TestCollectionRecord>;
   addCase(collectionId: string, testCaseId: string): Promise<'added' | 'exists'>;
   removeCase(collectionId: string, testCaseId: string): Promise<boolean>;
   softDeleteCollection(id: string): Promise<boolean>;
-  listWorkItemRuns(): Promise<WorkItemRunRecord[]>;
+  listWorkItemRuns(filter?: { projectId?: string }): Promise<WorkItemRunRecord[]>;
   getWorkItemRun(id: string): Promise<WorkItemRunRecord | undefined>;
-  insertWorkItemRun(row: { id: string; workItem: string; environmentId: string; environmentName: string; caseCount: number }): Promise<WorkItemRunRecord>;
+  insertWorkItemRun(row: { id: string; workItem: string; environmentId: string; environmentName: string; caseCount: number; projectId?: string }): Promise<WorkItemRunRecord>;
   updateWorkItemRun(id: string, patch: { status: WorkItemRunStatus; squashSync?: string; finishedAt?: Date }): Promise<WorkItemRunRecord>;
   claimQueuedWorkItemRun(): Promise<WorkItemRunRecord | undefined>;
   replaceCaseResults(executionId: string, results: Array<{ id: string; testCaseId: string; name: string; status: CaseRunStatus; message: string; screenshotPng?: string; squashExecutionId?: string; steps?: CaseStepProgress[] }>): Promise<void>;
@@ -116,6 +119,7 @@ export interface WorkItemRunRecord {
 
 export interface TestCaseView {
   id: string;
+  projectId: string;
   key: string;
   name: string;
   summary: string;
@@ -130,6 +134,7 @@ export interface TestCaseView {
 
 export interface TestCaseListItem {
   id: string;
+  projectId: string;
   key: string;
   name: string;
   summary: string;
@@ -155,6 +160,7 @@ export function priorityForKind(kind: TestCaseKind): TestCasePriority {
 
 const itemOf = (r: TestCaseRecord): TestCaseListItem => ({
   id: r.id,
+  projectId: r.projectId,
   key: r.key,
   name: r.name,
   summary: r.summary,
@@ -236,8 +242,9 @@ export function stepLabelsFromText(steps: string, fallback: string[] = ['Open pa
 export class TestCaseService {
   constructor(private readonly d: { cases: TestCaseRepository; audit: AuditSink }) {}
 
-  async list(): Promise<TestCaseListItem[]> {
-    return (await this.d.cases.list()).map(itemOf);
+  async list(filter?: { projectId?: string }): Promise<TestCaseListItem[]> {
+    const projectId = this.requireProjectId(filter?.projectId);
+    return (await this.d.cases.list({ projectId })).map(itemOf);
   }
 
   async get(id: string): Promise<TestCaseView> {
@@ -252,18 +259,19 @@ export class TestCaseService {
     return (await this.d.cases.versions(id)).map((r) => ({ version: r.version, steps: r.steps, expected: r.expected, createdAt: r.createdAt.toISOString() }));
   }
 
-  async create(actor: ActorRef, input: { name: string; summary?: string; steps: string; expected: string; workItem?: string; kind?: TestCaseKind; priority?: TestCasePriority }): Promise<TestCaseView> {
+  async create(actor: ActorRef, input: { projectId: string; name: string; summary?: string; steps: string; expected: string; workItem?: string; kind?: TestCaseKind; priority?: TestCasePriority }): Promise<TestCaseView> {
+    const projectId = this.requireProjectId(input.projectId);
     const name = this.name(input.name);
     const workItem = this.summary(input.workItem ?? '');
     const key = this.key(workItem ? `${workItem} ${name}` : name);
-    if (await this.d.cases.findKey(key)) throw new PlatformError('conflict', 'A test case with that name already exists.');
+    if (await this.d.cases.findKey(key, projectId)) throw new PlatformError('conflict', 'A test case with that name already exists in this project.');
     const summary = this.summary(input.summary ?? '');
     const steps = this.steps(input.steps);
     const expected = this.expected(input.expected);
     const kind = this.kind(input.kind ?? kindFromName(name));
     const priority = this.priority(input.priority ?? priorityForKind(kind));
-    const row = await this.d.cases.insert({ id: randomUUID(), key, name, summary, workItem, steps, expected, kind, priority });
-    await this.d.audit.append({ actorId: actor.id, action: 'testcase.create', subjectType: 'test_case', subjectId: row.id, detail: { key } });
+    const row = await this.d.cases.insert({ id: randomUUID(), projectId, key, name, summary, workItem, steps, expected, kind, priority });
+    await this.d.audit.append({ actorId: actor.id, action: 'testcase.create', subjectType: 'test_case', subjectId: row.id, detail: { projectId, key } });
     return this.get(row.id);
   }
 
@@ -291,29 +299,31 @@ export class TestCaseService {
   }
 
   /**
-   * Soft-deletes every platform collection and case so a local rebuild can start empty.
+   * Soft-deletes every collection and case in a project so a local rebuild can start empty.
    * Squash copies are never wiped by this call (wipeSquash is rejected if true).
    */
-  async resetPlatform(actor: ActorRef, input: { confirm: string; wipeSquash?: boolean }): Promise<{ collectionsCleared: number; casesCleared: number; squashWiped: false }> {
+  async resetPlatform(actor: ActorRef, input: { projectId: string; confirm: string; wipeSquash?: boolean }): Promise<{ collectionsCleared: number; casesCleared: number; squashWiped: false }> {
+    const projectId = this.requireProjectId(input.projectId);
     if (input.confirm !== 'RESET_PLATFORM_CASES') {
       throw new PlatformError('validation', 'Confirm with RESET_PLATFORM_CASES to clear platform test cases.');
     }
     if (input.wipeSquash) {
       throw new PlatformError('validation', 'Squash wipe is not supported from this endpoint. Clear Squash manually if you need that.');
     }
-    const result = await this.d.cases.softDeleteAllPlatform();
+    const result = await this.d.cases.softDeleteForProject(projectId);
     await this.d.audit.append({
       actorId: actor.id,
       action: 'testcase.reset',
       subjectType: 'test_case',
-      subjectId: 'platform',
-      detail: { collectionsCleared: result.collections, casesCleared: result.cases, squashWiped: false },
+      subjectId: projectId,
+      detail: { projectId, collectionsCleared: result.collections, casesCleared: result.cases, squashWiped: false },
     });
     return { collectionsCleared: result.collections, casesCleared: result.cases, squashWiped: false };
   }
 
-  async collections() {
-    return this.d.cases.listCollections();
+  async collections(filter?: { projectId?: string }) {
+    const projectId = this.requireProjectId(filter?.projectId);
+    return this.d.cases.listCollections({ projectId });
   }
 
   async collection(id: string) {
@@ -322,13 +332,14 @@ export class TestCaseService {
     return row;
   }
 
-  async createCollection(actor: ActorRef, input: { name: string; description?: string }) {
+  async createCollection(actor: ActorRef, input: { projectId: string; name: string; description?: string }) {
+    const projectId = this.requireProjectId(input.projectId);
     const name = this.name(input.name);
     const description = this.summary(input.description ?? '');
-    const existing = (await this.d.cases.listCollections()).find((c) => c.name.toLowerCase() === name.toLowerCase());
-    if (existing) throw new PlatformError('conflict', 'A collection with that name already exists.');
-    const row = await this.d.cases.insertCollection({ id: randomUUID(), name, description });
-    await this.d.audit.append({ actorId: actor.id, action: 'testcase.collection.create', subjectType: 'test_collection', subjectId: row.id, detail: { name } });
+    const existing = (await this.d.cases.listCollections({ projectId })).find((c) => c.name.toLowerCase() === name.toLowerCase());
+    if (existing) throw new PlatformError('conflict', 'A collection with that name already exists in this project.');
+    const row = await this.d.cases.insertCollection({ id: randomUUID(), projectId, name, description });
+    await this.d.audit.append({ actorId: actor.id, action: 'testcase.collection.create', subjectType: 'test_collection', subjectId: row.id, detail: { projectId, name } });
     return row;
   }
 
@@ -344,8 +355,11 @@ export class TestCaseService {
   }
 
   async addToCollection(actor: ActorRef, collectionId: string, testCaseId: string) {
-    await this.collection(collectionId);
-    await this.require(testCaseId);
+    const collection = await this.collection(collectionId);
+    const caseRow = await this.require(testCaseId);
+    if (caseRow.projectId !== collection.projectId) {
+      throw new PlatformError('validation', 'That test case belongs to a different project.');
+    }
     const added = await this.d.cases.addCase(collectionId, testCaseId);
     if (added === 'exists') throw new PlatformError('conflict', 'That case is already in this collection.');
     await this.d.audit.append({ actorId: actor.id, action: 'testcase.collection.add', subjectType: 'test_collection', subjectId: collectionId, detail: { testCaseId } });
@@ -353,11 +367,12 @@ export class TestCaseService {
   }
 
   /**
-   * Upserts a generated case under a collection named for its work item.
+   * Upserts a generated case under a collection named for its work item in the given project.
    * Scenario identity is `reference` (same key Squash uses as automated_test_reference).
    * Re-running the same work item with the same reference updates the existing case instead of inserting a duplicate.
    */
   async fileUnderWorkItem(actor: ActorRef, input: {
+    projectId: string;
     name: string;
     summary?: string;
     steps: string;
@@ -367,6 +382,7 @@ export class TestCaseService {
     kind?: TestCaseKind;
     priority?: TestCasePriority;
   }): Promise<{ id: string }> {
+    const projectId = this.requireProjectId(input.projectId);
     const workItem = this.summary(input.workItem ?? '');
     if (!workItem) throw new PlatformError('validation', 'A generated case needs a work item.');
     const name = this.name(input.name);
@@ -375,7 +391,7 @@ export class TestCaseService {
     const legacyKey = this.key(`${workItem} ${name}`);
     const kind = this.kind(input.kind ?? kindFromName(name));
     const priority = this.priority(input.priority ?? priorityForKind(kind));
-    const existing = (await this.d.cases.findKey(scenarioKey)) ?? (reference && scenarioKey !== legacyKey ? await this.d.cases.findKey(legacyKey) : undefined);
+    const existing = (await this.d.cases.findKey(scenarioKey, projectId)) ?? (reference && scenarioKey !== legacyKey ? await this.d.cases.findKey(legacyKey, projectId) : undefined);
     let id: string;
     if (existing) {
       id = existing.id;
@@ -391,12 +407,12 @@ export class TestCaseService {
       const steps = this.steps(input.steps);
       const expected = this.expected(input.expected);
       try {
-        const row = await this.d.cases.insert({ id: randomUUID(), key: scenarioKey, name, summary, workItem, steps, expected, kind, priority });
+        const row = await this.d.cases.insert({ id: randomUUID(), projectId, key: scenarioKey, name, summary, workItem, steps, expected, kind, priority });
         id = row.id;
-        await this.d.audit.append({ actorId: actor.id, action: 'testcase.create', subjectType: 'test_case', subjectId: id, detail: { key: scenarioKey, reference: reference || undefined, kind, priority } });
+        await this.d.audit.append({ actorId: actor.id, action: 'testcase.create', subjectType: 'test_case', subjectId: id, detail: { projectId, key: scenarioKey, reference: reference || undefined, kind, priority } });
       } catch (e) {
         if (!(e instanceof PlatformError) || e.errorClass !== 'conflict') throw e;
-        const raced = (await this.d.cases.findKey(scenarioKey)) ?? (await this.d.cases.findKey(legacyKey));
+        const raced = (await this.d.cases.findKey(scenarioKey, projectId)) ?? (await this.d.cases.findKey(legacyKey, projectId));
         if (!raced) throw e;
         id = raced.id;
         const identity: { name?: string; key?: string; kind?: TestCaseKind; priority?: TestCasePriority } = {};
@@ -408,22 +424,24 @@ export class TestCaseService {
         await this.revise(actor, id, { summary: input.summary, steps: input.steps, expected: input.expected });
       }
     }
-    const collection = await this.ensureWorkItemCollection(actor, workItem.slice(0, 120));
+    const collection = await this.ensureWorkItemCollection(actor, projectId, workItem.slice(0, 120));
     await this.d.cases.addCase(collection.id, id);
     return { id };
   }
 
-  async executionBoard() {
+  async executionBoard(filter?: { projectId?: string }) {
     // Align with Test Cases collections: only live members of a live work-item collection count
     // (soft-deleted cases and orphans removed from a collection must not appear here).
+    // Optional projectId is a minimal Slice D hook — when set, board is project-scoped.
+    const projectId = (filter?.projectId ?? '').trim() || undefined;
     const workItems: { workItem: string; caseCount: number }[] = [];
-    for (const collection of await this.d.cases.listCollections()) {
+    for (const collection of await this.d.cases.listCollections(projectId ? { projectId } : undefined)) {
       if (collection.size <= 0) continue;
       workItems.push({ workItem: collection.name, caseCount: collection.size });
     }
     workItems.sort((a, b) => a.workItem.localeCompare(b.workItem));
     const items = [];
-    for (const row of await this.d.cases.listWorkItemRuns()) {
+    for (const row of await this.d.cases.listWorkItemRuns(projectId ? { projectId } : undefined)) {
       // Include results for queued/running so the UI can poll live progress after seed.
       const results = row.status === 'prepared' ? undefined : await this.d.cases.listCaseResults(row.id);
       items.push(runOf(row, results && results.length > 0 ? results : undefined));
@@ -603,10 +621,11 @@ export class TestCaseService {
   }
 
   /** Live cases that belong to the work-item collection (excludes soft-deleted and uncollected orphans). */
-  async casesForWorkItem(workItem: string) {
+  async casesForWorkItem(workItem: string, filter?: { projectId?: string }) {
     const wanted = this.summary(workItem).toLowerCase();
     if (!wanted) return [];
-    const collection = (await this.d.cases.listCollections()).find((c) => c.name.toLowerCase() === wanted);
+    const projectId = (filter?.projectId ?? '').trim() || undefined;
+    const collection = (await this.d.cases.listCollections(projectId ? { projectId } : undefined)).find((c) => c.name.toLowerCase() === wanted);
     if (!collection) return [];
     const detail = await this.d.cases.getCollection(collection.id);
     if (!detail) return [];
@@ -618,12 +637,12 @@ export class TestCaseService {
     return out;
   }
 
-  private async ensureWorkItemCollection(actor: ActorRef, workItem: string) {
-    const named = async () => (await this.d.cases.listCollections()).find((c) => c.name.toLowerCase() === workItem.toLowerCase());
+  private async ensureWorkItemCollection(actor: ActorRef, projectId: string, workItem: string) {
+    const named = async () => (await this.d.cases.listCollections({ projectId })).find((c) => c.name.toLowerCase() === workItem.toLowerCase());
     const found = await named();
     if (found) return found;
     try {
-      return await this.createCollection(actor, { name: workItem, description: `Cases generated for ${workItem}` });
+      return await this.createCollection(actor, { projectId, name: workItem, description: `Cases generated for ${workItem}` });
     } catch (e) {
       if (!(e instanceof PlatformError) || e.errorClass !== 'conflict') throw e;
       const again = await named();
@@ -644,6 +663,12 @@ export class TestCaseService {
     const row = await this.d.cases.get(id);
     if (!row) throw new PlatformError('not-found', 'Test case not found');
     return row;
+  }
+
+  private requireProjectId(raw: string | undefined) {
+    const projectId = (raw ?? '').trim();
+    if (!projectId) throw new PlatformError('validation', 'A project is required.');
+    return projectId;
   }
 
   private name(raw: string) {

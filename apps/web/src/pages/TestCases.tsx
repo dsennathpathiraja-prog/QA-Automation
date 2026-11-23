@@ -11,11 +11,12 @@ import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useMemo, useState } from 'react';
 import { useApi } from '../api/context';
 import { useSession } from '../auth/session';
+import { useProject } from '../project/ProjectContext';
 import { Card, ErrorNotice, PageHeader } from './common';
 import { Field, buttonClass, errorText, fieldClass, primaryButtonClass } from './connectors/shared';
 
-const casesKey = ['test-cases'] as const;
-const collectionsKey = ['test-collections'] as const;
+const casesKey = (projectId: string | null | undefined) => ['test-cases', projectId] as const;
+const collectionsKey = (projectId: string | null | undefined) => ['test-collections', projectId] as const;
 
 type CaseKind = 'positive' | 'negative' | 'edge';
 type CasePriority = 'high' | 'medium' | 'low';
@@ -53,20 +54,25 @@ function PriorityBadge({ priority }: { priority: CasePriority }) {
 export function TestCases() {
   const api = useApi();
   const session = useSession();
+  const { selected, selectedId } = useProject();
   const qc = useQueryClient();
-  const collections = useQuery({ queryKey: collectionsKey, queryFn: () => api.get('/api/v1/test-collections', TestCollectionListResponse) });
+  const collections = useQuery({
+    queryKey: collectionsKey(selectedId),
+    queryFn: () => api.get(`/api/v1/test-collections?projectId=${encodeURIComponent(selectedId!)}`, TestCollectionListResponse),
+    enabled: !!selectedId,
+  });
   const deleteCollection = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/test-collections/${id}`),
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: casesKey });
-      await qc.invalidateQueries({ queryKey: collectionsKey });
+      await qc.invalidateQueries({ queryKey: casesKey(selectedId) });
+      await qc.invalidateQueries({ queryKey: collectionsKey(selectedId) });
     },
   });
   const reset = useMutation({
-    mutationFn: () => api.post('/api/v1/test-cases/reset', { confirm: 'RESET_PLATFORM_CASES' }, ResetTestCasesResponse),
+    mutationFn: () => api.post('/api/v1/test-cases/reset', { projectId: selectedId!, confirm: 'RESET_PLATFORM_CASES' }, ResetTestCasesResponse),
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: casesKey });
-      await qc.invalidateQueries({ queryKey: collectionsKey });
+      await qc.invalidateQueries({ queryKey: casesKey(selectedId) });
+      await qc.invalidateQueries({ queryKey: collectionsKey(selectedId) });
     },
   });
   const canEdit = session.can('testcase.edit');
@@ -75,38 +81,40 @@ export function TestCases() {
     <>
       <PageHeader
         title="Test Cases"
-        description="Collections group the cases a requirement-validation run stored for each work item. Open a collection to see positive, negative, and edge cases with priority."
+        description={selected
+          ? `Collections for ${selected.name}. Generated cases from requirement-validation runs in this project appear here under each work item.`
+          : 'Collections group the cases a requirement-validation run stored for each work item.'}
       />
       <div className="space-y-4">
         {canEdit && (
-          <Card label="Clear platform data">
+          <Card label="Clear project library">
             <p className="text-sm text-slate-600 dark:text-slate-300">
-              Soft-delete every platform collection and case so you can start fresh. Squash copies are not removed.
+              Soft-delete every collection and case in this project so you can start fresh. Squash copies are not removed.
             </p>
             <button
               type="button"
               className={`${buttonClass} mt-3`}
-              disabled={reset.isPending || items.length === 0}
+              disabled={reset.isPending || items.length === 0 || !selectedId}
               onClick={() => {
-                if (window.confirm('Clear all platform test cases and collections? Squash copies stay. This cannot be undone from the UI.')) {
+                if (window.confirm('Clear all test cases and collections in this project? Squash copies stay. This cannot be undone from the UI.')) {
                   reset.mutate();
                 }
               }}
             >
-              Clear platform test cases
+              Clear project test cases
             </button>
             {reset.isSuccess && (
               <p className="mt-2 text-sm text-slate-700 dark:text-slate-200">
                 Cleared {reset.data.collectionsCleared} collection{reset.data.collectionsCleared === 1 ? '' : 's'} and {reset.data.casesCleared} case{reset.data.casesCleared === 1 ? '' : 's'}.
               </p>
             )}
-            {reset.isError && <div className="mt-3"><ErrorNotice message={errorText(reset.error, 'Platform test cases could not be cleared.')} /></div>}
+            {reset.isError && <div className="mt-3"><ErrorNotice message={errorText(reset.error, 'Project test cases could not be cleared.')} /></div>}
           </Card>
         )}
         <Card label="Collections">
           {collections.isError && <ErrorNotice message="Collections could not be loaded." onRetry={() => void collections.refetch()} />}
           {collections.data && items.length === 0 && (
-            <p>No collections yet. Run a requirement-validation workflow; generated cases appear here under the work item name.</p>
+            <p>No collections yet in this project. Run a requirement-validation workflow; generated cases appear here under the work item name.</p>
           )}
           {items.length > 0 && (
             <ul className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -155,6 +163,7 @@ export function TestCasePage() {
   const { id } = useParams({ strict: false }) as { id: string };
   const api = useApi();
   const session = useSession();
+  const { selectedId } = useProject();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const item = useQuery({ queryKey: ['test-case', id], queryFn: () => api.get(`/api/v1/test-cases/${id}`, TestCaseSchema) });
@@ -169,14 +178,14 @@ export function TestCasePage() {
       setSteps(null);
       setExpected(null);
       await qc.invalidateQueries({ queryKey: ['test-case', id] });
-      await qc.invalidateQueries({ queryKey: casesKey });
+      await qc.invalidateQueries({ queryKey: casesKey(selectedId) });
     },
   });
   const remove = useMutation({
     mutationFn: () => api.delete(`/api/v1/test-cases/${id}`),
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: casesKey });
-      await qc.invalidateQueries({ queryKey: collectionsKey });
+      await qc.invalidateQueries({ queryKey: casesKey(selectedId) });
+      await qc.invalidateQueries({ queryKey: collectionsKey(selectedId) });
       await navigate({ to: '/test-cases' });
     },
   });
@@ -243,31 +252,36 @@ export function TestCollectionPage() {
   const { id } = useParams({ strict: false }) as { id: string };
   const api = useApi();
   const session = useSession();
+  const { selectedId } = useProject();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const collection = useQuery({ queryKey: ['test-collection', id], queryFn: () => api.get(`/api/v1/test-collections/${id}`, TestCollectionSchema) });
-  const cases = useQuery({ queryKey: casesKey, queryFn: () => api.get('/api/v1/test-cases', TestCaseListResponse), enabled: session.can('testcase.edit') });
+  const cases = useQuery({
+    queryKey: casesKey(selectedId),
+    queryFn: () => api.get(`/api/v1/test-cases?projectId=${encodeURIComponent(selectedId!)}`, TestCaseListResponse),
+    enabled: session.can('testcase.edit') && !!selectedId,
+  });
   const [caseId, setCaseId] = useState('');
   const add = useMutation({
     mutationFn: () => api.post(`/api/v1/test-collections/${id}/cases`, { testCaseId: caseId }, TestCollectionSchema),
     onSuccess: async () => {
       setCaseId('');
       await qc.invalidateQueries({ queryKey: ['test-collection', id] });
-      await qc.invalidateQueries({ queryKey: collectionsKey });
+      await qc.invalidateQueries({ queryKey: collectionsKey(selectedId) });
     },
   });
   const remove = useMutation({
     mutationFn: (testCaseId: string) => api.delete(`/api/v1/test-collections/${id}/cases/${testCaseId}`),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['test-collection', id] });
-      await qc.invalidateQueries({ queryKey: collectionsKey });
+      await qc.invalidateQueries({ queryKey: collectionsKey(selectedId) });
     },
   });
   const deleteCollection = useMutation({
     mutationFn: () => api.delete(`/api/v1/test-collections/${id}`),
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: casesKey });
-      await qc.invalidateQueries({ queryKey: collectionsKey });
+      await qc.invalidateQueries({ queryKey: casesKey(selectedId) });
+      await qc.invalidateQueries({ queryKey: collectionsKey(selectedId) });
       await navigate({ to: '/test-cases' });
     },
   });

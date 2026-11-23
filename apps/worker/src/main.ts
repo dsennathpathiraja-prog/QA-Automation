@@ -19,7 +19,7 @@ import { LlmGateway, StaticAssignmentResolver, StaticProviderRegistry, type Data
 import { SecretRedactor } from '@qa/security';
 import { tick as engineTick } from '@qa/workflow-engine';
 import { AutomationService, caseIdsFromPlatformCollection, RegressionCollectionService, TestCaseService } from '@qa/application';
-import { PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgAutomationRepository, PgConnectorRepository, PgEnvironmentRepository, PgExecutionRepository, PgInstanceResolver, PgLlmAuditSink, PgOperationLogSink, PgRegressionCollectionRepository, PgRunPolicyStore, PgTestCaseRepository, PgTestRequestQueue, pingDb, seedRegressionCollections } from '@qa/persistence';
+import { DEFAULT_PROJECT_ID, PgApprovedHostRepository, PgAuditLog, PgAuditSink, PgAutomationRepository, PgConnectorRepository, PgEnvironmentRepository, PgExecutionRepository, PgInstanceResolver, PgLlmAuditSink, PgOperationLogSink, PgRegressionCollectionRepository, PgRunPolicyStore, PgTestCaseRepository, PgTestRequestQueue, pingDb, seedRegressionCollections } from '@qa/persistence';
 import { publishGeneratedCases, type GeneratedCase } from './publish-cases';
 import { buildWorkerApp } from './app';
 import { ConnectorTester } from './connector-tester';
@@ -245,9 +245,11 @@ const loop = new WorkerLoop({
                   if (curated !== undefined) return curated;
                 }
                 if (!testCases || !automation) return undefined;
+                const run = await executions?.get(step.runId);
+                const projectId = run?.projectId ?? DEFAULT_PROJECT_ID;
                 return caseIdsFromPlatformCollection({
                   collectionKey: key,
-                  listCollections: () => testCases.collections(),
+                  listCollections: () => testCases.collections({ projectId }),
                   getCollection: (id) => testCases.collection(id).then((c) => c ? { cases: c.cases } : undefined).catch(() => undefined),
                   listAssets: () => automation.listAssets(),
                   listMappings: () => automation.listMappings(),
@@ -526,10 +528,13 @@ const loop = new WorkerLoop({
         const planMarkdown = typeof planOut.planMarkdown === 'string' ? planOut.planMarkdown : undefined;
         const blockingGap = planOut.blockingGap === true
           || (typeof planOut.exploreWarning === 'string' && /blocking explore gap/i.test(planOut.exploreWarning));
+        const run = await executions?.get(step.runId);
+        const platformProjectId = run?.projectId ?? DEFAULT_PROJECT_ID;
         const published = await publishGeneratedCases({
           workItem: typeof result.outputs.workItem === 'string' ? result.outputs.workItem : '',
           cases,
           testCases,
+          platformProjectId,
           automation,
           criteria,
           scenarios: scenarios as PlannerScenario[] | undefined,

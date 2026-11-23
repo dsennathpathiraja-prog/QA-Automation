@@ -3,6 +3,8 @@ import { AutomationService, TestCaseService } from '@qa/application';
 import { InMemoryAuditSink, InMemoryAutomationRepository, InMemoryTestCaseRepository } from '@qa/testing';
 import { publishGeneratedCases } from '../src/publish-cases';
 
+const PLATFORM_PROJECT = '01900000-0000-7000-8000-000000000001';
+
 const cases = [{
   name: 'Positive: checkout',
   steps: "import { test } from '@playwright/test';\n",
@@ -22,6 +24,7 @@ describe('publishGeneratedCases', () => {
       workItem: '7259',
       cases,
       testCases,
+      platformProjectId: PLATFORM_PROJECT,
       squash: async () => ({ id: '42', created: true, projectId: '7' }),
     });
     expect(out.summary).toMatch(/Squash project 7/);
@@ -36,6 +39,7 @@ describe('publishGeneratedCases', () => {
       workItem: '7259',
       cases,
       testCases,
+      platformProjectId: PLATFORM_PROJECT,
       squash: async (_item, upsert) => {
         seen = upsert;
         return { id: '42', created: true, projectId: '7' };
@@ -55,15 +59,16 @@ describe('publishGeneratedCases', () => {
     const repo = new InMemoryTestCaseRepository();
     const testCases = new TestCaseService({ cases: repo, audit: new InMemoryAuditSink() });
     const squash = async () => ({ id: '42', created: false, projectId: '7' });
-    await publishGeneratedCases({ workItem: '7259', cases, testCases, squash });
+    await publishGeneratedCases({ workItem: '7259', cases, testCases, platformProjectId: PLATFORM_PROJECT, squash });
     await publishGeneratedCases({
       workItem: '7259',
       cases: [{ ...cases[0]!, name: 'Positive: Positive', steps: 'Open again', expected: 'Still ok' }],
       testCases,
+      platformProjectId: PLATFORM_PROJECT,
       squash,
     });
-    expect(await testCases.list()).toHaveLength(1);
-    expect((await testCases.list())[0]).toMatchObject({ name: 'Positive: Positive', version: 2, summary: 'Squash 42' });
+    expect(await testCases.list({ projectId: PLATFORM_PROJECT })).toHaveLength(1);
+    expect((await testCases.list({ projectId: PLATFORM_PROJECT }))[0]).toMatchObject({ name: 'Positive: Positive', version: 2, summary: 'Squash 42' });
   });
 
   it('explains a missing workflow binding', async () => {
@@ -73,6 +78,7 @@ describe('publishGeneratedCases', () => {
       workItem: '7259',
       cases,
       testCases,
+      platformProjectId: PLATFORM_PROJECT,
       squash: async () => { throw new PlatformError('denied', 'role testManagement is not bound for this execution'); },
     });
     expect(out.summary).toMatch(/No Squash connector is bound/);
@@ -85,6 +91,7 @@ describe('publishGeneratedCases', () => {
       workItem: '7259',
       cases,
       testCases,
+      platformProjectId: PLATFORM_PROJECT,
       squash: async () => {
         throw new PlatformError(
           'auth',
@@ -110,12 +117,13 @@ describe('publishGeneratedCases', () => {
         reference: 'QAP-7259-stub',
       }],
       testCases,
+      platformProjectId: PLATFORM_PROJECT,
       squash: async () => {
         squashCalls += 1;
         return { id: '99', created: true, projectId: '7' };
       },
     })).rejects.toThrow(/quality gate|stub/i);
-    expect(await testCases.list()).toHaveLength(0);
+    expect(await testCases.list({ projectId: PLATFORM_PROJECT })).toHaveLength(0);
     expect(squashCalls).toBe(0);
   });
 
@@ -133,6 +141,7 @@ describe('publishGeneratedCases', () => {
         tags: ['needs-surface'],
       }],
       testCases,
+      platformProjectId: PLATFORM_PROJECT,
       criteria: ['Greeting shows Customer Name', 'Totally uncovered AC about SMS'],
       blockingGap: true,
       squash: async () => ({ id: '55', created: true, projectId: '7' }),
@@ -150,6 +159,7 @@ describe('publishGeneratedCases', () => {
       workItem: '7259',
       cases,
       testCases,
+      platformProjectId: PLATFORM_PROJECT,
       automation,
       squash: async () => ({ id: '42', created: true, projectId: '7' }),
     });

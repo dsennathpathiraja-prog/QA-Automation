@@ -69,6 +69,7 @@ export type ExecutionStatus = 'queued' | 'running' | 'paused' | 'succeeded' | 'f
 
 export interface ExecutionRecord {
   id: string;
+  projectId: string;
   workflowId: string;
   versionId: string;
   status: ExecutionStatus;
